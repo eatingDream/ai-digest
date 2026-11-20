@@ -1,0 +1,11 @@
+# Example only: publish.py regenerates this file (with the real slug) on every build.
+/*
+  X-Robots-Tag: noindex, nofollow
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+/<SITE_SLUG>/
+  Cache-Control: public, max-age=60, stale-while-revalidate=604800
+/<SITE_SLUG>/daily/*
+  Cache-Control: public, max-age=300, stale-while-revalidate=604800
+/<SITE_SLUG>/weekly/*
+  Cache-Control: public, max-age=300, stale-while-revalidate=604800

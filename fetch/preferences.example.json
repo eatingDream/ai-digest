@@ -1,0 +1,7 @@
+{
+  "agents": 1,
+  "training": 1,
+  "reasoning": 1,
+  "evals": 1,
+  "inference": 1
+}

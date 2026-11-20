@@ -1,0 +1,1404 @@
+# AI精选 信源注册表（fetch.py 读取）
+# 每个 [[source]] 一条。字段：
+#   id        唯一 id（报告与 candidates.jsonl 的 source 字段）
+#   name      显示名
+#   type      rss | html_links | arxiv | hf_daily | hf_org_models | hf_trending | github_trending
+#             | github_releases | github_org_repos | github_search | hn | reddit
+#   url       抓取入口
+#   channel   大类（lab / research_blog / newsletter / podcast / news / news_zh / chips_infra
+#             / policy / community / tooling / paper / model / repo）
+#   kind      条目类型默认值（paper / model / repo / release / lab_post / essay / news / policy / podcast / video / discussion / dataset）
+#   filter    "ai" = 只保留标题/摘要命中 AI 关键词的条目（综合新闻源用）
+#   pattern   html_links 用：保留的 href 正则（相对或绝对）
+#   enabled   false 则跳过
+# 死链与停更源在文件末尾注释里记录，不要直接删掉记录。
+
+[settings]
+timeout = 20
+workers = 24
+user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
+summary_chars = 700
+
+# ───────────────────────── 论文 ─────────────────────────
+[[source]]
+id = "arxiv"
+name = "arXiv new listings"
+type = "arxiv"
+channel = "paper"
+kind = "paper"
+categories = ["cs.LG", "cs.CL", "cs.AI", "cs.CV", "cs.MA", "cs.SE", "cs.RO", "stat.ML", "cs.CR", "cs.DC", "cs.HC", "cs.IR"]
+# cs.CR(安全)、cs.DC(分布式/训练系统)、cs.HC(人机/产品)、cs.IR(检索) 是扩充后的新范围
+
+[[source]]
+id = "hf_daily"
+name = "Hugging Face Daily Papers"
+type = "hf_daily"
+url = "https://huggingface.co/api/daily_papers"
+channel = "paper"
+kind = "paper"
+
+[[source]]
+id = "nature_ml"
+name = "Nature · Machine learning"
+type = "rss"
+url = "https://www.nature.com/subjects/machine-learning.rss"
+channel = "paper"
+kind = "paper"
+
+[[source]]
+id = "science"
+name = "Science (AI 相关)"
+type = "rss"
+url = "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science"
+channel = "paper"
+kind = "paper"
+filter = "ai"
+
+# ───────────────────────── 模型 / HF ─────────────────────────
+[[source]]
+id = "hf_org_models"
+name = "HF 主要机构新模型"
+type = "hf_org_models"
+channel = "model"
+kind = "model"
+orgs = [
+  "openai", "google", "meta-llama", "facebook", "microsoft", "nvidia", "apple", "amazon",
+  "mistralai", "xai-org", "Qwen", "deepseek-ai", "moonshotai", "zai-org", "THUDM", "MiniMaxAI",
+  "ByteDance-Seed", "ByteDance", "bytedance-research", "tencent", "baidu", "stepfun-ai",
+  "internlm", "OpenGVLab", "allenai", "CohereLabs", "ibm-granite", "HuggingFaceTB",
+  "HuggingFaceH4", "togethercomputer", "ai21labs", "LiquidAI", "NousResearch", "PrimeIntellect",
+  "arcee-ai", "inclusionAI", "XiaomiMiMo", "meituan-longcat", "openbmb", "LGAI-EXAONE",
+  "upstage", "Salesforce", "ServiceNow-AI", "Zyphra", "black-forest-labs", "stabilityai",
+  "lerobot", "physical-intelligence", "sakana-ai", "kakaocorp", "swiss-ai", "tiiuae",
+  "rednote-hilab", "Kwai-Kolors", "jinaai", "BAAI", "PaddlePaddle",
+  "deepmind", "google-deepmind", "perplexity-ai", "cognitivecomputations", "Skywork",
+  "OpenMOSS", "ByteDance-Seed", "antgroup", "Alibaba-NLP", "ZhipuAI", "01-ai",
+]
+
+[[source]]
+id = "hf_trending_models"
+name = "HF trending models（仅发现用，近 21 天创建）"
+type = "hf_trending"
+url = "https://huggingface.co/api/models?sort=trendingScore&limit=120"
+channel = "model"
+kind = "model"
+max_age_days = 21
+
+[[source]]
+id = "hf_trending_datasets"
+name = "HF trending datasets（近 21 天创建）"
+type = "hf_trending"
+url = "https://huggingface.co/api/datasets?sort=trendingScore&limit=80"
+channel = "model"
+kind = "dataset"
+max_age_days = 21
+
+[[source]]
+id = "hf_trending_spaces"
+name = "HF trending spaces（近 14 天创建）"
+type = "hf_trending"
+url = "https://huggingface.co/api/spaces?sort=trendingScore&limit=60"
+channel = "model"
+kind = "repo"
+max_age_days = 14
+
+# ───────────────────────── GitHub ─────────────────────────
+[[source]]
+id = "gh_trending"
+name = "GitHub Trending（daily, all + python）"
+type = "github_trending"
+urls = ["https://github.com/trending?since=daily", "https://github.com/trending/python?since=daily", "https://github.com/trending/typescript?since=daily", "https://github.com/trending/rust?since=daily"]
+channel = "repo"
+kind = "repo"
+filter = "ai"
+
+[[source]]
+id = "gh_releases"
+name = "关键仓库 Releases"
+type = "github_releases"
+channel = "tooling"
+kind = "release"
+repos = [
+  "vllm-project/vllm", "sgl-project/sglang", "ggml-org/llama.cpp", "ollama/ollama",
+  "huggingface/transformers", "huggingface/trl", "huggingface/smolagents", "huggingface/lerobot",
+  "volcengine/verl", "OpenRLHF/OpenRLHF", "PrimeIntellect-ai/prime-rl", "NovaSky-AI/SkyRL",
+  "deepspeedai/DeepSpeed", "NVIDIA/Megatron-LM", "NVIDIA/TensorRT-LLM", "ai-dynamo/dynamo",
+  "NVIDIA/NeMo", "pytorch/pytorch", "pytorch/torchtitan", "jax-ml/jax", "triton-lang/triton",
+  "Dao-AILab/flash-attention", "unslothai/unsloth", "axolotl-ai-cloud/axolotl",
+  "ml-explore/mlx", "ml-explore/mlx-lm", "mlc-ai/mlc-llm", "exo-explore/exo",
+  "openai/codex", "openai/openai-agents-python", "anthropics/claude-code",
+  "anthropics/claude-agent-sdk-python", "google-gemini/gemini-cli", "sst/opencode",
+  "block/goose", "All-Hands-AI/OpenHands", "Aider-AI/aider", "cline/cline", "continuedev/continue",
+  "langchain-ai/langchain", "langchain-ai/langgraph", "crewAIInc/crewAI", "microsoft/autogen",
+  "modelcontextprotocol/modelcontextprotocol", "browser-use/browser-use",
+  "EleutherAI/lm-evaluation-harness", "UKGovernmentBEIS/inspect_ai", "SWE-bench/SWE-bench",
+  "laude-institute/terminal-bench", "open-webui/open-webui", "comfyanonymous/ComfyUI",
+  "ray-project/ray", "skypilot-org/skypilot", "LMCache/LMCache", "kvcache-ai/Mooncake",
+  "deepseek-ai/DeepEP", "deepseek-ai/3FS", "QwenLM/Qwen-Agent", "QwenLM/qwen-code",
+  "MoonshotAI/kimi-cli", "microsoft/BitNet", "google/adk-python", "pydantic/pydantic-ai",
+  "run-llama/llama_index", "mem0ai/mem0", "letta-ai/letta", "stanfordnlp/dspy",
+]
+
+[[source]]
+id = "gh_org_repos"
+name = "实验室 GitHub 组织新仓库"
+type = "github_org_repos"
+channel = "repo"
+kind = "repo"
+orgs = [
+  "deepseek-ai", "QwenLM", "MoonshotAI", "zai-org", "MiniMax-AI", "ByteDance-Seed",
+  "openai", "anthropics", "google-deepmind", "google-research", "facebookresearch",
+  "meta-llama", "NVlabs", "apple", "mistralai", "xai-org", "huggingface", "allenai",
+  "Tencent-Hunyuan", "stepfun-ai", "THUDM", "OpenBMB", "InternLM", "SakanaAI",
+  "thinking-machines-lab", "PrimeIntellect-ai", "NVIDIA-NeMo", "microsoft",
+]
+
+[[source]]
+id = "gh_search_new"
+name = "GitHub 新建 AI 仓库（近 3 天，仅发现）"
+type = "github_search"
+channel = "repo"
+kind = "repo"
+queries = [
+  "created:>={since3} stars:>=60",
+  "created:>={since3} stars:>=15 llm in:name,description,topics",
+  "created:>={since3} stars:>=15 agent in:name,description,topics",
+  "created:>={since3} stars:>=15 model in:name,description,topics",
+]
+
+# ───────────────────────── 实验室官方 ─────────────────────────
+[[source]]
+id = "openai"
+name = "OpenAI News"
+type = "rss"
+url = "https://openai.com/news/rss.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "openai_alignment"
+name = "OpenAI Alignment blog"
+type = "html_links"
+url = "https://alignment.openai.com/"
+pattern = '^/[a-z0-9][a-z0-9-]{3,}/?$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "anthropic_news"
+name = "Anthropic News"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_news.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "anthropic_research"
+name = "Anthropic Research"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_research.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "anthropic_engineering"
+name = "Anthropic Engineering"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_engineering.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "anthropic_red"
+name = "Anthropic Frontier Red Team"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_red.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "anthropic_news_html"
+name = "Anthropic News（官网直抓，补镜像延迟）"
+type = "html_links"
+url = "https://www.anthropic.com/news"
+pattern = '^/(news|research|engineering)/[a-z0-9-]+$'
+exclude = '^/(news|research|engineering)/(announcements|features|product|policy|societal-impacts|interpretability|alignment|economic-research)$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "anthropic_alignment"
+name = "Anthropic Alignment Science blog"
+type = "html_links"
+url = "https://alignment.anthropic.com/"
+pattern = '^/?20\d\d/[a-z0-9-]+/?$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "transformer_circuits"
+name = "Transformer Circuits"
+type = "html_links"
+url = "https://transformer-circuits.pub/"
+pattern = '^/?20\d\d/[a-z0-9-]+(/index\.html)?/?$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "deepmind"
+name = "Google DeepMind blog"
+type = "rss"
+url = "https://deepmind.google/blog/rss.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "google_research"
+name = "Google Research blog"
+type = "rss"
+url = "https://research.google/blog/rss/"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "google_ai_blog"
+name = "Google Keyword · AI"
+type = "rss"
+url = "https://blog.google/technology/ai/rss/"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "google_dev"
+name = "Google Developers blog"
+type = "rss"
+url = "https://developers.googleblog.com/feeds/posts/default"
+channel = "lab"
+kind = "lab_post"
+filter = "ai"
+
+[[source]]
+id = "gemini_api_changelog"
+name = "Gemini API changelog"
+type = "html_links"
+url = "https://ai.google.dev/gemini-api/docs/changelog"
+pattern = '^/gemini-api/docs/(models|changelog)#?[a-z0-9.-]*$'
+channel = "lab"
+kind = "release"
+enabled = false   # 页面结构为单页锚点，差分意义不大；保留以备手动查
+
+[[source]]
+id = "meta_ai"
+name = "Meta AI blog"
+type = "html_links"
+url = "https://ai.meta.com/blog/"
+pattern = '^(https://ai\.meta\.com)?/blog/[a-z0-9-]+/?$'
+user_agent = "Mozilla/5.0 Chrome/130"   # 完整桌面 UA 会被返回 400
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "meta_engineering"
+name = "Engineering at Meta"
+type = "rss"
+url = "https://engineering.fb.com/feed/"
+channel = "lab"
+kind = "lab_post"
+filter = "ai"
+
+[[source]]
+id = "msr"
+name = "Microsoft Research blog"
+type = "rss"
+url = "https://www.microsoft.com/en-us/research/feed/"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "nvidia_dev"
+name = "NVIDIA Technical Blog"
+type = "rss"
+url = "https://developer.nvidia.com/blog/feed"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "nvidia_blog"
+name = "NVIDIA Blog"
+type = "rss"
+url = "https://blogs.nvidia.com/feed/"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "apple_ml"
+name = "Apple Machine Learning Research"
+type = "rss"
+url = "https://machinelearning.apple.com/rss.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "mistral"
+name = "Mistral AI news"
+type = "rss"
+url = "https://mistral.ai/rss.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "xai"
+name = "xAI news"
+type = "html_links"
+url = "https://x.ai/news"
+pattern = '^/news/[a-z0-9.-]+$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "deepseek_news"
+name = "DeepSeek API 新闻"
+type = "html_links"
+url = "https://api-docs.deepseek.com/news/news1"
+pattern = '^/news/news\d+$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "minimax_news"
+name = "MiniMax news"
+type = "html_links"
+url = "https://www.minimax.io/news"
+pattern = '^/news/[a-z0-9-]+$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "thinking_machines"
+name = "Thinking Machines（blog + news）"
+type = "html_links"
+url = "https://thinkingmachines.ai/blog/"
+pattern = '^/(blog|news)/[a-z0-9-]+/$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "cohere"
+name = "Cohere blog"
+type = "html_links"
+url = "https://cohere.com/blog"
+pattern = '^/blog/[a-z0-9-]+$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "ai2"
+name = "Ai2 blog"
+type = "rss"
+url = "https://allenai.org/rss.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "together"
+name = "Together AI blog"
+type = "rss"
+url = "https://www.together.ai/blog/rss.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "hf_blog"
+name = "Hugging Face blog"
+type = "rss"
+url = "https://huggingface.co/blog/feed.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "aws_ml"
+name = "AWS Machine Learning blog"
+type = "rss"
+url = "https://aws.amazon.com/blogs/machine-learning/feed/"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "databricks"
+name = "Databricks blog"
+type = "rss"
+url = "https://www.databricks.com/feed"
+channel = "lab"
+kind = "lab_post"
+filter = "ai"
+
+[[source]]
+id = "sakana"
+name = "Sakana AI"
+type = "rss"
+url = "https://sakana.ai/feed.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "bair"
+name = "BAIR blog"
+type = "rss"
+url = "https://bair.berkeley.edu/blog/feed.xml"
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "epoch"
+name = "Epoch AI（Gradient Updates / 数据洞察）"
+type = "rss"
+url = "https://epochai.substack.com/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "epoch_site"
+name = "Epoch AI 官网 latest"
+type = "html_links"
+url = "https://epoch.ai/latest"
+pattern = '^/(blog|data-insights|gradient-updates|papers|benchmarks)/[a-z0-9-]+$'
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "metr"
+name = "METR"
+type = "rss"
+url = "https://metr.org/feed.xml"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "figure"
+name = "Figure AI news"
+type = "html_links"
+url = "https://www.figure.ai/news"
+pattern = '^/news/[a-z0-9-]+$'
+channel = "lab"
+kind = "lab_post"
+
+[[source]]
+id = "cognition"
+name = "Cognition blog"
+type = "html_links"
+url = "https://cognition.ai/blog"
+pattern = '^/blog/[a-z0-9-]+$'
+channel = "lab"
+kind = "lab_post"
+
+# ───────────────────────── 工具 / 产品官方博客 ─────────────────────────
+[[source]]
+id = "cursor"
+name = "Cursor blog/changelog"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_cursor.xml"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "windsurf"
+name = "Windsurf blog"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_windsurf_blog.xml"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "ollama_blog"
+name = "Ollama blog"
+type = "rss"
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_ollama.xml"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "pytorch_blog"
+name = "PyTorch blog"
+type = "rss"
+url = "https://pytorch.org/blog/feed/"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "vllm_blog"
+name = "vLLM blog"
+type = "rss"
+url = "https://vllm.ai/blog/rss.xml"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "github_blog_ai"
+name = "GitHub blog · AI & ML"
+type = "rss"
+url = "https://github.blog/ai-and-ml/feed/"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "langchain_blog"
+name = "LangChain blog"
+type = "rss"
+url = "https://www.langchain.com/blog/rss.xml"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "cloudflare_ai"
+name = "Cloudflare blog · AI"
+type = "rss"
+url = "https://blog.cloudflare.com/tag/ai/rss/"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "replit"
+name = "Replit blog"
+type = "rss"
+url = "https://blog.replit.com/feed.xml"
+channel = "tooling"
+kind = "lab_post"
+
+[[source]]
+id = "zed"
+name = "Zed blog"
+type = "rss"
+url = "https://zed.dev/blog.rss"
+channel = "tooling"
+kind = "lab_post"
+filter = "ai"
+
+# ───────────────────────── 研究者博客 / Newsletter / 长文 ─────────────────────────
+[[source]]
+id = "lilianweng"
+name = "Lil'Log (Lilian Weng)"
+type = "rss"
+url = "https://lilianweng.github.io/index.xml"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "simonw"
+name = "Simon Willison"
+type = "rss"
+url = "https://simonwillison.net/atom/everything/"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "interconnects"
+name = "Interconnects (Nathan Lambert)"
+type = "rss"
+url = "https://www.interconnects.ai/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "importai"
+name = "Import AI (Jack Clark)"
+type = "rss"
+url = "https://importai.substack.com/feed"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "semianalysis"
+name = "SemiAnalysis"
+type = "rss"
+url = "https://newsletter.semianalysis.com/feed"
+channel = "chips_infra"
+kind = "essay"
+
+[[source]]
+id = "latentspace"
+name = "Latent Space"
+type = "rss"
+url = "https://www.latent.space/feed"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "the_batch"
+name = "The Batch (DeepLearning.AI)"
+type = "rss"
+url = "https://charonhub.deeplearning.ai/rss/"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "chiphuyen"
+name = "Chip Huyen"
+type = "rss"
+url = "https://huyenchip.com/feed.xml"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "raschka"
+name = "Ahead of AI (Sebastian Raschka)"
+type = "rss"
+url = "https://magazine.sebastianraschka.com/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "karpathy"
+name = "Andrej Karpathy (bearblog)"
+type = "rss"
+url = "https://karpathy.bearblog.dev/feed/"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "dwarkesh"
+name = "Dwarkesh Podcast / essays"
+type = "rss"
+url = "https://www.dwarkesh.com/feed"
+channel = "podcast"
+kind = "podcast"
+
+[[source]]
+id = "normaltech"
+name = "AI as Normal Technology (Narayanan & Kapoor)"
+type = "rss"
+url = "https://www.normaltech.ai/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "oneusefulthing"
+name = "One Useful Thing (Ethan Mollick)"
+type = "rss"
+url = "https://www.oneusefulthing.org/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "zvi"
+name = "Don't Worry About the Vase (Zvi)"
+type = "rss"
+url = "https://thezvi.substack.com/feed"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "garymarcus"
+name = "Gary Marcus（争论/反方观点）"
+type = "rss"
+url = "https://garymarcus.substack.com/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "eugeneyan"
+name = "Eugene Yan"
+type = "rss"
+url = "https://eugeneyan.com/rss/"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "hamel"
+name = "Hamel Husain"
+type = "rss"
+url = "https://hamel.dev/index.xml"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "philschmid"
+name = "Philipp Schmid"
+type = "rss"
+url = "https://www.philschmid.de/rss"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "grootendorst"
+name = "Maarten Grootendorst"
+type = "rss"
+url = "https://newsletter.maartengrootendorst.com/feed"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "answerai"
+name = "Answer.AI"
+type = "rss"
+url = "https://www.answer.ai/index.xml"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "alignmentforum"
+name = "Alignment Forum"
+type = "rss"
+url = "https://www.alignmentforum.org/feed.xml"
+channel = "research_blog"
+kind = "essay"
+
+[[source]]
+id = "lesswrong_curated"
+name = "LessWrong curated"
+type = "rss"
+url = "https://www.lesswrong.com/feed.xml?view=curated-rss"
+channel = "research_blog"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "stratechery"
+name = "Stratechery（免费文章）"
+type = "rss"
+url = "https://stratechery.com/feed/"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "chinai"
+name = "ChinAI (Jeff Ding)"
+type = "rss"
+url = "https://chinai.substack.com/feed"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "chinatalk"
+name = "ChinaTalk"
+type = "rss"
+url = "https://www.chinatalk.media/feed"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "lastweekinai"
+name = "Last Week in AI"
+type = "rss"
+url = "https://lastweekin.ai/feed"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "understandingai"
+name = "Understanding AI (Timothy B. Lee)"
+type = "rss"
+url = "https://www.understandingai.org/feed"
+channel = "newsletter"
+kind = "essay"
+
+[[source]]
+id = "exponentialview"
+name = "Exponential View"
+type = "rss"
+url = "https://www.exponentialview.co/feed"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "hyperdimensional"
+name = "Hyperdimensional (Dean Ball, 政策)"
+type = "rss"
+url = "https://www.hyperdimensional.co/feed"
+channel = "policy"
+kind = "essay"
+
+[[source]]
+id = "transformernews"
+name = "Transformer (AI 政策周报)"
+type = "rss"
+url = "https://www.transformernews.ai/feed"
+channel = "policy"
+kind = "essay"
+
+[[source]]
+id = "cais_newsletter"
+name = "CAIS AI Safety Newsletter"
+type = "rss"
+url = "https://newsletter.safe.ai/feed"
+channel = "policy"
+kind = "essay"
+
+[[source]]
+id = "bigtech"
+name = "Big Technology (Alex Kantrowitz)"
+type = "rss"
+url = "https://www.bigtechnology.com/feed"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "platformer"
+name = "Platformer"
+type = "rss"
+url = "https://www.platformer.news/rss/"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "notboring"
+name = "Not Boring"
+type = "rss"
+url = "https://www.notboring.co/feed"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+[[source]]
+id = "oreilly_radar"
+name = "O'Reilly Radar"
+type = "rss"
+url = "https://www.oreilly.com/radar/feed/"
+channel = "newsletter"
+kind = "essay"
+filter = "ai"
+
+# ───────────────────────── 播客 / 视频 ─────────────────────────
+[[source]]
+id = "latentspace_pod"
+name = "Latent Space podcast"
+type = "rss"
+url = "https://api.substack.com/feed/podcast/1084089.rss"
+channel = "podcast"
+kind = "podcast"
+
+[[source]]
+id = "nopriors"
+name = "No Priors"
+type = "rss"
+url = "https://feeds.megaphone.fm/nopriors"
+channel = "podcast"
+kind = "podcast"
+
+[[source]]
+id = "cogrev"
+name = "The Cognitive Revolution"
+type = "rss"
+url = "https://feeds.megaphone.fm/RINTP3108857801"
+channel = "podcast"
+kind = "podcast"
+
+[[source]]
+id = "twiml"
+name = "TWIML AI Podcast"
+type = "rss"
+url = "https://feeds.megaphone.fm/MLN2155636147"
+channel = "podcast"
+kind = "podcast"
+
+[[source]]
+id = "lexfridman"
+name = "Lex Fridman Podcast（AI 相关）"
+type = "rss"
+url = "https://lexfridman.com/feed/podcast/"
+channel = "podcast"
+kind = "podcast"
+filter = "ai"
+
+[[source]]
+id = "yt_deepmind"
+name = "YouTube · Google DeepMind"
+type = "rss"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCP7jMXSY2xbc3KCAE0MHQ-A"
+channel = "podcast"
+kind = "video"
+
+[[source]]
+id = "yt_anthropic"
+name = "YouTube · Anthropic"
+type = "rss"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCrDwWp7EBBv4NwvScIpBDOA"
+channel = "podcast"
+kind = "video"
+
+[[source]]
+id = "yt_dwarkesh"
+name = "YouTube · Dwarkesh Patel"
+type = "rss"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCXl4i9dYBrFOabk0xGmbkRA"
+channel = "podcast"
+kind = "video"
+
+[[source]]
+id = "yt_yannic"
+name = "YouTube · Yannic Kilcher"
+type = "rss"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew"
+channel = "podcast"
+kind = "video"
+
+# ───────────────────────── 科技新闻（英文）─────────────────────────
+[[source]]
+id = "verge_ai"
+name = "The Verge · AI"
+type = "rss"
+url = "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "techcrunch_ai"
+name = "TechCrunch · AI"
+type = "rss"
+url = "https://techcrunch.com/category/artificial-intelligence/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "venturebeat_ai"
+name = "VentureBeat · AI"
+type = "rss"
+url = "https://venturebeat.com/category/ai/feed/"
+channel = "news"
+kind = "news"
+enabled = false   # 2026-11-15 连续 3 次 HTTP 429，暂停；内容基本被 TechCrunch/Verge/Decoder 覆盖
+
+[[source]]
+id = "ars_ai"
+name = "Ars Technica · AI"
+type = "rss"
+url = "https://arstechnica.com/ai/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "mittr_ai"
+name = "MIT Technology Review · AI"
+type = "rss"
+url = "https://www.technologyreview.com/topic/artificial-intelligence/feed"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "wired_ai"
+name = "WIRED · AI"
+type = "rss"
+url = "https://www.wired.com/feed/tag/ai/latest/rss"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "theinformation"
+name = "The Information（标题）"
+type = "rss"
+url = "https://www.theinformation.com/feed"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "bloomberg_tech"
+name = "Bloomberg Technology"
+type = "rss"
+url = "https://feeds.bloomberg.com/technology/news.rss"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "ft_ai"
+name = "Financial Times · AI"
+type = "rss"
+url = "https://www.ft.com/artificial-intelligence?format=rss"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "cnbc_tech"
+name = "CNBC Technology"
+type = "rss"
+url = "https://www.cnbc.com/id/19854910/device/rss/rss.html"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "semafor"
+name = "Semafor（AI 相关）"
+type = "rss"
+url = "https://www.semafor.com/rss.xml"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "decoder"
+name = "The Decoder"
+type = "rss"
+url = "https://the-decoder.com/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "marktechpost"
+name = "MarkTechPost"
+type = "rss"
+url = "https://www.marktechpost.com/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "siliconangle_ai"
+name = "SiliconANGLE · AI"
+type = "rss"
+url = "https://siliconangle.com/category/ai/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "404media"
+name = "404 Media"
+type = "rss"
+url = "https://www.404media.co/rss/"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "restofworld"
+name = "Rest of World"
+type = "rss"
+url = "https://restofworld.org/feed/latest/"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "ieee_ai"
+name = "IEEE Spectrum · AI"
+type = "rss"
+url = "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "ieee_robotics"
+name = "IEEE Spectrum · Robotics"
+type = "rss"
+url = "https://spectrum.ieee.org/feeds/topic/robotics.rss"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "robotreport"
+name = "The Robot Report"
+type = "rss"
+url = "https://www.therobotreport.com/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "mit_news_ai"
+name = "MIT News · AI"
+type = "rss"
+url = "https://news.mit.edu/topic/mitartificial-intelligence2-rss.xml"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "crunchbase_ai"
+name = "Crunchbase News · AI（融资）"
+type = "rss"
+url = "https://news.crunchbase.com/sections/ai/feed/"
+channel = "news"
+kind = "news"
+
+[[source]]
+id = "scmp_tech"
+name = "SCMP Tech（中国 AI 英文报道）"
+type = "rss"
+url = "https://www.scmp.com/rss/320663/feed"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "pandaily"
+name = "Pandaily"
+type = "rss"
+url = "https://pandaily.com/feed/"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "technode"
+name = "TechNode"
+type = "rss"
+url = "https://technode.com/feed/"
+channel = "news"
+kind = "news"
+filter = "ai"
+
+# ───────────────────────── 芯片 / 算力 / 基础设施 ─────────────────────────
+[[source]]
+id = "nextplatform"
+name = "The Next Platform"
+type = "rss"
+url = "https://www.nextplatform.com/feed/"
+channel = "chips_infra"
+kind = "news"
+
+[[source]]
+id = "hpcwire"
+name = "HPCwire"
+type = "rss"
+url = "https://www.hpcwire.com/feed/"
+channel = "chips_infra"
+kind = "news"
+
+[[source]]
+id = "dcd"
+name = "DatacenterDynamics"
+type = "rss"
+url = "https://www.datacenterdynamics.com/en/rss/"
+channel = "chips_infra"
+kind = "news"
+
+[[source]]
+id = "servethehome"
+name = "ServeTheHome"
+type = "rss"
+url = "https://www.servethehome.com/feed/"
+channel = "chips_infra"
+kind = "news"
+
+[[source]]
+id = "tomshardware"
+name = "Tom's Hardware（AI/芯片）"
+type = "rss"
+url = "https://www.tomshardware.com/feeds.xml"
+channel = "chips_infra"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "eetimes"
+name = "EE Times"
+type = "rss"
+url = "https://www.eetimes.com/feed/"
+channel = "chips_infra"
+kind = "news"
+
+[[source]]
+id = "digitimes"
+name = "DIGITIMES"
+type = "rss"
+url = "https://www.digitimes.com/rss/daily.xml"
+channel = "chips_infra"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "chipsandcheese"
+name = "Chips and Cheese"
+type = "rss"
+url = "https://chipsandcheese.com/feed/"
+channel = "chips_infra"
+kind = "essay"
+
+[[source]]
+id = "fabricatedknowledge"
+name = "Fabricated Knowledge"
+type = "rss"
+url = "https://www.fabricatedknowledge.com/feed"
+channel = "chips_infra"
+kind = "essay"
+
+# ───────────────────────── 中文 ─────────────────────────
+[[source]]
+id = "qbitai"
+name = "量子位"
+type = "rss"
+url = "https://www.qbitai.com/feed"
+channel = "news_zh"
+kind = "news"
+
+[[source]]
+id = "36kr"
+name = "36氪"
+type = "rss"
+url = "https://www.36kr.com/feed"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "infoq_cn"
+name = "InfoQ 中文"
+type = "rss"
+url = "https://www.infoq.cn/feed"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "leiphone"
+name = "雷峰网"
+type = "rss"
+url = "https://www.leiphone.com/feed"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "ithome"
+name = "IT之家"
+type = "rss"
+url = "https://www.ithome.com/rss/"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "geekpark"
+name = "极客公园"
+type = "rss"
+url = "https://www.geekpark.net/rss"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "tmtpost"
+name = "钛媒体"
+type = "rss"
+url = "https://www.tmtpost.com/rss"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "sspai"
+name = "少数派（AI 相关）"
+type = "rss"
+url = "https://sspai.com/feed"
+channel = "news_zh"
+kind = "news"
+filter = "ai"
+
+[[source]]
+id = "cac"
+name = "国家网信办（AI/算法相关）"
+type = "html_links"
+url = "https://www.cac.gov.cn/"
+pattern = '^(https?:)?(//www\.cac\.gov\.cn)?/20\d\d-\d\d/\d\d/c_\d+\.htm$'
+channel = "policy"
+kind = "policy"
+filter = "ai"
+
+# ───────────────────────── 政策 / 安全 ─────────────────────────
+[[source]]
+id = "federal_register"
+name = "US Federal Register（AI）"
+type = "rss"
+url = "https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bterm%5D=%22artificial+intelligence%22&order=newest"
+channel = "policy"
+kind = "policy"
+
+[[source]]
+id = "nist"
+name = "NIST news（AI 相关）"
+type = "rss"
+url = "https://www.nist.gov/news-events/news/rss.xml"
+channel = "policy"
+kind = "policy"
+filter = "ai"
+
+[[source]]
+id = "uk_aisi"
+name = "UK AI Security Institute（gov.uk）"
+type = "rss"
+url = "https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=ai-security-institute"
+channel = "policy"
+kind = "policy"
+
+[[source]]
+id = "uk_aisi_blog"
+name = "UK AISI blog"
+type = "html_links"
+url = "https://www.aisi.gov.uk/blog"
+pattern = '^(https://www\.aisi\.gov\.uk)?/blog/[a-z0-9-]+$'
+channel = "policy"
+kind = "policy"
+
+[[source]]
+id = "eu_digital"
+name = "EU Digital Strategy（AI Act 等）"
+type = "rss"
+url = "https://digital-strategy.ec.europa.eu/en/rss.xml"
+channel = "policy"
+kind = "policy"
+filter = "ai"
+
+[[source]]
+id = "cset"
+name = "CSET Georgetown"
+type = "rss"
+url = "https://cset.georgetown.edu/feed/"
+channel = "policy"
+kind = "policy"
+
+# ───────────────────────── 社区讨论 ─────────────────────────
+[[source]]
+id = "hn"
+name = "Hacker News（AI 过滤）"
+type = "hn"
+channel = "community"
+kind = "discussion"
+min_points = 25   # 仅作为去噪的发现阈值，不进入正文、不用于纳入判断
+
+[[source]]
+id = "reddit"
+name = "Reddit r/MachineLearning + r/LocalLLaMA + r/singularity（合并为 1 次请求，防 429）"
+type = "reddit"
+url = "https://www.reddit.com/r/MachineLearning+LocalLLaMA+singularity/new/.rss?limit=100"
+channel = "community"
+kind = "discussion"
+
+[[source]]
+id = "lobsters_ai"
+name = "Lobsters · ai"
+type = "rss"
+url = "https://lobste.rs/t/ai.rss"
+channel = "community"
+kind = "discussion"
+
+# ───────────────────────── 已验证不可用（2026-11-15）─────────────────────────
+# ai.meta.com/blog/rss/ → 400（改用 html_links）
+# cohere.com/blog/rss.xml → 空 / txt.cohere.com SSL 错误（改用 html_links）
+# qwenlm.github.io/blog/index.xml → 停更于 2025-09；qwen.ai/research 为 JS 渲染 → Qwen 靠 HF org + GitHub QwenLM + X
+# seed.bytedance.com/en/blog → JS 渲染，无链接 → 靠 HF ByteDance-Seed + GitHub + X
+# moonshotai.github.io → 空壳 → 靠 HF moonshotai + GitHub MoonshotAI + X
+# z.ai/blog → 404 → 靠 HF zai-org + GitHub zai-org + X
+# Olshansk feed_xainews.xml → 停在 2026-09（改用 x.ai/news html_links）；feed_meta_ai.xml 停在 2026-07
+# Olshansk feed_thinkingmachines.xml / feed_claude_code_changelog.xml → 404
+# pytorch.org/feed.xml OK 但与 /blog/feed/ 重复；blog.vllm.ai/feed* → 404（改 vllm.ai/blog/rss.xml）
+# lmsys.org/rss.xml、/blog/rss.xml → 404，/blog 为 JS 渲染
+# thinkingmachines.ai/blog/index.xml → 404（改 html_links）
+# alignment.anthropic.com/feed.xml、alignment.openai.com/feed.xml → 404（改 html_links）
+# www.anthropic.com/rss.xml → 404（用 Olshansk 镜像 + 官网 html_links）
+# deeplearning.ai/the-batch/feed/ → 404（改 charonhub.deeplearning.ai/rss/）
+# epoch.ai/blog/rss.xml、epoch.ai/feed.xml → 404（改 substack + html_links）
+# stability.ai rss → 500；blog.eleuther.ai / eleuther.ai feed → 404；ai21 → 非 XML；perplexity → 403
+# hazyresearch rss → 404；hai.stanford.edu rss → 空；crfm.stanford.edu 停更 2026-05
+# jiqizhixin.com rss/rss.xml → 空；首页为 JS 渲染；rsshub.app → 403 → 机器之心靠 X 与量子位等替代
+# huxiu.com rss → 超时；36kr.com/feed（无 www）→ 空（改 www.36kr.com/feed）
+# axios → 403；lawfaremedia → 403；governance.ai/feed → 404；techpolicy.press rss/feed → 空
+# whitehouse.gov/feed → 404；aisi.gov.uk/rss.xml → 404；brookings/rand AI feed → 空
+# paperswithcode.com → 已停止（并入 HF Papers），不再使用
+# huggingface.co/papers/rss → 401（用 API）；trendforce feed → 404；anandtech → 已停刊
+# modal/baseten/fireworks/cerebras/groq/factory/figure blog rss → 404/SSL（Figure 改 html_links）
+# physicalintelligence.company → 429（反爬）；venturebeat → 间歇 429（保留，失败会记日志）
+# simplecast Ql1Gty9N（MLST）→ 404；transistor cognitive-revolution → 404（改 megaphone）
+# semianalysis.com/feed → 停更于 2025-09（改 newsletter.semianalysis.com/feed）
+# ruder.io / nlpnewsletter / jalammar / thegradient / helentoner / fast.ai → 长期停更，未收

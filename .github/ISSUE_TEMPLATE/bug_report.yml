@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do **not** paste tokens, passwords, salts, `site/CONFIG` or private URLs. Redact them first.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you got (include the command and the error output).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. python3 publish.py --demo --out dist/
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `python3 publish.py --version` (or the commit hash).
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python and Node versions.
+      placeholder: "Ubuntu 24.04, Python 3.12, Node 20"
+  - type: dropdown
+    id: lang
+    attributes:
+      label: Digest language
+      options: [en, zh-CN, not applicable]

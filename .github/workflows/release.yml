@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Tests
+        run: |
+          python -m py_compile *.py fetch/*.py tests/*.py
+          pytest -q
+      - name: Build demo site and source tarball
+        env:
+          DIGEST_DEMO_PASSWORD: ${{ vars.DIGEST_DEMO_PASSWORD || 'demo' }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 publish.py --demo --out dist/
+          (cd dist && zip -qr "../ai-digest-demo-${TAG}.zip" .)
+          git archive --format=tar.gz --prefix="ai-digest-${TAG}/" -o "ai-digest-${TAG}-source.tar.gz" "$TAG"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Notes = the CHANGELOG.md section for this version (falls back to generated notes).
+          ver="${TAG#v}"
+          awk -v v="$ver" '/^## \[/ { p = index($0, "[" v "]") > 0; next } /^\[[^]]*\]: / { next } p' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then notes=(--notes-file release-notes.md); else notes=(--generate-notes); fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            "${notes[@]}" \
+            "ai-digest-${TAG}-source.tar.gz" \
+            "ai-digest-demo-${TAG}.zip"

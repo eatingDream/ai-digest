@@ -1,0 +1,10 @@
+# Generic "must never be committed" patterns (extended regex, one per line; '#' = comment).
+# Deliberately generic: no personal identifiers belong in this file or anywhere in the repo.
+-----BEGIN (RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----
+CLOUDFLARE_API_TOKEN[ ]*[:=][ ]*["']?[A-Za-z0-9_-]{30,}
+CLOUDFLARE_(ACCOUNT_ID|ZONE_ID)[ ]*[:=][ ]*["']?[0-9a-f]{32}\b
+\bgh[pousr]_[A-Za-z0-9]{30,}
+\bgithub_pat_[A-Za-z0-9_]{30,}
+\bAKIA[0-9A-Z]{16}\b
+\bxox[abprs]-[A-Za-z0-9-]{10,}
+(/home/[a-z][a-z0-9_-]*/|/Users/[A-Za-z][A-Za-z0-9._-]*/)(secrets|\.ssh|\.config)

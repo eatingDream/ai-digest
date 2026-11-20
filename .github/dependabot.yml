@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    # requirements*.txt hold permissive lower bounds on purpose (wider compatibility for users);
+    # only raise them when a newer minimum is actually required.
+    versioning-strategy: increase-if-necessary

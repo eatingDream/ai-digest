@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" width="1100" height="640" role="img" aria-labelledby="t d" font-family="-apple-system,'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+<title id="t">ai-digest 架构图</title><desc id="d">信源进入抓取与初筛，再由 LLM 精选成 Markdown 成稿，随后渲染、加密并部署到 Cloudflare Pages；调度器驱动流水线，GitHub Actions 负责 CI、发版与演示站部署。</desc>
+<defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/></marker><filter id="sh" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0f172a" flood-opacity=".10"/></filter></defs>
+<rect x="0.5" y="0.5" width="1099" height="639" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+<text x="550.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#0F172A">ai-digest · agent 驱动的 AI 日报与周报流水线</text>
+<rect x="20" y="64" width="180" height="300" rx="14" fill="#EFF6FF" stroke="#2563EB" stroke-opacity=".35"/>
+<text x="110.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#2563EB">1 · 信源</text>
+<g filter="url(#sh)"><rect x="30" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="30" y="108.0" width="5" height="52" rx="2.5" fill="#2563EB"/></g>
+<text x="44" y="130.0" font-size="14" font-weight="650" fill="#0F172A">订阅源</text>
+<text x="44" y="148.0" font-size="11.5" fill="#475569">RSS · 网页 · 约 150 个</text>
+<g filter="url(#sh)"><rect x="30" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="30" y="171.3" width="5" height="52" rx="2.5" fill="#2563EB"/></g>
+<text x="44" y="193.3" font-size="14" font-weight="650" fill="#0F172A">论文与代码</text>
+<text x="44" y="211.3" font-size="11.5" fill="#475569">arXiv · HF · GitHub</text>
+<g filter="url(#sh)"><rect x="30" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="30" y="234.7" width="5" height="52" rx="2.5" fill="#2563EB"/></g>
+<text x="44" y="256.7" font-size="14" font-weight="650" fill="#0F172A">社区</text>
+<text x="44" y="274.7" font-size="11.5" fill="#475569">Hacker News · Reddit</text>
+<g filter="url(#sh)"><rect x="30" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="30" y="298.0" width="5" height="52" rx="2.5" fill="#2563EB"/></g>
+<text x="44" y="320.0" font-size="14" font-weight="650" fill="#0F172A">X（只读）</text>
+<text x="44" y="338.0" font-size="11.5" fill="#475569">召回协议 · x-recall</text>
+<line x1="204" y1="214.0" x2="236" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
+<rect x="240" y="64" width="180" height="300" rx="14" fill="#F0FDFA" stroke="#0D9488" stroke-opacity=".35"/>
+<text x="330.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#0D9488">2 · 抓取与初筛</text>
+<g filter="url(#sh)"><rect x="250" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="250" y="108.0" width="5" height="52" rx="2.5" fill="#0D9488"/></g>
+<text x="264" y="130.0" font-size="14" font-weight="650" fill="#0F172A">fetch.py</text>
+<text x="264" y="148.0" font-size="11.5" fill="#475569">并行抓取 · 去重 · 打标</text>
+<g filter="url(#sh)"><rect x="250" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="250" y="171.3" width="5" height="52" rx="2.5" fill="#0D9488"/></g>
+<text x="264" y="193.3" font-size="14" font-weight="650" fill="#0F172A">ledger.py</text>
+<text x="264" y="211.3" font-size="11.5" fill="#475569">★ 已推送 · ☆ 已见过</text>
+<g filter="url(#sh)"><rect x="250" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="250" y="234.7" width="5" height="52" rx="2.5" fill="#0D9488"/></g>
+<text x="264" y="256.7" font-size="14" font-weight="650" fill="#0F172A">triage.md</text>
+<text x="264" y="274.7" font-size="11.5" fill="#475569">+ candidates.jsonl</text>
+<g filter="url(#sh)"><rect x="250" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="250" y="298.0" width="5" height="52" rx="2.5" fill="#0D9488"/></g>
+<text x="264" y="320.0" font-size="14" font-weight="650" fill="#0F172A">论文初筛</text>
+<text x="264" y="338.0" font-size="11.5" fill="#475569">prompts/&lt;lang&gt;/papers.md</text>
+<line x1="424" y1="214.0" x2="456" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
+<rect x="460" y="64" width="180" height="300" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-opacity=".35"/>
+<text x="550.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#7C3AED">3 · LLM 精选</text>
+<g filter="url(#sh)"><rect x="470" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="470" y="108.0" width="5" height="52" rx="2.5" fill="#7C3AED"/></g>
+<text x="484" y="130.0" font-size="14" font-weight="650" fill="#0F172A">精选 agent</text>
+<text x="484" y="148.0" font-size="11.5" fill="#475569">prompts/&lt;lang&gt;/daily · weekly</text>
+<g filter="url(#sh)"><rect x="470" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="470" y="171.3" width="5" height="52" rx="2.5" fill="#7C3AED"/></g>
+<text x="484" y="193.3" font-size="14" font-weight="650" fill="#0F172A">筛选规则</text>
+<text x="484" y="211.3" font-size="11.5" fill="#475569">filter-notes · x-sources</text>
+<g filter="url(#sh)"><rect x="470" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="470" y="234.7" width="5" height="52" rx="2.5" fill="#7C3AED"/></g>
+<text x="484" y="256.7" font-size="14" font-weight="650" fill="#0F172A">核对出处</text>
+<text x="484" y="274.7" font-size="11.5" fill="#475569">优先一手来源</text>
+<g filter="url(#sh)"><rect x="470" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="470" y="298.0" width="5" height="52" rx="2.5" fill="#7C3AED"/></g>
+<text x="484" y="320.0" font-size="14" font-weight="650" fill="#0F172A">digest-&lt;P&gt;.md</text>
+<text x="484" y="338.0" font-size="11.5" fill="#475569">Markdown 成稿</text>
+<line x1="644" y1="214.0" x2="676" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
+<rect x="680" y="64" width="180" height="300" rx="14" fill="#FFF7ED" stroke="#EA580C" stroke-opacity=".35"/>
+<text x="770.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#EA580C">4 · 渲染与加密</text>
+<g filter="url(#sh)"><rect x="690" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="108.0" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
+<text x="704" y="130.0" font-size="14" font-weight="650" fill="#0F172A">render_html.py</text>
+<text x="704" y="148.0" font-size="11.5" fill="#475569">Markdown → 单文件 HTML</text>
+<g filter="url(#sh)"><rect x="690" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="171.3" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
+<text x="704" y="193.3" font-size="14" font-weight="650" fill="#0F172A">publish.py</text>
+<text x="704" y="211.3" font-size="11.5" fill="#475569">导航 · 目录 · 隐私扫描</text>
+<g filter="url(#sh)"><rect x="690" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="234.7" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
+<text x="704" y="256.7" font-size="14" font-weight="650" fill="#0F172A">AES-256-GCM</text>
+<text x="704" y="274.7" font-size="11.5" fill="#475569">PBKDF2-SHA256 · 60 万次</text>
+<g filter="url(#sh)"><rect x="690" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="298.0" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
+<text x="704" y="320.0" font-size="14" font-weight="650" fill="#0F172A">verify_decrypt</text>
+<text x="704" y="338.0" font-size="11.5" fill="#475569">逐页解密回验</text>
+<line x1="864" y1="214.0" x2="896" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
+<rect x="900" y="64" width="180" height="300" rx="14" fill="#F0FDF4" stroke="#16A34A" stroke-opacity=".35"/>
+<text x="990.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#16A34A">5 · 部署与阅读</text>
+<g filter="url(#sh)"><rect x="910" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="108.0" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
+<text x="924" y="130.0" font-size="14" font-weight="650" fill="#0F172A">wrangler</text>
+<text x="924" y="148.0" font-size="11.5" fill="#475569">pages deploy · 增量</text>
+<g filter="url(#sh)"><rect x="910" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="171.3" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
+<text x="924" y="193.3" font-size="14" font-weight="650" fill="#0F172A">Cloudflare Pages</text>
+<text x="924" y="211.3" font-size="11.5" fill="#475569">静态托管 · 仅存密文</text>
+<g filter="url(#sh)"><rect x="910" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="234.7" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
+<text x="924" y="256.7" font-size="14" font-weight="650" fill="#0F172A">_headers</text>
+<text x="924" y="274.7" font-size="11.5" fill="#475569">noindex · no-referrer</text>
+<g filter="url(#sh)"><rect x="910" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="298.0" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
+<text x="924" y="320.0" font-size="14" font-weight="650" fill="#0F172A">读者浏览器</text>
+<text x="924" y="338.0" font-size="11.5" fill="#475569">输入密码 → Web Crypto</text>
+<rect x="20" y="398" width="840" height="92" rx="12" fill="#F0F9FF" stroke="#0369A1" stroke-opacity=".4" stroke-dasharray="5 4"/>
+<text x="36" y="420" font-size="13" font-weight="700" fill="#0369A1">调度 · 任何带 shell、文件与联网工具的 agent 运行器</text>
+<g filter="url(#sh)"><rect x="36" y="430" width="262" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
+<text x="48" y="449" font-size="13" font-weight="650" fill="#0F172A">每日任务</text>
+<text x="48" y="466" font-size="11.5" fill="#475569">论文初筛 → 精选 · 覆盖前一天</text>
+<g filter="url(#sh)"><rect x="310" y="430" width="236" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
+<text x="322" y="449" font-size="13" font-weight="650" fill="#0F172A">每周任务</text>
+<text x="322" y="466" font-size="11.5" fill="#475569">周一回顾上一周</text>
+<g filter="url(#sh)"><rect x="558" y="430" width="248" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
+<text x="570" y="449" font-size="13" font-weight="650" fill="#0F172A">DIGEST_TZ · DIGEST_LANG</text>
+<text x="570" y="466" font-size="11.5" fill="#475569">日界线时区 · en | zh-CN</text>
+<rect x="20" y="506" width="1060" height="92" rx="12" fill="#F8FAFC" stroke="#475569" stroke-opacity=".4" stroke-dasharray="5 4"/>
+<text x="36" y="528" font-size="13" font-weight="700" fill="#475569">GitHub Actions · CI/CD</text>
+<g filter="url(#sh)"><rect x="36" y="538" width="420" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
+<text x="48" y="557" font-size="13" font-weight="650" fill="#0F172A">ci.yml</text>
+<text x="48" y="574" font-size="11.5" fill="#475569">py_compile · pytest · node 检查 · gitleaks · 脱敏守卫</text>
+<g filter="url(#sh)"><rect x="468" y="538" width="330" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
+<text x="480" y="557" font-size="13" font-weight="650" fill="#0F172A">release.yml</text>
+<text x="480" y="574" font-size="11.5" fill="#475569">打 v* 标签 → 测试 → GitHub Release + 压缩包</text>
+<g filter="url(#sh)"><rect x="810" y="538" width="262" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
+<text x="822" y="557" font-size="13" font-weight="650" fill="#0F172A">demo.yml</text>
+<text x="822" y="574" font-size="11.5" fill="#475569">examples/ → publish.py --demo → Pages</text>
+<line x1="330.0" y1="397" x2="330.0" y2="367" stroke="#94A3B8" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ad)"/>
+<line x1="550.0" y1="397" x2="550.0" y2="367" stroke="#94A3B8" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ad)"/>
+<text x="560.0" y="389" font-size="11" fill="#64748B">触发</text>
+<line x1="990.0" y1="505" x2="990.0" y2="367" stroke="#94A3B8" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ad)"/>
+<text x="1000.0" y="422" font-size="11" fill="#64748B">演示站部署</text>
+</svg>

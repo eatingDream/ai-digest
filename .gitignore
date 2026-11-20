@@ -1,0 +1,49 @@
+# secrets / local config
+site/CONFIG
+site/privacy-patterns.txt
+fetch/preferences.json
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+secrets/
+*password*
+!site/password_template.html
+*salt*
+*token*
+x-sources.local.md
+
+# working data
+runs/
+raw/
+logs/
+html/
+preview/
+bench/
+backfill/
+ledger.json
+digest-*.md
+weekly-*.md
+!examples/*.md
+fetch/state/
+
+# generated site output
+site/plain/
+site/sources/
+site/public/*/
+site/public/_redirects
+site/enc-cache.json
+site/removed-paths.txt
+dist/
+
+# tooling
+node_modules/
+.wrangler/
+.publish.lock
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.bak*
+*.tmp
