@@ -95,6 +95,7 @@ import argparse
 import base64
 import gzip
 import hashlib
+import html as htmlmod
 import json
 import mimetypes
 import os
@@ -110,19 +111,21 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import i18n
 from version import __version__
 
-ROOT = Path(os.environ.get("DIGEST_ROOT") or Path(__file__).resolve().parent)
+CODE_ROOT = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("DIGEST_ROOT") or CODE_ROOT)
 SITE = ROOT / "site"
 PUBLIC = SITE / "public"
 PLAIN = SITE / "plain"
 SOURCES = SITE / "sources"
 CONFIG_PATH = SITE / "CONFIG"
-TEMPLATE_PATH = SITE / "password_template.html"
+TEMPLATE_PATH = (SITE / "password_template.html") if (SITE / "password_template.html").is_file() else (CODE_ROOT / "site" / "password_template.html")
 TOKEN_FILE_DEFAULT = Path.home() / ".config/ai-digest/cloudflare_token"
 PASSWORD_FILE_DEFAULT = Path.home() / ".config/ai-digest/site-password"
 SALT_FILE_DEFAULT = Path.home() / ".config/ai-digest/site-salt"
@@ -300,8 +303,8 @@ def issue_prefetch_hints(issue: "Issue", issues: list["Issue"]) -> list[str]:
     return hints
 
 
-def inject_perf_and_lock(html: str, issue: "Issue", issues: list["Issue"]) -> str:
-    head = perf_head_html(issue_prefetch_hints(issue, issues))
+def inject_perf_and_lock(html: str, issue: "Issue", issues: list["Issue"], slug: str | None = None) -> str:
+    head = perf_head_html(issue_prefetch_hints(issue, issues), slug=slug)
     html = re.sub(r"(<meta charset=[^>]*>\s*)", lambda m: m.group(1) + head, html, count=1, flags=re.I)
     html = re.sub(r"</body>", lambda m: LOCK_JS_BLOCK + "\n</body>", html, count=1, flags=re.I)
     return html
@@ -651,12 +654,12 @@ def save_source(html_path: Path, kind: str, label: str) -> Path:
     return dest
 
 
-def write_static_root() -> None:
+def write_static_root(slug: str | None = None) -> None:
     PUBLIC.mkdir(parents=True, exist_ok=True)
     (PUBLIC / "robots.txt").write_text(
         "User-agent: *\nDisallow: /\n", encoding="utf-8"
     )
-    slug = load_config()["SLUG"]
+    slug = slug or load_config()["SLUG"]
     # HTML only changes when an issue is (re)published; short max-age +
     # long stale-while-revalidate makes back/forward and prefetched clicks
     # instant while a publish shows up within minutes. Paths do not overlap,
@@ -691,7 +694,6 @@ def write_static_root() -> None:
     removed = SITE / "removed-paths.txt"
     rules = []
     if removed.is_file():
-        slug = load_config()["SLUG"]
         for line in removed.read_text(encoding="utf-8").split():
             line = line.strip().strip("/")
             if line:
@@ -719,7 +721,7 @@ def issue_headlines(issue: Issue) -> list[str]:
         r = re.sub(r'<span class="(?:n|story-no) num">.*?</span>', "", r, flags=re.S)
         t = re.sub(r"<[^>]+>", "", r)
         t = re.sub(r"\s+", " ", t).strip()
-        t = t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+        t = htmlmod.unescape(t)
         if t:
             out.append(t)
     return out
@@ -812,8 +814,9 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
 
     # Warm the likely next clicks: newest daily + newest weekly.
     hints = [i.rel_url for i in (dailies[:2] + weeklies[:1])]
-    perf_head = perf_head_html(hints)
-    today = datetime.now().astimezone().date()
+    perf_head = perf_head_html(hints, slug=cfg["SLUG"])
+    tz_name = os.environ.get("DIGEST_TZ", "").strip()
+    today = datetime.now(ZoneInfo(tz_name)).date() if tz_name else datetime.now().astimezone().date()
     today_line = (
         f"{i18n.date_long(LANG, today)} · {i18n.weekday(LANG, today)}"
         if LANG == "zh-CN"
@@ -1168,12 +1171,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 
 
 def _esc(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return htmlmod.escape(s, quote=False).replace('"', "&quot;")
 
 
 def _clear_files(root: Path) -> None:
@@ -1190,11 +1188,10 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
     Does not write issue HTML into public/; encrypt_all_pages does that.
     Root files (robots.txt, 404, _headers) are written unencrypted to public/.
     """
-    write_static_root()
-    issues = list_sources()
     slug = cfg["SLUG"]
+    write_static_root(slug=slug)
+    issues = list_sources()
     plain_dir = PLAIN / slug
-    pub_dir = PUBLIC / slug
     _clear_files(plain_dir)
     # public/<slug> is NOT cleared: unchanged encrypted pages are reused
     # (see encrypt_all_pages cache); stale ones are pruned after encryption.
@@ -1207,10 +1204,11 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
         html = ensure_noindex(html)
         html = ensure_nav_css(html)
         html = inject_nav(html, issue, issues)
-        html = inject_perf_and_lock(html, issue, issues)
+        html = inject_perf_and_lock(html, issue, issues, slug=slug)
         html = minify_css(html)
-        issue.dest.parent.mkdir(parents=True, exist_ok=True)
-        issue.dest.write_text(html, encoding="utf-8")
+        dest = plain_dir / issue.kind / f"{issue.label}.html"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(html, encoding="utf-8")
 
     index_path = plain_dir / "index.html"
     index_path.write_text(minify_css(index_html(cfg, issues)), encoding="utf-8")
@@ -1601,12 +1599,15 @@ def write_secret_file(path: Path, data: bytes) -> None:
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.write(fd, data)
-    finally:
-        os.close(fd)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
-    os.chmod(path, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def generate_and_save_password() -> None:
@@ -1750,9 +1751,6 @@ def _distinctive_snippets(plain: str, tmpl: str) -> list[str]:
         t = re.sub(r"\s+", " ", t).strip()
         if len(t) >= 8 and t not in tmpl:
             snippets.append(t)
-    for extra in ("ACE-RL",):
-        if extra in plain and extra not in tmpl:
-            snippets.append(extra)
     # Dedup, keep order
     seen: set[str] = set()
     out: list[str] = []
@@ -1800,11 +1798,12 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
         die("no plaintext HTML to encrypt")
 
     # Content-hash cache: a page is re-encrypted only when its plaintext,
-    # the salt, or the template changed. Encryption uses a random IV, so
-    # re-encrypting unchanged pages would change ciphertext and force
-    # re-upload; we keep the prior encrypted file instead.
+    # the derived key/salt, the template, or the shell language changed.
+    # Encryption uses a random IV, so re-encrypting unchanged pages would
+    # change ciphertext and force re-upload; we keep the prior encrypted file.
     cache = _load_enc_cache()
     salt_fp = hashlib.sha256(salt).hexdigest()[:16]
+    key_fp = hashlib.sha256(key).hexdigest()[:16]
     tmpl_fp = hashlib.sha256(tmpl.encode("utf-8")).hexdigest()[:16]
     new_cache: dict[str, str] = {}
     n = skipped = 0
@@ -1813,7 +1812,7 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
         rel = src.relative_to(src_root)
         plain = src.read_text(encoding="utf-8")
         alt_fp = hashlib.sha256((lang_switch_href(rel.as_posix()) or "").encode()).hexdigest()[:8]
-        fp = f"{hashlib.sha256(plain.encode('utf-8')).hexdigest()}:{salt_fp}:{tmpl_fp}:{alt_fp}"
+        fp = f"{hashlib.sha256(plain.encode('utf-8')).hexdigest()}:{salt_fp}:{key_fp}:{tmpl_fp}:{alt_fp}:{LANG}"
         dest = dst_root / rel
         key_rel = rel.as_posix()
         if cache.get(key_rel) == fp and dest.is_file():
@@ -1856,7 +1855,10 @@ def _load_enc_cache() -> dict[str, str]:
 
 
 def _save_enc_cache(cache: dict[str, str]) -> None:
-    ENC_CACHE_PATH.write_text(json.dumps(cache, indent=1, sort_keys=True), encoding="utf-8")
+    ENC_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ENC_CACHE_PATH.with_name(ENC_CACHE_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(cache, indent=1, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, ENC_CACHE_PATH)
 
 
 def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
@@ -1949,7 +1951,8 @@ def rerender_all_sources() -> None:
     Skips (loudly) any issue whose markdown is missing; its old source stays.
     Normal runs never call this.
     """
-    sys.path.insert(0, str(ROOT))
+    if str(CODE_ROOT) not in sys.path:
+        sys.path.insert(0, str(CODE_ROOT))
     import render_html
 
     (ROOT / "html").mkdir(exist_ok=True)
@@ -1960,7 +1963,7 @@ def rerender_all_sources() -> None:
             print(f"rerender: SKIP {issue.kind}/{issue.label} (no {md.name})", file=sys.stderr)
             continue
         out = ROOT / "html" / f"{issue.kind}-{issue.label}.html"
-        render_html.render_file(md, out, LANG)
+        render_html.render_file(md, out, LANG, year=issue.start.year)
         save_source(out, issue.kind, issue.label)
         print(f"rerender: {issue.kind}/{issue.label} <- {md.name}", file=sys.stderr)
 
@@ -2007,7 +2010,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
     on every page and `/` redirecting to /en/.
     """
     global SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH
-    global _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT
+    global _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG
     import shutil
     import tempfile
 
@@ -2016,13 +2019,14 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         die("set env DIGEST_DEMO_PASSWORD (>= 4 chars; it is a public demo password) for --demo")
     langs = tuple(langs) if langs else (LANG,)
     multi = len(langs) > 1
-    parse_daily_label(daily_label)
-    parse_weekly_label(weekly_label)
+    daily_date = parse_daily_label(daily_label)
+    weekly_start, _ = parse_weekly_label(weekly_label)
     for lg in langs:
         if not (examples / f"sample-digest.{lg}.md").is_file():
             die(f"missing {examples / f'sample-digest.{lg}.md'}")
 
-    saved_cli_lang = CLI_LANG
+    saved_paths = (SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH)
+    saved_overrides = (_PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG)
     saved_slug = os.environ.get("SITE_SLUG")
     if multi:  # the language prefixes are the slugs; an env slug would override them in load_config()
         os.environ.pop("SITE_SLUG", None)
@@ -2034,7 +2038,8 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         _PASSWORD_OVERRIDE = password
         _SALT_OVERRIDE = os.urandom(SALT_LEN)
         key = derive_key(password, _SALT_OVERRIDE)
-        sys.path.insert(0, str(ROOT))
+        if str(CODE_ROOT) not in sys.path:
+            sys.path.insert(0, str(CODE_ROOT))
         import render_html
 
         slugs = {lg: (lg if multi else (saved_slug or "demo")) for lg in langs}
@@ -2057,12 +2062,12 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             html_dir = work / f"html-{lg}"
             sample_daily = examples / f"sample-digest.{lg}.md"
             sample_weekly = examples / f"sample-weekly.{lg}.md"
-            jobs = [(sample_daily, "daily", daily_label)]
+            jobs = [(sample_daily, "daily", daily_label, daily_date.year)]
             if sample_weekly.is_file():
-                jobs.append((sample_weekly, "weekly", weekly_label))
-            for md, kind, label in jobs:
+                jobs.append((sample_weekly, "weekly", weekly_label, weekly_start.year))
+            for md, kind, label, issue_year in jobs:
                 h = html_dir / f"{kind}-{label}.html"
-                render_html.render_file(md, h, lg)
+                render_html.render_file(md, h, lg, year=issue_year)
                 save_source(h, kind, label)
             cfg = load_config()
             issues = rebuild_all(cfg)
@@ -2091,9 +2096,8 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         print(f"demo site: {total_issues} issue(s), {total_pages} page(s) verified by decrypt -> {out}/ (entry: /{entry}/; {where})")
         return 0
     finally:
-        _PASSWORD_OVERRIDE = None
-        LANG_ALT = None
-        CLI_LANG = saved_cli_lang
+        SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH = saved_paths
+        _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG = saved_overrides
         if saved_slug is not None:
             os.environ["SITE_SLUG"] = saved_slug
         shutil.rmtree(work, ignore_errors=True)
@@ -2108,6 +2112,7 @@ def _acquire_publish_lock(max_wait: int = 900) -> None:
     Held until the process exits. (2026-11-18 review)"""
     global _PUBLISH_LOCK
     import fcntl
+    ROOT.mkdir(parents=True, exist_ok=True)
     _PUBLISH_LOCK = open(ROOT / ".publish.lock", "w")
     t0 = time.time()
     while True:
@@ -2170,7 +2175,7 @@ def main(argv: list[str] | None = None) -> int:
         set_lang(CLI_LANG)  # demo ignores site/CONFIG: --lang > $DIGEST_LANG > both languages
         return build_demo(
             Path(args.out),
-            Path(args.examples) if args.examples else ROOT / "examples",
+            Path(args.examples) if args.examples else CODE_ROOT / "examples",
             DEMO_DAILY_LABEL, DEMO_WEEKLY_LABEL,
             DEMO_LANGS if demo_all else None,
         )
@@ -2300,7 +2305,7 @@ def _verify_decrypt(log) -> tuple[bool, str]:
     last = ""
     for attempt in range(5):
         proc = subprocess.run(
-            ["node", str(ROOT / "verify_decrypt.mjs"), "--url-base", f"https://{load_config()['DOMAIN']}"],
+            ["node", str(CODE_ROOT / "verify_decrypt.mjs"), "--url-base", f"https://{load_config()['DOMAIN']}"],
             cwd=str(ROOT), capture_output=True, text=True, timeout=300,
         )
         log.write(f"[verify attempt {attempt + 1}] rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}\n")
@@ -2315,7 +2320,6 @@ def _verify_decrypt(log) -> tuple[bool, str]:
 
 def run_incremental(args) -> int:
     import contextlib
-    import io
     import traceback
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -2363,12 +2367,26 @@ def run_incremental(args) -> int:
                 html_path = ROOT / "html" / f"{kind}-{label}.html"
                 if args.md:
                     md = Path(args.md)
-                    if not md.is_absolute():
+                    if not md.is_absolute() and not md.is_file():
                         md = ROOT / md
                     if not md.is_file():
                         die(f"markdown not found: {md}")
+                    issue_year = (
+                        parse_daily_label(label).year
+                        if kind == "daily"
+                        else parse_weekly_label(label)[0].year
+                    )
                     proc = subprocess.run(
-                        [sys.executable, str(ROOT / "render_html.py"), str(md), str(html_path), "--lang", LANG],
+                        [
+                            sys.executable,
+                            str(CODE_ROOT / "render_html.py"),
+                            str(md.resolve()),
+                            str(html_path),
+                            "--lang",
+                            LANG,
+                            "--year",
+                            str(issue_year),
+                        ],
                         cwd=str(ROOT), capture_output=True, text=True, timeout=120,
                     )
                     print(proc.stdout)
@@ -2388,32 +2406,35 @@ def run_incremental(args) -> int:
             changed = list(CHANGED_PAGES)
             summary.append("changed pages: " + (", ".join(changed) if changed else "none"))
 
-            token = find_token()
-            if not token:
-                die("no Cloudflare API token on box; site prepared but not deployed")
-            deploy_with_token(cfg, token, f"{action} {kind}/{label}")
-            summary.append("deploy: ok")
-
-            if args.remove:
-                st1, loc1 = _http_status(issue_url)
-                st2, loc2 = _http_status(issue_url + ".html")
-                summary.append(f"removed URL check: extensionless -> {st1}{' ' + loc1 if loc1 else ''}; .html -> {st2}{' ' + loc2 if loc2 else ''}")
+            if args.prepare_only:
+                summary.append("deploy: skipped (--prepare-only)")
             else:
-                st = 0
-                for _ in range(6):
-                    st, _loc = _http_status(issue_url)
-                    if st == 200:
-                        break
-                    time.sleep(10)
-                summary.append(f"url: {issue_url}  (HTTP {st})")
-                if st != 200:
-                    ok = False
-            idx_st, _ = _http_status(f"{base}/")
-            summary.append(f"index: {base}/  (HTTP {idx_st})")
-            if not args.no_verify:
-                vok, vmsg = _verify_decrypt(log)
-                summary.append(f"decrypt check: {vmsg}")
-                ok = ok and vok
+                token = find_token()
+                if not token:
+                    die("no Cloudflare API token on box; site prepared but not deployed")
+                deploy_with_token(cfg, token, f"{action} {kind}/{label}")
+                summary.append("deploy: ok")
+
+                if args.remove:
+                    st1, loc1 = _http_status(issue_url)
+                    st2, loc2 = _http_status(issue_url + ".html")
+                    summary.append(f"removed URL check: extensionless -> {st1}{' ' + loc1 if loc1 else ''}; .html -> {st2}{' ' + loc2 if loc2 else ''}")
+                else:
+                    st = 0
+                    for _ in range(6):
+                        st, _loc = _http_status(issue_url)
+                        if st == 200:
+                            break
+                        time.sleep(10)
+                    summary.append(f"url: {issue_url}  (HTTP {st})")
+                    if st != 200:
+                        ok = False
+                idx_st, _ = _http_status(f"{base}/")
+                summary.append(f"index: {base}/  (HTTP {idx_st})")
+                if not args.no_verify:
+                    vok, vmsg = _verify_decrypt(log)
+                    summary.append(f"decrypt check: {vmsg}")
+                    ok = ok and vok
     except SystemExit as e:
         ok = False
         summary.append(f"FAILED (exit {e.code})")
