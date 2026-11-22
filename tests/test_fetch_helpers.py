@@ -63,3 +63,33 @@ def test_fetch_lang_flag_sets_language(monkeypatch):
     monkeypatch.delenv("DIGEST_LANG", raising=False)
     import i18n
     assert i18n.resolve_lang("zh-CN") == "zh-CN"
+
+
+def test_paper_signals_keyword_tags_localized(monkeypatch):
+    c = fx.Cand(
+        title="Orion-3 Technical Report: Open-Weights Release",
+        url="https://arxiv.org/abs/0000.00001",
+        source="arxiv",
+        channel="paper",
+        kind="paper",
+        summary="We release open-weights checkpoints.",
+        extra={"arxiv_id": "0000.00001"},
+    )
+    monkeypatch.setattr(fx, "FL", "en")
+    assert fx.paper_signals(c, {}) == ["keyword:technical report/open weights / model family"]
+    monkeypatch.setattr(fx, "FL", "zh-CN")
+    assert fx.paper_signals(c, {}) == ["词:技术报告/开源权重/模型族"]
+
+
+def test_paper_signals_empty_when_no_signal(monkeypatch):
+    c = fx.Cand(
+        title="A routine synthetic study on synthetic data",
+        url="https://arxiv.org/abs/0000.00002",
+        source="arxiv",
+        channel="paper",
+        kind="paper",
+        summary="No frontier signals present.",
+        extra={"arxiv_id": "0000.00002"},
+    )
+    monkeypatch.setattr(fx, "FL", "en")
+    assert fx.paper_signals(c, {}) == []
