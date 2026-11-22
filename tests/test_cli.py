@@ -137,8 +137,15 @@ def test_version_flag_and_changelog_agree():
     import version
     for script in ("publish.py", "render_html.py", "fetch/fetch.py"):
         assert run(script, "--version").stdout.strip() == f"ai-digest {version.__version__}"
+    manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["."] == version.__version__
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert re.search(rf"^## \[{re.escape(version.__version__)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, re.M)
+    ver = re.escape(version.__version__)
+    assert re.search(
+        rf"^###? (?:\[{ver}\](?:\([^)]*\))?|{ver}) (?:-\s*\d{{4}}-\d{{2}}-\d{{2}}|\(\d{{4}}-\d{{2}}-\d{{2}}\))$",
+        changelog,
+        re.M,
+    )
 
 
 def test_verify_decrypt_help_and_version():

@@ -1,17 +1,7 @@
 # Changelog
 
 All notable changes to this project are documented here.
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
-
-## [Unreleased]
-
-### Fixed
-- Restored Python 3.11 compatibility by removing Python 3.12-only backslashes inside f-string expressions in `render_html.py` and `fetch/page.py`, and added a Python 3.11 CI check.
-- Fixed `NameError` (`L` -> `tr`) in `fetch/fetch.py` (`paper_signals`) when an off-topic paper matches a major-result keyword.
-- Replaced hardcoded year `2026` in `render_html.py` with dynamic year inference (from `--year`, heading, filename, or current year) and fixed cross-year weekly date ranges in both English and Chinese.
-- Hardened `fetch/fetch.py`: thread-local pooled HTTP sessions, thread-safe notes/state updates, explicit UTF-8 file I/O, localized `--reuse`/lock messages, `--reuse --json` output, `--rebuild --no-fold` handling, and removed a duplicate org entry in `fetch/sources.toml`.
-- Hardened `fetch/` helper CLIs (`ledger.py`, `weekly_late.py`, `xparse.py`, `page.py`, `cand.py`, `check_cands.py`): atomic UTF-8 ledger writes with URL merging and isolated backups under `LEDGER_PATH`, working `--chars` abstracts in `weekly_late.py`, epoch-millisecond timestamp parsing and localized summaries in `xparse.py`, in-process parallel fetching in `page.py`, clean missing-file handling in `check_cands.py`, and consistent `--lang` / `DIGEST_ROOT` support.
-- Hardened `publish.py` and `verify_decrypt.mjs`: separated `CODE_ROOT` from `DIGEST_ROOT`, added derived-key and language invalidation plus atomic writes to `site/enc-cache.json`, respected `DIGEST_TZ` on the index page, full HTML entity unescaping for headlines, atomic secret file writes with cleanup on failure, full global state restoration in `build_demo()`, `--prepare-only` dry-run support for `--issue`/`--remove`, deterministic issue year propagation to `render_html.py`, and strict CLI/directory checks in `verify_decrypt.mjs`.
+The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
 ## [0.1.0] - 2026-11-20
 

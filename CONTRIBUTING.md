@@ -20,11 +20,12 @@ We follow a single-trunk GitHub Flow with linear history on `main`:
 
 ## Releases
 
-Maintainers cut releases via a dedicated PR (`chore/release-vX.Y.Z`):
+Releases are automated with [Release Please](https://github.com/googleapis/release-please) (`.github/workflows/release-please.yml`):
 
-1. Bump `__version__` in [version.py](version.py) and move `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under `## [X.Y.Z] - YYYY-MM-DD`.
-2. Open a PR to `main`, wait for CI (which also verifies `version.py` matches `CHANGELOG.md`), and squash-merge.
-3. Tag the merged commit on `main` as `vX.Y.Z` (or `vX.Y.Z-rc.1` for pre-releases) and push the tag — `.github/workflows/release.yml` runs tests, builds the demo artifact, and creates the GitHub Release automatically.
+1. Merge normal PRs to `main` using Conventional Commit titles (`fix:` / `perf:` / `refactor:` → patch, `feat:` → minor, `!:` or `BREAKING CHANGE:` → minor pre-1.0 / major ≥1.0). Contributors do **not** need to edit `version.py` or `CHANGELOG.md` manually.
+2. On every push to `main`, Release Please automatically opens or updates a standing Release PR (`chore(main): release X.Y.Z`) that bumps [version.py](version.py), [.release-please-manifest.json](.release-please-manifest.json), and [CHANGELOG.md](CHANGELOG.md).
+3. When ready to ship, ensure CI is green on the Release PR and squash-merge it. Release Please automatically creates the `vX.Y.Z` tag and GitHub Release, then invokes `.github/workflows/release.yml` to run full checks and attach the source tarball, demo zip, and `SHA256SUMS.txt`.
+4. Pre-releases (e.g. `v0.2.0-rc.1`) can still be tagged manually on `main` to trigger `.github/workflows/release.yml` directly.
 
 ## Set up and test
 
@@ -41,11 +42,10 @@ Preview the demo site without any secrets: `DIGEST_DEMO_PASSWORD=demo python3 pu
 
 ## Pull request checklist
 
-- One focused change per PR, with a Conventional Commit title and a short description of what and why.
+- One focused change per PR, with a Conventional Commit title and a short description of what and why (Release Please generates [CHANGELOG.md](CHANGELOG.md) directly from PR titles).
 - Add or update tests for behavior changes; keep `pytest -q` offline and fast.
 - User-facing text goes through `i18n.py` and must exist in both `en` and `zh-CN`.
 - Docs: English is the default. If you change a user-facing doc, update its `.zh-CN.md` twin with idiomatic Chinese (not a literal translation).
-- Add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 - Keep new dependencies to a minimum and update `requirements*.txt` when you add one.
 
 ## Reporting bugs and ideas
