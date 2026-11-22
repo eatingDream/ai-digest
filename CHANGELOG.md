@@ -3,6 +3,32 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.1.1](https://github.com/eatingDream/ai-digest/compare/v0.1.0...v0.1.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **fetch:** harden helper CLIs (atomic ledger, weekly_late --chars, in-process page.py, i18n) ([#7](https://github.com/eatingDream/ai-digest/issues/7)) ([b33144e](https://github.com/eatingDream/ai-digest/commit/b33144ee013155a3c38748bd4b18b3eb4b30a245))
+* **fetch:** replace undefined L() with tr() in paper_signals ([#3](https://github.com/eatingDream/ai-digest/issues/3)) ([16cc1e3](https://github.com/eatingDream/ai-digest/commit/16cc1e3e56fd047fde1dd6e856043d8aabfc9b2b))
+* **render:** infer digest year dynamically, handle cross-year weeklies, drop dead code ([#5](https://github.com/eatingDream/ai-digest/issues/5)) ([2bff7d0](https://github.com/eatingDream/ai-digest/commit/2bff7d084e4a88ccd95708d5f3d5005d695f7803))
+* restore Python 3.11 compatibility and add 3.11 CI check ([#2](https://github.com/eatingDream/ai-digest/issues/2)) ([12383ba](https://github.com/eatingDream/ai-digest/commit/12383ba6efa23ef390b64b044ae2b5e9b9b38a31))
+
+
+### Performance Improvements
+
+* **fetch:** thread-safe sessions and state, UTF-8 I/O, reuse --json, and source dedup ([#6](https://github.com/eatingDream/ai-digest/issues/6)) ([00782d2](https://github.com/eatingDream/ai-digest/commit/00782d29f42580d8671b3fd53a146f2f1bbd8c54))
+
+
+### Code Refactoring
+
+* **i18n:** fix cross-year zh-CN date range, add fetch keys, drop dead regex ([#4](https://github.com/eatingDream/ai-digest/issues/4)) ([158d619](https://github.com/eatingDream/ai-digest/commit/158d6192c8e30d94b1e55cc4f67fc08795328d29))
+* **publish:** harden encryption cache, timezone, state restoration, dry-run --issue, and verify_decrypt ([#8](https://github.com/eatingDream/ai-digest/issues/8)) ([abe47aa](https://github.com/eatingDream/ai-digest/commit/abe47aa5d2d4dd86b1284887e48bb9ead7472578))
+
+
+### Documentation
+
+* formalize PR-based development and release workflow ([#1](https://github.com/eatingDream/ai-digest/issues/1)) ([f248423](https://github.com/eatingDream/ai-digest/commit/f2484237c546581825d5c419b70eda9aacc34af9))
+
 ## [0.1.0] - 2026-11-20
 
 Initial release.
