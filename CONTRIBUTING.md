@@ -4,10 +4,27 @@ Thanks for helping out. [简体中文](CONTRIBUTING.zh-CN.md)
 
 ## Ground rules
 
-- **Everything goes through a pull request.** `main` is protected: open a PR from a branch or a fork, wait for the required checks, then it is squash-merged. Do not push to `main` directly.
-- **Required checks** (all must pass): `Python (compile + pytest)`, `Node (syntax check)`, `Secret scan (gitleaks) + sanitization guard`. The branch must be up to date with `main`.
-- **Never commit secrets or personal data**: tokens, passwords, salts, `site/CONFIG`, real site URLs, real emails, machine paths, or anyone's handles. Examples and tests use synthetic data only (`example.com`, fictional names). The sanitization guard and gitleaks will fail the PR otherwise.
+- **Everything goes through a pull request.** `main` is protected for everyone (including maintainers, `enforce_admins` enabled): open a PR from a short-lived branch or fork, wait for all required checks to pass, resolve review threads, then squash-merge. Never push to `main` directly or force-push published history.
+- **Required checks** (all must pass, branch up to date with `main`): `Python (compile + pytest)`, `Node (syntax check)`, `Secret scan (gitleaks) + sanitization guard`.
+- **This is a public repository — never commit secrets or personal data**: tokens, passwords, salts, `site/CONFIG`, real site URLs, real emails, machine paths, or anyone's handles. Examples and tests use synthetic data only (`example.com`, fictional names). GitHub push protection, gitleaks, and `scripts/check_sanitized.sh` enforce this.
 - The project is licensed under the [MIT License](LICENSE). By contributing you agree your work is released under the same license.
+
+## Development workflow
+
+We follow a single-trunk GitHub Flow with linear history on `main`:
+
+1. **Scope first**: open or reference an issue for non-trivial changes. Keep each PR focused on one change.
+2. **Branch from latest `main`**: `git checkout main && git pull --ff-only && git checkout -b <type>/<short-slug>` using a standard prefix: `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`.
+3. **Commit and PR title convention**: use [Conventional Commits](https://www.conventionalcommits.org/) for PR titles (and commits), e.g. `fix(fetch): ...`, `feat(render): ...`, `docs: ...`. Because `main` uses squash-only merge with the PR title, each merged PR becomes one clean commit in history.
+4. **Verify locally, then open a PR**: run the checks below before pushing, fill in the PR template, and link any related issue (`Closes #N`). Wait for CI green and review before squash-merging; merged branches are deleted automatically.
+
+## Releases
+
+Maintainers cut releases via a dedicated PR (`chore/release-vX.Y.Z`):
+
+1. Bump `__version__` in [version.py](version.py) and move `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under `## [X.Y.Z] - YYYY-MM-DD`.
+2. Open a PR to `main`, wait for CI (which also verifies `version.py` matches `CHANGELOG.md`), and squash-merge.
+3. Tag the merged commit on `main` as `vX.Y.Z` (or `vX.Y.Z-rc.1` for pre-releases) and push the tag — `.github/workflows/release.yml` runs tests, builds the demo artifact, and creates the GitHub Release automatically.
 
 ## Set up and test
 
@@ -24,7 +41,7 @@ Preview the demo site without any secrets: `DIGEST_DEMO_PASSWORD=demo python3 pu
 
 ## Pull request checklist
 
-- One focused change per PR, with a short description of what and why.
+- One focused change per PR, with a Conventional Commit title and a short description of what and why.
 - Add or update tests for behavior changes; keep `pytest -q` offline and fast.
 - User-facing text goes through `i18n.py` and must exist in both `en` and `zh-CN`.
 - Docs: English is the default. If you change a user-facing doc, update its `.zh-CN.md` twin with idiomatic Chinese (not a literal translation).
