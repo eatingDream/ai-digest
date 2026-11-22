@@ -43,6 +43,8 @@ def test_date_formats():
     assert i18n.weekday("en", d) == "Thursday" and i18n.weekday("zh-CN", d) == "星期四"
     assert i18n.date_range("en", date(2026, 1, 12), date(2026, 1, 18)) == "Jan 12 – Jan 18, 2026"
     assert i18n.date_range("zh-CN", date(2026, 1, 12), date(2026, 1, 18)) == "2026 年 1 月 12 日 — 1 月 18 日"
+    assert i18n.date_range("en", date(2026, 12, 28), date(2027, 1, 3)) == "Dec 28, 2026 – Jan 3, 2027"
+    assert i18n.date_range("zh-CN", date(2026, 12, 28), date(2027, 1, 3)) == "2026 年 12 月 28 日 — 2027 年 1 月 3 日"
     assert i18n.year_week("en", 2026, 3) == "2026 · Week 3"
     assert i18n.year_week("zh-CN", 2026, 3) == "2026 年第 3 周"
     assert i18n.month_label("en", 2026, 1) == "January 2026"

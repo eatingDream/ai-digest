@@ -186,7 +186,9 @@ def date_long(lang: str, d: date) -> str:
 
 def date_range(lang: str, a: date, b: date) -> str:
     if normalize_lang(lang) == "zh-CN":
-        return f"{a.year} 年 {a.month} 月 {a.day} 日 — {b.month} 月 {b.day} 日"
+        if a.year == b.year:
+            return f"{a.year} 年 {a.month} 月 {a.day} 日 — {b.month} 月 {b.day} 日"
+        return f"{a.year} 年 {a.month} 月 {a.day} 日 — {b.year} 年 {b.month} 月 {b.day} 日"
     if a.year == b.year:
         return f"{MONTHS[a.month - 1][:3]} {a.day} – {MONTHS[b.month - 1][:3]} {b.day}, {b.year}"
     return f"{MONTHS[a.month - 1][:3]} {a.day}, {a.year} – {MONTHS[b.month - 1][:3]} {b.day}, {b.year}"
@@ -248,8 +250,6 @@ SECTION_IDS = [
     (("模型", "model"), "sec-models"),
 ]
 
-_LATIN_RE = re.compile(r"[A-Za-z]")
-
 
 def looks_weekly(title: str) -> bool:
     low = title.lower()
@@ -298,9 +298,13 @@ FETCH: dict[str, dict[str, str]] = {
         "arxiv_pub": "published {when}",
         "hf_utc": "hf_daily: UTC boards ", "hf_none": "hf_daily: no complete board available to fetch",
         "hf_not_open": "hf_daily: {d} not open yet (HTTP 400), skipped",
+        "fetch_lock_wait": "wait: another fetch.py is writing {outdir}, waiting for it to finish...",
+        "fetch_lock_timeout": "another fetch.py is still writing {outdir} after 15 minutes; re-run the same command later",
+        "fetch_reuse": "reuse: {outdir} already fetched this window at {at}, skipping network (drop --reuse to re-fetch)",
         # weekly_late.py
         "wl_title": "# Weekly: candidates with late signals that were never pushed {m} → {s}",
         "wl_sources": "Data sources (existing fetches): ", "wl_missing": "; missing: ",
+        "wl_gap": "gap-fill {start}→{end}",
         "wl_hint": "Abstracts/authors: python3 fetch/cand.py --since {m} <arXiv id|short id>; field meanings: see the script header.",
         "wl_papers": "## Papers: showed up later on HF / multiple sources / mentioned, and never pushed ({n}; ☆ = seen in a daily but not pushed)",
         "wl_weight": "[weight {n}]", "wl_first": "first seen {d}", "wl_late_hf": "HF late {d}", "wl_hf": "HF {d}",
@@ -319,6 +323,7 @@ FETCH: dict[str, dict[str, str]] = {
         # xparse.py
         "xp_trunc": "⚠️ truncated (only the newest slice of the window was returned; earlier posts were not fetched): ",
         "xp_parse_fail": "parse failed", "xp_oldest": "oldest {t}",
+        "xp_wrote": "{counts}  → {out} ({n} items, {bytes} bytes)",
         # ledger.py
         "lg_pushed": "Pushed", "lg_seen": "Seen, not pushed (for the weekly to re-check)", "lg_colon": ": ",
         "lg_hits": "## {k}: {n} match(es)", "lg_recent": "# last {days} days: {n} entries (status={status})",
@@ -361,8 +366,12 @@ FETCH: dict[str, dict[str, str]] = {
         "arxiv_pub": "公开于 {when}",
         "hf_utc": "hf_daily: UTC 榜单 ", "hf_none": "hf_daily: 无可取的已收榜日期",
         "hf_not_open": "hf_daily: {d} 尚未开放（HTTP 400），跳过",
+        "fetch_lock_wait": "wait: 另一个 fetch.py 正在写 {outdir}，等它完成…",
+        "fetch_lock_timeout": "另一个 fetch.py 正在写 {outdir}，已等 15 分钟仍未结束；稍后重跑同一条命令",
+        "fetch_reuse": "reuse: {outdir} 已在 {at} 抓取过同一窗口，跳过联网抓取（需要重抓：去掉 --reuse）",
         "wl_title": "# 周报「后来才有信号、未推过」清单 {m} → {s}",
         "wl_sources": "数据来源（已有抓取）：", "wl_missing": "；缺：",
+        "wl_gap": "补缺{start}→{end}",
         "wl_hint": "摘要/作者：python3 fetch/cand.py --since {m} <arXiv id|短id>；其余字段含义见脚本顶部说明。",
         "wl_papers": "## 论文：后来出现 HF / 多源 / 被提及，且从没推过（{n}，☆ = 日报看过未推）",
         "wl_weight": "[权重{n}]", "wl_first": "首见{d}", "wl_late_hf": "HF晚到{d}", "wl_hf": "HF{d}",
@@ -378,6 +387,7 @@ FETCH: dict[str, dict[str, str]] = {
         "cc_bad_count": "条数 {n} 不在 10–60 之间（目标 30–40，宁宽勿窄）",
         "xp_trunc": "⚠️ 截断（只拿到窗口最新一段，更早的帖子没取到）：",
         "xp_parse_fail": "解析失败", "xp_oldest": "最早 {t}",
+        "xp_wrote": "{counts}  → {out}（{n} 条，{bytes} 字节）",
         "lg_pushed": "推送", "lg_seen": "看过未推（供周报复查）", "lg_colon": "：",
         "lg_hits": "## {k}: {n} 条", "lg_recent": "# 近 {days} 天 {n} 条（status={status}）",
         "pg_date": "日期: ", "pg_desc": "描述: ", "pg_fallback": "改用 WebFetch",
