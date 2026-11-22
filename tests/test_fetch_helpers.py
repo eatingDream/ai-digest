@@ -178,3 +178,39 @@ def test_rebuild_triage_honors_no_fold_and_reuse_json(tmp_path, monkeypatch, cap
     assert "already fetched this window" in captured.err and "注：" not in captured.err
     payload = json.loads(captured.out)
     assert payload["reused"] is True and payload["dedup"] == 1
+
+
+def test_page_fetch_text_and_in_process_many(monkeypatch, capsys):
+    from types import SimpleNamespace
+    import page as pg
+
+    html_body = (
+        "<html><head><title>Example Article</title>"
+        '<meta property="article:published_time" content="2026-01-15">'
+        "</head><body><nav>menu</nav><article><h1>Orion-3 Mini</h1>"
+        "<p>" + ("Synthetic benchmark gain of 61.2 on ExampleBench. " * 10) + "</p>"
+        "</article></body></html>"
+    ).encode("utf-8")
+
+    def fake_get(url, **kw):
+        if "empty" in url:
+            return SimpleNamespace(content=b"", text="")
+        if "raw.githubusercontent.com" in url:
+            return SimpleNamespace(content=b"# Repo\nFast serving engine.", text="# Repo\nFast serving engine.")
+        return SimpleNamespace(content=html_body, text=html_body.decode("utf-8"))
+
+    monkeypatch.setattr(pg, "get", fake_get)
+    monkeypatch.setattr(pg, "FL", "en")
+
+    ok, txt = pg.fetch_page_text("https://example.com/post", find="ExampleBench")
+    assert ok and "Example Article" in txt and "61.2" in txt
+
+    ok_empty, txt_empty = pg.fetch_page_text("https://example.com/empty")
+    assert ok_empty and "JS-rendered" in txt_empty
+
+    ok_gh, txt_gh = pg.fetch_page_text("https://github.com/example/fastserve", find="serving")
+    assert ok_gh and "example/fastserve README" in txt_gh and "serving" in txt_gh
+
+    pg.run_many(SimpleNamespace(url=["https://example.com/a@@ExampleBench", "https://example.com/empty"], chars=500, ctx=80, meta=False, find=None))
+    out = capsys.readouterr().out
+    assert "### https://example.com/a" in out and "### https://example.com/empty" in out

@@ -19,25 +19,35 @@ the same id or URL gets its status updated instead of a duplicate. The first wri
 to logs/ledger-backup/ledger-<day>.json. Ledger path: $LEDGER_PATH, else <repo>/ledger.json.
 Exit codes: 0 ok; 2 ledger.json missing or unreadable (the message says where it looked).
 """
-import argparse, json, os, re, sys, shutil
-import os as _os, sys as _sys
-_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-import i18n
-FL = i18n.resolve_lang()
-def tr(key, **kw):
-    return i18n.ft(FL, key, **kw)
-from datetime import datetime
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-TZ_LOCAL = ZoneInfo(os.environ.get("DIGEST_TZ") or "UTC")
-from datetime import datetime, timedelta
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+import i18n  # noqa: E402
+
+FL = i18n.resolve_lang()
+
+
+def tr(key, **kw):
+    return i18n.ft(FL, key, **kw)
+
+
+TZ_LOCAL = ZoneInfo(os.environ.get("DIGEST_TZ") or "UTC")
 P = os.environ.get("LEDGER_PATH") or os.path.join(ROOT, "ledger.json")
 
 
 def load():
     try:
-        return json.load(open(P))
+        with open(P, encoding="utf-8") as fh:
+            return json.load(fh)
     except (OSError, ValueError) as e:
         print(f"error: cannot read ledger {P}: {e} (set LEDGER_PATH or create it with: echo '{{\"items\": []}}' > ledger.json)", file=sys.stderr)
         sys.exit(2)
@@ -55,6 +65,7 @@ def line(it):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--lang", help="language of output labels: en | zh-CN (default: $DIGEST_LANG, else en)")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="{find,recent,add}")
     f = sub.add_parser("find", help="look entries up by keyword / arXiv id / URL fragment")
     f.add_argument("keys", nargs="+", metavar="KEY")
@@ -70,6 +81,11 @@ def main():
     a_.add_argument("--log-heading", help="heading for an addendum block in --log")
     a_.add_argument("--json", action="store_true", help="print JSON")
     a = ap.parse_args()
+    global FL
+    try:
+        FL = i18n.resolve_lang(a.lang)
+    except ValueError as e:
+        ap.error(str(e))
     d = load()
     items = d["items"]
     if a.cmd == "find":
@@ -85,7 +101,7 @@ def main():
         if a.json:
             print(json.dumps({"query": out}, ensure_ascii=False))
     elif a.cmd == "recent":
-        cut = (datetime.now() - timedelta(days=a.days)).strftime("%Y-%m-%d")
+        cut = (datetime.now(TZ_LOCAL) - timedelta(days=a.days)).strftime("%Y-%m-%d")
         rows = [it for it in items if (it.get("first_seen") or it.get("day") or "") >= cut and (a.status == "all" or st(it) == a.status) and (not a.cat or it.get("category") == a.cat)]
         rows.sort(key=lambda it: it.get("first_seen") or "")
         if a.json:
@@ -95,7 +111,9 @@ def main():
             for it in rows:
                 print(line(it))
     else:
-        bdir = os.path.join(ROOT, "logs", "ledger-backup"); os.makedirs(bdir, exist_ok=True)
+        backup_root = os.path.dirname(os.path.abspath(P)) if os.environ.get("LEDGER_PATH") else ROOT
+        bdir = os.path.join(backup_root, "logs", "ledger-backup")
+        os.makedirs(bdir, exist_ok=True)
         bp = os.path.join(bdir, f"ledger-{a.day}.json")
         if not os.path.exists(bp):
             shutil.copy(P, bp)
@@ -115,11 +133,18 @@ def main():
             status = "pushed" if kind.upper() == "P" else "seen-not-pushed"
             if hit:
                 if kind.upper() == "P":
-                    hit["status"] = "pushed"; hit["pushed"] = a.day
+                    hit["status"] = "pushed"
+                    hit["pushed"] = a.day
                 elif st(hit) == "pushed":
                     pass   # 已推过的不降级
                 else:
                     hit["status"] = status
+                if urls:
+                    existing_urls = list(hit.get("urls") or [])
+                    for u in urls:
+                        if u not in existing_urls:
+                            existing_urls.append(u)
+                    hit["urls"] = existing_urls
                 if note:
                     hit["notes"] = note
                 upd += 1
@@ -134,7 +159,8 @@ def main():
         d["item_count"] = len(items)
         d["previous_digest_at"] = datetime.now(TZ_LOCAL).isoformat(timespec="minutes")
         tmp = P + ".tmp"
-        json.dump(d, open(tmp, "w"), ensure_ascii=False, indent=1)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, ensure_ascii=False, indent=1)
         os.replace(tmp, P)
         if a.json:
             print(json.dumps({"added": added, "updated": upd, "total": len(items)}))
@@ -148,7 +174,8 @@ def main():
             if logS:
                 out += [f"{h} {tr('lg_seen')}"] + logS + [""]
             os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
-            open(a.log, "a").write("\n".join(out))
+            with open(a.log, "a", encoding="utf-8") as fh:
+                fh.write("\n".join(out))
             print(f"filter-log: +{len(logP)} {tr('lg_pushed')}, +{len(logS)} {tr('lg_seen')} → {a.log}", file=sys.stderr if a.json else sys.stdout)
 
 
