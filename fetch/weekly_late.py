@@ -24,11 +24,12 @@ import argparse, glob, importlib.util, json, os, re, sys
 from datetime import datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.environ.get("DIGEST_ROOT") or os.path.dirname(HERE)
 spec = importlib.util.spec_from_file_location("fetchmod", os.path.join(HERE, "fetch.py"))
 fx = importlib.util.module_from_spec(spec)
 sys.modules["fetchmod"] = fx
 spec.loader.exec_module(fx)
+
 
 def tr(key, **kw):
     return fx.i18n.ft(fx.FL, key, **kw)
@@ -42,24 +43,32 @@ BIG_ORG = re.compile(r"google|deepmind|openai|anthropic|\bmeta\b|fair\b|microsof
 
 def week_days(a):
     if a.start and a.end:
-        s = datetime.strptime(a.start, "%Y-%m-%d").date(); e = datetime.strptime(a.end, "%Y-%m-%d").date()
+        s = datetime.strptime(a.start, "%Y-%m-%d").date()
+        e = datetime.strptime(a.end, "%Y-%m-%d").date()
     else:
         d0 = datetime.strptime(a.day, "%Y-%m-%d").date() if a.day else (datetime.now(fx.TZ_LOCAL).date() - timedelta(days=7))
-        s = d0 - timedelta(days=d0.weekday()); e = s + timedelta(days=6)
+        s = d0 - timedelta(days=d0.weekday())
+        e = s + timedelta(days=6)
     out, d = [], s
     while d <= e:
-        out.append(d.strftime("%Y-%m-%d")); d += timedelta(days=1)
+        out.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
     return out
 
 
 def load_dir(p):
     f = os.path.join(p, "candidates.jsonl")
-    return [json.loads(l) for l in open(f) if l.strip()] if os.path.exists(f) else []
+    if not os.path.exists(f):
+        return []
+    with open(f, encoding="utf-8") as fh:
+        return [json.loads(l) for l in fh if l.strip()]
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--day", metavar="YYYY-MM-DD", help="produce the week containing this day (default: last full week)"); ap.add_argument("--start", metavar="YYYY-MM-DD", help="override the window start"); ap.add_argument("--end", metavar="YYYY-MM-DD", help="override the window end")
+    ap.add_argument("--day", metavar="YYYY-MM-DD", help="produce the week containing this day (default: last full week)")
+    ap.add_argument("--start", metavar="YYYY-MM-DD", help="override the window start")
+    ap.add_argument("--end", metavar="YYYY-MM-DD", help="override the window end")
     ap.add_argument("--chars", type=int, default=0, help="attach the first N chars of each abstract (default 0 = none)")
     ap.add_argument("--max", type=int, default=40, help="max papers listed")
     ap.add_argument("--max-np", type=int, default=15, help="max non-paper items per channel (by weight, then time)")
@@ -67,24 +76,31 @@ def main():
     ap.add_argument("--lang", help="en | zh-CN (default: $DIGEST_LANG, else en)")
     a = ap.parse_args()
     if a.lang:
-        fx.FL = fx.i18n.resolve_lang(a.lang)
+        try:
+            fx.FL = fx.i18n.resolve_lang(a.lang)
+        except ValueError as e:
+            ap.error(str(e))
+    root = os.environ.get("DIGEST_ROOT") or ROOT
     days = week_days(a)
     M, S = days[0], days[-1]
     srcs, have, missing = [], [], []
     for d in days:
         got = False
-        subs = ["fetch", "fetch-extra"] + sorted(os.path.basename(x) for x in glob.glob(os.path.join(ROOT, "runs", d, "fetch-prev-*")))
+        subs = ["fetch", "fetch-extra"] + sorted(os.path.basename(x) for x in glob.glob(os.path.join(root, "runs", d, "fetch-prev-*")))
         for sub in subs:   # fetch-prev-* = 同一天被重抓时挪走的旧抓取（过渡期 11/17 的旧日程那一次就在里面）
-            p = os.path.join(ROOT, "runs", d, sub)
+            p = os.path.join(root, "runs", d, sub)
             if os.path.exists(os.path.join(p, "candidates.jsonl")):
-                srcs.append((d, p)); got = True
+                srcs.append((d, p))
+                got = True
         (have if got else missing).append(d)
-    gap = os.path.join(ROOT, "runs", f"{S}-weekly", "fetch")
+    gap = os.path.join(root, "runs", f"{S}-weekly", "fetch")
     try:
-        meta = json.load(open(os.path.join(gap, "report.json")))
+        with open(os.path.join(gap, "report.json"), encoding="utf-8") as fh:
+            meta = json.load(fh)
         span = datetime.fromisoformat(meta["window_end"]) - datetime.fromisoformat(meta["window_start"])
         if span < timedelta(days=2):
-            srcs.append((meta["window_start"][:10], gap)); have.append(f"{S}-weekly(补缺{meta['window_start'][5:16]}→{meta['window_end'][5:16]})")
+            srcs.append((meta["window_start"][:10], gap))
+            have.append(f"{S}-weekly({tr('wl_gap', start=meta['window_start'][5:16], end=meta['window_end'][5:16])})")
     except Exception:
         pass
     ledger = fx.load_ledger_keys()
@@ -104,13 +120,17 @@ def main():
                     xref.setdefault(m.group(1), []).append((day, r["source"], r["title"][:40]))
                 if r["channel"] in NONPAPER_CH:
                     k = fx.canon_url(r["url"])
-                    it = items.setdefault(k, {"kind": "np", "title": r["title"], "url": r["url"], "source": r["source"], "channel": r["channel"],
-                                              "day": day, "pref": r.get("pref", 0), "pub": (r.get("published") or "")[5:16].replace("T", " "), "led": lstat(r)})
+                    items.setdefault(k, {"kind": "np", "title": r["title"], "url": r["url"], "source": r["source"], "channel": r["channel"],
+                                         "day": day, "pref": r.get("pref", 0), "pub": (r.get("published") or "")[5:16].replace("T", " "), "led": lstat(r)})
                 continue
             k = f"arxiv:{aid}" if aid else fx.canon_url(r["url"])
             it = items.setdefault(k, {"kind": "paper", "id": aid or r["url"], "title": r["title"], "first": day, "pref": 0, "hf_days": set(),
-                                      "others": set(), "led": "", "org": "", "sid": r["id"][:6], "days": set()})
-            it["days"].add(day); it["first"] = min(it["first"], day); it["pref"] = max(it["pref"], r.get("pref", 0))
+                                      "others": set(), "led": "", "org": "", "sid": r["id"][:6], "days": set(), "summary": ""})
+            it["days"].add(day)
+            it["first"] = min(it["first"], day)
+            it["pref"] = max(it["pref"], r.get("pref", 0))
+            if not it["summary"] and r.get("summary"):
+                it["summary"] = r["summary"]
             srcset = [r["source"]] + list(r.get("also_in") or [])
             if "hf_daily" in srcset:
                 it["hf_days"].add(day)
@@ -157,6 +177,8 @@ def main():
     for it in papers[: a.max]:
         star = "☆ " if it["led"] == "seen" else ""
         print(f"- {it['id']} {star}{it['title'][:100]} {tr('wl_weight', n=it['pref'])} {tr('wl_first', d=it['first'][5:])}〔{'; '.join(it['sig'])}〕")
+        if a.chars > 0 and it.get("summary"):
+            print("  - " + re.sub(r"\s+", " ", it["summary"])[: a.chars])
     if len(papers) > a.max:
         print(tr("wl_more", n=len(papers) - a.max))
     if dropped[0]:
