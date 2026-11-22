@@ -72,7 +72,7 @@ orgs = [
   "lerobot", "physical-intelligence", "sakana-ai", "kakaocorp", "swiss-ai", "tiiuae",
   "rednote-hilab", "Kwai-Kolors", "jinaai", "BAAI", "PaddlePaddle",
   "deepmind", "google-deepmind", "perplexity-ai", "cognitivecomputations", "Skywork",
-  "OpenMOSS", "ByteDance-Seed", "antgroup", "Alibaba-NLP", "ZhipuAI", "01-ai",
+  "OpenMOSS", "antgroup", "Alibaba-NLP", "ZhipuAI", "01-ai",
 ]
 
 [[source]]

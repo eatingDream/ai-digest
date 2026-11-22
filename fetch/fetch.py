@@ -142,13 +142,42 @@ class Ctx:
     wait_arxiv_minutes = 0   # cost-opt 2026-11-17: 默认不在 fetch 内等 arXiv（改由 routine 在写论文版面前补查一次）
 
     def __init__(self, settings, start, end, state, use_state, catchup, gh_token):
-        self.s = requests.Session()
-        self.s.headers["User-Agent"] = settings.get("user_agent", "Mozilla/5.0")
+        self.user_agent = settings.get("user_agent", "Mozilla/5.0")
+        self._local = threading.local()
+        self._sessions: list[requests.Session] = []
         self.timeout = settings.get("timeout", 20)
         self.summary_chars = settings.get("summary_chars", 700)
         self.start, self.end = start, end
         self.state, self.use_state, self.catchup = state, use_state, catchup
         self.gh_token = gh_token
+        self.notes: list[str] = []
+
+    @property
+    def s(self) -> requests.Session:
+        sess = getattr(self._local, "session", None)
+        if sess is None:
+            sess = requests.Session()
+            sess.headers["User-Agent"] = self.user_agent
+            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16)
+            sess.mount("http://", adapter)
+            sess.mount("https://", adapter)
+            self._local.session = sess
+            with lock:
+                self._sessions.append(sess)
+        return sess
+
+    def add_note(self, msg: str) -> None:
+        with lock:
+            self.notes.append(msg)
+
+    def close(self) -> None:
+        with lock:
+            sessions, self._sessions = self._sessions, []
+        for sess in sessions:
+            try:
+                sess.close()
+            except Exception:
+                pass
 
     def get(self, url, *, accept=None, retries=2, params=None, headers=None, timeout=None):
         h = {}
@@ -441,9 +470,9 @@ def fetch_html_links(ctx: Ctx, src: dict) -> list[Cand]:
         if dt is None and u in dates_hint:
             dh = dates_hint[u]
             # 只有日期精度：窗口两端各放宽 12 小时
-            dt = dh if (ctx.start - timedelta(hours=12) < dh <= ctx.end + timedelta(hours=12)) else dh
             if not (ctx.start - timedelta(hours=12) < dh <= ctx.end + timedelta(hours=12)):
                 continue
+            dt = dh
         if dt is not None and dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         if dt is not None and not ctx.in_window(dt):
@@ -543,7 +572,7 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
                 new_docs[cats[0]] = d0
                 return "new"
         except Exception as e:
-            ctx.notes.append(f"arxiv /new check: {e}")
+            ctx.add_note(f"arxiv /new check: {e}")
         return None
     via = None
     if expected:
@@ -556,7 +585,7 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
                 pw[cats[0]] = doc
                 days = sorted({day_of(h.text_content()) for h in doc.xpath("//h3")} - {None})
             except Exception as e:
-                ctx.notes.append(f"arxiv pastweek retry: {e}")
+                ctx.add_note(f"arxiv pastweek retry: {e}")
             via = have_exp()
         if via == "pastweek":
             with cf.ThreadPoolExecutor(4) as ex:   # 其余分类重新拉取（可能刚刷新）
@@ -565,12 +594,12 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
         if not via:
             age = now - arxiv_announce_dt(exp_label)
             if age > timedelta(days=5):
-                ctx.notes.append(tr("arxiv_rolled", label=f"{exp_label:%a %d %b}", days=age.days))
+                ctx.add_note(tr("arxiv_rolled", label=f"{exp_label:%a %d %b}", days=age.days))
             else:
-                ctx.notes.append(tr("arxiv_missing", label=f"{exp_label:%a %d %b}", when=iso(arxiv_announce_dt(exp_label))))
+                ctx.add_note(tr("arxiv_missing", label=f"{exp_label:%a %d %b}", when=iso(arxiv_announce_dt(exp_label))))
         missing_prev = [L for L in exp_labels[:-1] if L not in days and (now - arxiv_announce_dt(L)) <= timedelta(days=5)]
         if missing_prev:
-            ctx.notes.append(tr("arxiv_missing_prev") + ", ".join(f"{L:%a %d %b}" for L in missing_prev))
+            ctx.add_note(tr("arxiv_missing_prev") + ", ".join(f"{L:%a %d %b}" for L in missing_prev))
     if via == "new":
         # /pastweek 还没刷新：直接用各分类 /new 页面的 New + Cross 两段作为这一批
         with cf.ThreadPoolExecutor(4) as ex:
@@ -578,7 +607,7 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
                 new_docs[cat] = doc
         if exp_label not in days:
             days = sorted(set(days) | {exp_label})
-        ctx.notes.append(tr("arxiv_from_new", label=f"{exp_label:%a %d %b}"))
+        ctx.add_note(tr("arxiv_from_new", label=f"{exp_label:%a %d %b}"))
     ingested = set(ctx.state.get("arxiv:ingested", []))
     targets = []
     for d in days:
@@ -591,7 +620,7 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
     if not targets:
         latest = days[-1] if days else None
         raise_info = f"no announcement in window; latest listing {latest:%a %d %b} announced {iso(arxiv_announce_dt(latest))}" if latest else "no listing"
-        ctx.notes.append(f"arxiv: {raise_info}")
+        ctx.add_note(f"arxiv: {raise_info}")
         return []
     target_keys = {d.strftime("%Y-%m-%d"): why for d, why in targets}
     # 2) 收集目标日的 id（每个分类的 pastweek 都按日期分段）
@@ -646,7 +675,7 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
                 if eid in meta and summ:
                     meta[eid]["abstract"] = summ
         except Exception as e:
-            ctx.notes.append(f"arxiv export API chunk {i}: {e}")
+            ctx.add_note(f"arxiv export API chunk {i}: {e}")
         time.sleep(3)
     out = []
     for aid, m in meta.items():
@@ -656,7 +685,7 @@ def fetch_arxiv(ctx: Ctx, src: dict) -> list[Cand]:
                         extra={"arxiv_id": aid, "cats": m["cats"], "subjects": m["subjects"], "listing": m["listing"], "batch": m["why"]}))
     with lock:
         ctx.state["arxiv:ingested"] = sorted(ingested | set(target_keys))[-60:]
-    ctx.notes.append("arxiv batches: " + ", ".join(f"{k}({v}, {tr('arxiv_pub', when=iso(arxiv_announce_dt(datetime.strptime(k, '%Y-%m-%d'))))})" for k, v in sorted(target_keys.items())))
+    ctx.add_note("arxiv batches: " + ", ".join(f"{k}({v}, {tr('arxiv_pub', when=iso(arxiv_announce_dt(datetime.strptime(k, '%Y-%m-%d'))))})" for k, v in sorted(target_keys.items())))
     return out
 
 
@@ -701,7 +730,7 @@ def fetch_hf_daily(ctx: Ctx, src: dict) -> list[Cand]:
             r = ctx.get(src["url"], params={"date": d.isoformat(), "limit": 100})
         except RuntimeError as e:
             if "HTTP 400" in str(e):   # HF 拒绝「还没到的日期」（UTC），跳过该日即可，不让整个信源失败
-                ctx.notes.append(tr("hf_not_open", d=d))
+                ctx.add_note(tr("hf_not_open", d=d))
                 break
             raise
         items = r.json()
@@ -719,10 +748,11 @@ def fetch_hf_daily(ctx: Ctx, src: dict) -> list[Cand]:
                      extra={"arxiv_id": aid, "github": p.get("githubRepo"), "project": p.get("projectPage"),
                             "org": (p.get("organization") or {}).get("fullname"), "hf_date": d.isoformat()})
             out.append(c)
-    ctx.notes.append((tr("hf_utc") + ", ".join(f"{k}({v})" for k, v in counts.items())) if counts else tr("hf_none"))
+    ctx.add_note((tr("hf_utc") + ", ".join(f"{k}({v})" for k, v in counts.items())) if counts else tr("hf_none"))
     if gap_ok and fetched:
         new_last = max(fetched + ([last] if last else []))
-        ctx.state["hf_daily:last"] = new_last.isoformat()
+        with lock:
+            ctx.state["hf_daily:last"] = new_last.isoformat()
     return out
 
 
@@ -751,7 +781,7 @@ def fetch_hf_org_models(ctx: Ctx, src: dict) -> list[Cand]:
                                 f"pipeline={m.get('pipeline_tag')}; library={m.get('library_name')}; tags={', '.join(tags)}",
                                 extra={"org": org, "pipeline": m.get("pipeline_tag")}))
     if errs:
-        ctx.notes.append(f"hf_org_models errors ({len(errs)}): " + "; ".join(errs[:8]))
+        ctx.add_note(f"hf_org_models errors ({len(errs)}): " + "; ".join(errs[:8]))
     return out
 
 
@@ -781,7 +811,7 @@ def fetch_github_trending(ctx: Ctx, src: dict) -> list[Cand]:
         try:
             r = ctx.get(url, accept="text/html")
         except Exception as e:
-            ctx.notes.append(f"gh_trending {url}: {e}")
+            ctx.add_note(f"gh_trending {url}: {e}")
             continue
         doc = lhtml.fromstring(r.content)
         for art in doc.xpath("//article[contains(@class,'Box-row')]"):
@@ -840,7 +870,7 @@ def fetch_github_releases(ctx: Ctx, src: dict) -> list[Cand]:
         for items in ex.map(one, list(dict.fromkeys(src["repos"]))):
             out.extend(items)
     if errs:
-        ctx.notes.append(f"gh_releases errors ({len(errs)}): " + "; ".join(errs[:10]))
+        ctx.add_note(f"gh_releases errors ({len(errs)}): " + "; ".join(errs[:10]))
     return out
 
 
@@ -869,7 +899,7 @@ def fetch_github_org_repos(ctx: Ctx, src: dict) -> list[Cand]:
                     continue
                 out.append(Cand(it["full_name"], it["html_url"], src["id"], "repo", "repo", iso(dt), clean_text(it.get("description"), 400), extra={"org": org}))
     if errs:
-        ctx.notes.append(f"gh_org_repos errors ({len(errs)}): " + "; ".join(errs[:6]))
+        ctx.add_note(f"gh_org_repos errors ({len(errs)}): " + "; ".join(errs[:6]))
     return out
 
 
@@ -948,11 +978,6 @@ def fetch_reddit(ctx: Ctx, src: dict) -> list[Cand]:
 
 
 reddit_lock = threading.Lock()
-PRERELEASE_RE = re.compile(r"(?i)(alpha|beta|\brc\.?\d*\b|-rc|\.dev\d+|\bdev\d*\b|nightly|-pre\b|preview\.\d+|canary)")
-# HF 衍生物：量化 / 合并 / 去审查 / 格式转换，不算新模型
-DERIV_RE = re.compile(r"(?i)(gguf|\bawq\b|gptq|exl[23]|-mlx|mlx-|\d+-?bit\b|nvfp4|mxfp4|-fp[48]\b|-int[48]\b|\bq\d_k|\bq\dk\b|-q\d\b|abliterat|uncensor|heretic|\bmerge|frankenmerge|-lora\b|quantiz)")
-# GitHub 刷星垃圾仓库：账号名「词+四位年份」、同描述批量克隆
-SPAM_OWNER_RE = re.compile(r"^[a-z]+\d{4,}$|^[a-z]+[0-9]{2,}[a-z]+\d{2,}$", re.I)
 FETCHERS = {
     "rss": fetch_rss, "html_links": fetch_html_links, "arxiv": fetch_arxiv, "hf_daily": fetch_hf_daily,
     "hf_org_models": fetch_hf_org_models, "hf_trending": fetch_hf_trending, "github_trending": fetch_github_trending,
@@ -965,9 +990,9 @@ FETCHERS = {
 def load_ledger_keys() -> dict[str, str]:
     """ledger.json → {key: 'pushed' | 'seen'}；category/status 含 seen 的是「看过未推」。"""
     keys: dict[str, str] = {}
-    p = ROOT / "ledger.json"
+    p = Path(os.environ.get("LEDGER_PATH") or (ROOT / "ledger.json"))
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(p.read_text(encoding="utf-8"))
         for it in d.get("items", []):
             st = "seen" if "seen" in f"{it.get('status') or ''} {it.get('category') or ''}" else "pushed"
             ks = [canon_url(u) for u in it.get("urls", []) or []]
@@ -1027,7 +1052,7 @@ def ckey(c) -> str:
 def load_triage_seen() -> dict[str, str]:
     """discovery-only 条目（trending / GitHub 搜索）首次出现在哪天的 triage：同一条以后只折叠成标题。"""
     try:
-        return json.loads(SEEN_PATH.read_text())
+        return json.loads(SEEN_PATH.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -1040,7 +1065,7 @@ def save_triage_seen(cands, label: str, seen: dict[str, str]):
     cut = (datetime.strptime(label, "%Y-%m-%d") - timedelta(days=45)).strftime("%Y-%m-%d")
     new = {k: v for k, v in new.items() if v >= cut}
     SEEN_PATH.parent.mkdir(exist_ok=True)
-    SEEN_PATH.write_text(json.dumps(new, ensure_ascii=False))
+    SEEN_PATH.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
 
 
 SEC_KEYS = ["lab", "model", "tooling", "repo", "research_blog", "newsletter", "podcast",
@@ -1136,7 +1161,7 @@ def write_triage_v2(outdir: Path, cands: list[Cand], ctx: Ctx):
             T.append("")
             T.append(tr("rep_line", n=len(rep)) + " ｜ ".join(f"{c.title} #{sid(c)}" for c in rep))
         T.append("")
-    (outdir / "triage.md").write_text("\n".join(T) + "\n")
+    (outdir / "triage.md").write_text("\n".join(T) + "\n", encoding="utf-8")
     papers = [c for c in cands if c.channel == "paper"]
     P = [tr("title_papers", start=iso(ctx.start), end=iso(ctx.end), n=len(papers)), "", head_a + tr("papers_intro_tail"),
          tr("papers_group_note"), ""]
@@ -1186,7 +1211,7 @@ def write_triage_v2(outdir: Path, cands: list[Cand], ctx: Ctx):
         for tname, its in sorted(by_topic([c for c, _ in keep + fold]).items(), key=lambda kv: -len(kv[1])):
             R.append(f"### {tname}{i18n.cnt_paren(FL, len(its))}")
             R.extend(pl(c) for c in sorted(its, key=lambda c: c.title))
-        (outdir / "triage-papers-rest.md").write_text("\n".join(R) + "\n")
+        (outdir / "triage-papers-rest.md").write_text("\n".join(R) + "\n", encoding="utf-8")
         if keep:
             P.append("## " + tr("rest_keep", n=len(keep)))
             for c, tg in sorted(keep, key=lambda x: (x[1][0].split(":")[0] != "HF", x[0].title)):
@@ -1203,12 +1228,12 @@ def write_triage_v2(outdir: Path, cands: list[Cand], ctx: Ctx):
                 P.append(f"### {tname}{i18n.cnt_paren(FL, len(bytopic[tname]))}")
                 P.extend(pl(c) for c in sorted(bytopic[tname], key=lambda c: c.title))
             P.append("")
-    (outdir / "triage-papers.md").write_text("\n".join(P) + "\n")
+    (outdir / "triage-papers.md").write_text("\n".join(P) + "\n", encoding="utf-8")
 
 
 def rebuild_triage(src_dir: Path, out: Path | None, a) -> int:
-    rows = [json.loads(l) for l in (src_dir / "candidates.jsonl").read_text().splitlines() if l.strip()]
-    meta = json.loads((src_dir / "report.json").read_text()) if (src_dir / "report.json").exists() else {}
+    rows = [json.loads(l) for l in (src_dir / "candidates.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    meta = json.loads((src_dir / "report.json").read_text(encoding="utf-8")) if (src_dir / "report.json").exists() else {}
     cands = [Cand(**{k: v for k, v in r.items()}) for r in rows]
     class _C: pass
     ctx = _C()
@@ -1216,6 +1241,7 @@ def rebuild_triage(src_dir: Path, out: Path | None, a) -> int:
     ctx.end = datetime.fromisoformat(meta.get("window_end", "2000-01-02T00:00+00:00"))
     ctx.label_day = (ctx.end - timedelta(microseconds=1)).strftime("%Y-%m-%d")
     ctx.seen_prior = load_triage_seen()
+    ctx.fold_rest = not getattr(a, "no_fold", False)
     out = out or src_dir
     out.mkdir(parents=True, exist_ok=True)
     write_triage_v2(out, cands, ctx)
@@ -1226,8 +1252,7 @@ def rebuild_triage(src_dir: Path, out: Path | None, a) -> int:
 def write_outputs(outdir: Path, cands: list[Cand], report: list[dict], ctx: Ctx, elapsed: float, sources: list[dict]):
     """report.json 最后落盘（先写 .partial 再原子改名）：--reuse 靠它判断「这次抓取已完整写完」，半写的目录不会被复用（2026-11-18 review）。"""
     _write_outputs_inner(outdir, cands, report, ctx, elapsed, sources)
-    import os as _os
-    _os.replace(outdir / "report.json.partial", outdir / "report.json")
+    os.replace(outdir / "report.json.partial", outdir / "report.json")
 
 
 def _write_outputs_inner(outdir: Path, cands: list[Cand], report: list[dict], ctx: Ctx, elapsed: float, sources: list[dict]):
@@ -1236,13 +1261,13 @@ def _write_outputs_inner(outdir: Path, cands: list[Cand], report: list[dict], ct
         (outdir / "report.json").unlink()
     except FileNotFoundError:
         pass
-    with (outdir / "candidates.jsonl").open("w") as f:
+    with (outdir / "candidates.jsonl").open("w", encoding="utf-8") as f:
         for c in cands:
             f.write(json.dumps(asdict(c), ensure_ascii=False) + "\n")
     meta = {"window_start": iso(ctx.start), "window_end": iso(ctx.end), "generated_at": iso(datetime.now(TZ_LOCAL)),
             "elapsed_sec": round(elapsed, 1), "total_raw": sum(r["n"] for r in report), "total_dedup": len(cands),
             "notes": ctx.notes, "sources": report}
-    (outdir / "report.json.partial").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
+    (outdir / "report.json.partial").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     # report.md
     by_ch: dict[str, list[dict]] = {}
     for r in report:
@@ -1257,7 +1282,7 @@ def _write_outputs_inner(outdir: Path, cands: list[Cand], report: list[dict], ct
     for ch in sorted(by_ch):
         for r in sorted(by_ch[ch], key=lambda r: r["id"]):
             RL.append(f"| {ch} | {r['id']} | {r['n']} | {r['sec']}s | {r['status']} |")
-    (outdir / "report.md").write_text("\n".join(RL) + "\n")
+    (outdir / "report.md").write_text("\n".join(RL) + "\n", encoding="utf-8")
     if getattr(ctx, "triage_v2", False):
         write_triage_v2(outdir, cands, ctx)
         return
@@ -1290,7 +1315,7 @@ def _write_outputs_inner(outdir: Path, cands: list[Cand], report: list[dict], ct
             n = 220 if ch not in ("repo", "model", "community") else 140
         T.extend(line(c, n) for c in items)
         T.append("")
-    (outdir / "triage.md").write_text("\n".join(T) + "\n")
+    (outdir / "triage.md").write_text("\n".join(T) + "\n", encoding="utf-8")
     papers = [c for c in cands if c.channel == "paper"]
     P = [tr("title_papers", start=iso(ctx.start), end=iso(ctx.end), n=len(papers)), "", head, tr("papers_group_note"), ""]
     groups = [(tr("group_pref3"), lambda c: c.pref >= 3), (tr("group_pref12"), lambda c: 1 <= c.pref <= 2)]
@@ -1314,7 +1339,7 @@ def _write_outputs_inner(outdir: Path, cands: list[Cand], report: list[dict], ct
             P.append(f"### {tname}{i18n.cnt_paren(FL, len(bytopic[tname]))}")
             P.extend(line(c, 0) for c in sorted(bytopic[tname], key=lambda c: c.title))
             P.append("")
-    (outdir / "triage-papers.md").write_text("\n".join(P) + "\n")
+    (outdir / "triage-papers.md").write_text("\n".join(P) + "\n", encoding="utf-8")
 
 
 # ───────────────────────── 主程序 ─────────────────────────
@@ -1386,7 +1411,7 @@ def main(argv=None):
     if a.rebuild:
         return rebuild_triage(Path(a.rebuild), Path(a.out) if a.out else None, a)
 
-    reg = tomllib.loads(Path(a.registry).read_text())
+    reg = tomllib.loads(Path(a.registry).read_text(encoding="utf-8"))
     settings = reg.get("settings", {})
     sources = [s for s in reg["source"] if s.get("enabled", True)]
     if a.only:
@@ -1399,10 +1424,8 @@ def main(argv=None):
     state_path = HERE / "state" / "state.json"
     state = {}
     if not a.no_state and state_path.exists():
-        state = json.loads(state_path.read_text())
-    import os
+        state = json.loads(state_path.read_text(encoding="utf-8"))
     ctx = Ctx(settings, start, end, state, not a.no_state, a.catchup and not a.no_catchup, os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"))
-    ctx.notes = []
     ctx.compact = a.compact or a.weekly
     ctx.wait_arxiv_minutes = a.wait_arxiv
     ctx.weekly = a.weekly
@@ -1414,105 +1437,122 @@ def main(argv=None):
     ctx.seen_prior = load_triage_seen() if ctx.triage_v2 else {}
     # --only 的补查输出写到单独目录，不覆盖整份 fetch/（2026-11-17 事故：--only arxiv 重跑把当天 candidates/triage 清空了）
     default_dir = "fetch" if not a.only else "fetch-extra"
-    outdir = Path(a.out) if a.out else ROOT / "runs" / label / default_dir
+    root = Path(os.environ.get("DIGEST_ROOT") or ROOT)
+    outdir = Path(a.out) if a.out else root / "runs" / label / default_dir
     # 同一天目录的完整抓取串行化（00:10 论文初筛与 00:30 日报若同时跑，后到的等前一个写完再判断能否复用；2026-11-18 review）
     _lockf = None
-    if not a.only and not a.out:
-        import fcntl
-        outdir.parent.mkdir(parents=True, exist_ok=True)
-        _lockf = open(outdir.parent / ".fetch.lock", "w")
-        t_wait = time.time()
-        while True:
-            try:
-                fcntl.flock(_lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.time() - t_wait > 900:
-                    raise SystemExit(f"另一个 fetch.py 正在写 {outdir}，已等 15 分钟仍未结束；稍后重跑同一条命令")
-                if time.time() - t_wait < 1:
-                    print(f"wait: 另一个 fetch.py 正在写 {outdir}，等它完成…", file=sys.stderr)
-                time.sleep(5)
-    if a.reuse and not a.only and not a.out:
-        rj = outdir / "report.json"
-        try:
-            meta0 = json.loads(rj.read_text())
-            fresh = (meta0.get("window_start") == iso(start) and meta0.get("window_end") == iso(end)
-                     and datetime.fromisoformat(meta0["generated_at"]) >= end and (outdir / "candidates.jsonl").exists()
-                     and (outdir / "triage.md").exists())
-        except Exception:
-            fresh = False
-        if fresh:
-            print(f"reuse: {outdir} 已在 {meta0['generated_at']} 抓取过同一窗口，跳过联网抓取（需要重抓：去掉 --reuse）", file=sys.stderr)
-            for n in meta0.get("notes", []):
-                print(f"- 注：{n}", file=sys.stderr)
-            errs0 = [r for r in meta0.get("sources", []) if r.get("status") != "ok"]
-            for e in errs0:
-                print(f"  ! {e['id']}: {e['status']}", file=sys.stderr)
-            return 0
-    # 同一天目录已有一次完整抓取（例：过渡期 11/17 的第二次运行、手动重跑）→ 先把旧的整份挪走，绝不覆盖
-    if not a.out and not a.only and (outdir / "candidates.jsonl").exists():
-        mt = datetime.fromtimestamp((outdir / "candidates.jsonl").stat().st_mtime, TZ_LOCAL)
-        arch = outdir.with_name(f"fetch-prev-{mt:%m%d-%H%M}")
-        n = 2
-        while arch.exists():
-            arch = outdir.with_name(f"fetch-prev-{mt:%m%d-%H%M}-{n}"); n += 1
-        outdir.rename(arch)
-        print(f"archived previous fetch → {arch}", file=sys.stderr)
-    print(f"window {iso(start)} → {iso(end)}  sources={len(sources)}  out={outdir}", file=sys.stderr)
-
-    t0 = time.time()
-    report, allc = [], []
-
-    def run(src):
-        t = time.time()
-        try:
-            items = FETCHERS[src["type"]](ctx, src)
-            st = "ok"
-        except Exception as e:
-            items, st = [], f"ERROR {type(e).__name__}: {str(e)[:160]}"
-        return src, items, st, round(time.time() - t, 1)
-
-    with cf.ThreadPoolExecutor(settings.get("workers", 24)) as ex:
-        futs = [ex.submit(run, s) for s in sources]
-        for fu in cf.as_completed(futs):
-            src, items, st, sec = fu.result()
-            report.append({"id": src["id"], "name": src.get("name"), "channel": src["channel"], "type": src["type"], "n": len(items), "sec": sec, "status": st})
-            allc.extend(items)
-            if a.verbose_sources or st != "ok":   # 默认只打印失败源（153 行进度表约 2K token，且 report.md 里已有）
-                print(f"  {src['id']:<24} {len(items):>4}  {sec:>5}s  {st}", file=sys.stderr)
-
-    ledger = load_ledger_keys()
-    for c in allc:
-        tag(c)
-    cands = dedupe(allc)
-    for c in cands:
-        k = f"arxiv:{c.extra['arxiv_id']}" if c.extra.get("arxiv_id") else canon_url(c.url)
-        c.in_ledger = ledger.get(k) or ledger.get("t:" + norm_title(c.title)) or False
-    elapsed = time.time() - t0
-    write_outputs(outdir, cands, report, ctx, elapsed, sources)
-    if ctx.triage_v2 and not a.no_state and not a.only:
-        save_triage_seen(cands, label, ctx.seen_prior)
-    if not a.no_state:
-        state_path.parent.mkdir(exist_ok=True)
-        state_path.write_text(json.dumps(ctx.state, ensure_ascii=False, indent=0))
-    errs = [r for r in report if r["status"] != "ok"]
-    print(f"done in {elapsed:.1f}s: raw={len(allc)} dedup={len(cands)} errors={len(errs)} → {outdir}/candidates.jsonl", file=sys.stderr)
-    for e in errs:
-        print(f"  ! {e['id']}: {e['status']}", file=sys.stderr)
-    # 把 report.md 里的「注：」行（arXiv 批次、HF 日榜、失败的 org 等）直接打出来，agent 不必再读 report.md
     try:
-        for ln in (outdir / "report.md").read_text().splitlines():
-            if ln.startswith(tr("note_prefix")):
-                print(ln, file=sys.stderr)
-    except Exception:
-        pass
-    if a.json:
-        print(json.dumps({
-            "window": [iso(start), iso(end)], "sources": len(sources), "raw": len(allc), "dedup": len(cands),
-            "errors": [{"id": e["id"], "status": e["status"]} for e in errs], "out": str(outdir),
-            "files": {n: str(outdir / n) for n in ("candidates.jsonl", "triage.md", "report.json", "report.md")},
-        }, ensure_ascii=False))
-    return 0
+        if not a.only and not a.out:
+            import fcntl
+            outdir.parent.mkdir(parents=True, exist_ok=True)
+            _lockf = open(outdir.parent / ".fetch.lock", "w", encoding="utf-8")
+            t_wait = time.time()
+            while True:
+                try:
+                    fcntl.flock(_lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.time() - t_wait > 900:
+                        raise SystemExit(tr("fetch_lock_timeout", outdir=outdir))
+                    if time.time() - t_wait < 1:
+                        print(tr("fetch_lock_wait", outdir=outdir), file=sys.stderr)
+                    time.sleep(5)
+        if a.reuse and not a.only and not a.out:
+            rj = outdir / "report.json"
+            try:
+                meta0 = json.loads(rj.read_text(encoding="utf-8"))
+                fresh = (meta0.get("window_start") == iso(start) and meta0.get("window_end") == iso(end)
+                         and datetime.fromisoformat(meta0["generated_at"]) >= end and (outdir / "candidates.jsonl").exists()
+                         and (outdir / "triage.md").exists())
+            except Exception:
+                fresh = False
+            if fresh:
+                print(tr("fetch_reuse", outdir=outdir, at=meta0["generated_at"]), file=sys.stderr)
+                for n in meta0.get("notes", []):
+                    print(f"{tr('note_prefix')}{n}", file=sys.stderr)
+                errs0 = [r for r in meta0.get("sources", []) if r.get("status") != "ok"]
+                for e in errs0:
+                    print(f"  ! {e['id']}: {e['status']}", file=sys.stderr)
+                if a.json:
+                    print(json.dumps({
+                        "window": [meta0.get("window_start"), meta0.get("window_end")],
+                        "sources": len(meta0.get("sources", [])),
+                        "raw": meta0.get("total_raw", 0),
+                        "dedup": meta0.get("total_dedup", 0),
+                        "errors": [{"id": e["id"], "status": e["status"]} for e in errs0],
+                        "out": str(outdir),
+                        "reused": True,
+                        "files": {n: str(outdir / n) for n in ("candidates.jsonl", "triage.md", "report.json", "report.md")},
+                    }, ensure_ascii=False))
+                return 0
+        # 同一天目录已有一次完整抓取（例：过渡期 11/17 的第二次运行、手动重跑）→ 先把旧的整份挪走，绝不覆盖
+        if not a.out and not a.only and (outdir / "candidates.jsonl").exists():
+            mt = datetime.fromtimestamp((outdir / "candidates.jsonl").stat().st_mtime, TZ_LOCAL)
+            arch = outdir.with_name(f"fetch-prev-{mt:%m%d-%H%M}")
+            n = 2
+            while arch.exists():
+                arch = outdir.with_name(f"fetch-prev-{mt:%m%d-%H%M}-{n}"); n += 1
+            outdir.rename(arch)
+            print(f"archived previous fetch → {arch}", file=sys.stderr)
+        print(f"window {iso(start)} → {iso(end)}  sources={len(sources)}  out={outdir}", file=sys.stderr)
+
+        t0 = time.time()
+        report, allc = [], []
+
+        def run(src):
+            t = time.time()
+            try:
+                items = FETCHERS[src["type"]](ctx, src)
+                st = "ok"
+            except Exception as e:
+                items, st = [], f"ERROR {type(e).__name__}: {str(e)[:160]}"
+            return src, items, st, round(time.time() - t, 1)
+
+        with cf.ThreadPoolExecutor(settings.get("workers", 24)) as ex:
+            futs = [ex.submit(run, s) for s in sources]
+            for fu in cf.as_completed(futs):
+                src, items, st, sec = fu.result()
+                report.append({"id": src["id"], "name": src.get("name"), "channel": src["channel"], "type": src["type"], "n": len(items), "sec": sec, "status": st})
+                allc.extend(items)
+                if a.verbose_sources or st != "ok":   # 默认只打印失败源（153 行进度表约 2K token，且 report.md 里已有）
+                    print(f"  {src['id']:<24} {len(items):>4}  {sec:>5}s  {st}", file=sys.stderr)
+
+        ledger = load_ledger_keys()
+        for c in allc:
+            tag(c)
+        cands = dedupe(allc)
+        for c in cands:
+            k = f"arxiv:{c.extra['arxiv_id']}" if c.extra.get("arxiv_id") else canon_url(c.url)
+            c.in_ledger = ledger.get(k) or ledger.get("t:" + norm_title(c.title)) or False
+        elapsed = time.time() - t0
+        write_outputs(outdir, cands, report, ctx, elapsed, sources)
+        if ctx.triage_v2 and not a.no_state and not a.only:
+            save_triage_seen(cands, label, ctx.seen_prior)
+        if not a.no_state:
+            state_path.parent.mkdir(exist_ok=True)
+            state_path.write_text(json.dumps(ctx.state, ensure_ascii=False, indent=0), encoding="utf-8")
+        errs = [r for r in report if r["status"] != "ok"]
+        print(f"done in {elapsed:.1f}s: raw={len(allc)} dedup={len(cands)} errors={len(errs)} → {outdir}/candidates.jsonl", file=sys.stderr)
+        for e in errs:
+            print(f"  ! {e['id']}: {e['status']}", file=sys.stderr)
+        # 把 report.md 里的「注：」行（arXiv 批次、HF 日榜、失败的 org 等）直接打出来，agent 不必再读 report.md
+        try:
+            for ln in (outdir / "report.md").read_text(encoding="utf-8").splitlines():
+                if ln.startswith(tr("note_prefix")):
+                    print(ln, file=sys.stderr)
+        except Exception:
+            pass
+        if a.json:
+            print(json.dumps({
+                "window": [iso(start), iso(end)], "sources": len(sources), "raw": len(allc), "dedup": len(cands),
+                "errors": [{"id": e["id"], "status": e["status"]} for e in errs], "out": str(outdir),
+                "files": {n: str(outdir / n) for n in ("candidates.jsonl", "triage.md", "report.json", "report.md")},
+            }, ensure_ascii=False))
+        return 0
+    finally:
+        ctx.close()
+        if _lockf is not None:
+            _lockf.close()
 
 
 if __name__ == "__main__":
