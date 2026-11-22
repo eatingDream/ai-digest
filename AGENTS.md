@@ -70,14 +70,14 @@ Markdown contract (what `render_html.py` parses; either language's labels work):
 - CLIs: `--help` with examples, non-interactive by default, errors on stderr with a non-zero exit code, `--json` where output is a summary. Keep behavior backward compatible.
 - Docs: English is the default; add the idiomatic Chinese in the `.zh-CN.md` / `README.zh-CN.md` twin when you change user-facing docs. Keep READMEs lean.
 - Add or update tests with every behavior change; keep `pytest -q` offline and fast.
-- Changelog: user-visible changes go in `CHANGELOG.md` under `Unreleased`.
+- Changelog & releases: managed automatically by Release Please (`.github/workflows/release-please.yml`, `release-please-config.json`, `.release-please-manifest.json`) from Conventional Commit PR titles; normal PRs do not need to edit `version.py` or `CHANGELOG.md`.
 - Community files: `CONTRIBUTING.md` (+ `.zh-CN.md`), `SECURITY.md`, `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE.md` describe the human contribution flow; keep them in sync with the rules here (required checks, sanitization).
 
 ## Safety rules
 
 - Never commit secrets, tokens, passwords, salts, personal data, real private URLs or the reader's handles. `site/CONFIG`, password/salt files and `ledger.json` stay local. Never print a token or password in logs or output.
 - Run `scripts/check_sanitized.sh` and `pytest -q` before pushing. Digest content in examples/tests must be synthetic (`example.com` links, fictional names).
-- `main` is protected for everyone (including admins, linear history, squash-only): branch from `main` using `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`, use a Conventional Commit PR title, wait for all required checks and thread resolution, then squash-merge. Never push directly to `main` or force-push published history; releases go through a `chore/release-vX.Y.Z` PR (`version.py` + `CHANGELOG.md`) followed by a `vX.Y.Z` tag on `main` (triggers `release.yml`).
+- `main` is protected for everyone (including admins, linear history, squash-only): branch from `main` using `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`, use a Conventional Commit PR title, wait for all required checks and thread resolution, then squash-merge. Never push directly to `main` or force-push published history; releases are automated by Release Please (merging its standing `chore(main): release X.Y.Z` PR automatically tags `vX.Y.Z`, creates the GitHub Release, and invokes `release.yml` to attach verified assets).
 - `publish.py` deploys to a real site and `--rotate-password` / `--remove` change it: run them only when the task says so. The demo build (`--demo`) is always safe.
 - X/Twitter access is read-only. Do not post, like, follow or message.
 
