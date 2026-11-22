@@ -11,25 +11,50 @@ only a link or too short are skipped. A parse failure prints one line (no traceb
 When a result carries a next_token a "truncated" warning is printed (see fetch/x-recall.md, rule 2b).
 Exit code: 0 (also when a file could not be parsed; that is reported in the output).
 """
-import argparse, json, os, re, sys
-import os as _os, sys as _sys
-_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-import i18n
+import argparse
+import glob
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+import i18n  # noqa: E402
+
 FL = i18n.resolve_lang()
+
+
 def tr(key, **kw):
     return i18n.ft(FL, key, **kw)
-from zoneinfo import ZoneInfo
-from datetime import datetime, timezone, timedelta
+
 
 TZ_LOCAL = ZoneInfo(os.environ.get("DIGEST_TZ") or "UTC")
 
 
+def _fmt_ts(ts) -> str:
+    if ts is None or ts == "":
+        return "?"
+    try:
+        if isinstance(ts, (int, float)) or (isinstance(ts, str) and ts.isdigit()):
+            val = float(ts)
+            if val > 1e11:
+                val /= 1000.0
+            return datetime.fromtimestamp(val, tz=timezone.utc).astimezone(TZ_LOCAL).strftime("%m-%d %H:%M")
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(TZ_LOCAL).strftime("%m-%d %H:%M")
+    except Exception:
+        return "?"
+
+
 def load_json(path):
-    import glob
     fs = glob.glob(path) or glob.glob(path + "*")
     if not fs:
         return None
-    s = open(fs[0], errors="replace").read()
+    with open(fs[0], encoding="utf-8", errors="replace") as fh:
+        s = fh.read()
     for m in re.finditer(r'\{\s*"(?:data|meta|includes|results|news|errors|error|title)"', s):
         try:
             return json.JSONDecoder(strict=False).raw_decode(s[m.start():])[0]
@@ -43,7 +68,13 @@ def main():
     ap.add_argument("items", nargs="+", metavar="LABEL=PATH", help="group label and result file, e.g. A1=agent-tools/a.txt (several allowed)")
     ap.add_argument("--chars", type=int, default=200, help="characters of post text to keep (default 200)")
     ap.add_argument("--out", help="also write the output to this file")
+    ap.add_argument("--lang", help="language of output labels: en | zh-CN (default: $DIGEST_LANG, else en)")
     a = ap.parse_args()
+    global FL
+    try:
+        FL = i18n.resolve_lang(a.lang)
+    except ValueError as e:
+        ap.error(str(e))
     counts, lines, seen = [], [], set()
     trunc = []   # 有 next_token = 只拿到窗口里最新的一段（2026-11-18 review：B1/C1/C2 每次只回 25 条）
     seen_txt = set()
@@ -53,7 +84,8 @@ def main():
             label, path = f"F{len(counts)+1}", it
         d = load_json(path)
         if not isinstance(d, dict):
-            counts.append(f"{label}={tr('xp_parse_fail')}"); continue
+            counts.append(f"{label}={tr('xp_parse_fail')}")
+            continue
         data = d.get("data") or d.get("results") or []
         if isinstance(data, dict):
             inner = next((v for v in data.values() if isinstance(v, list) and v and isinstance(v[0], dict)), None)
@@ -65,10 +97,7 @@ def main():
         nt = (d.get("meta") or {}).get("next_token")
         if nt:
             olds = sorted(str(p.get("created_at")) for p in data if isinstance(p, dict) and p.get("created_at"))
-            try:
-                ot = datetime.fromisoformat(olds[0].replace("Z", "+00:00")).astimezone(TZ_LOCAL).strftime("%m-%d %H:%M") if olds else "?"
-            except Exception:
-                ot = "?"
+            ot = _fmt_ts(olds[0]) if olds else "?"
             trunc.append(f"{label}({tr('xp_oldest', t=ot)}, next_token={nt})")
         for p in data:
             if not isinstance(p, dict):
@@ -76,7 +105,8 @@ def main():
             pid = str(p.get("id") or p.get("rest_id") or p.get("post_id") or "")
             if pid and pid in seen:
                 continue
-            seen.add(pid)
+            if pid:
+                seen.add(pid)
             text = p.get("text") or p.get("title") or p.get("summary") or ""
             bare = re.sub(r"https?://\S+", "", text).strip()
             if len(bare) < 25 or bare.startswith("@") or bare.startswith("RT @"):   # 纯链接/过短/回复串/转推：跳过（条数仍计入）
@@ -86,10 +116,7 @@ def main():
                 continue
             seen_txt.add(key)
             ts = p.get("created_at") or p.get("last_updated_at_ms") or ""
-            try:
-                t = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(TZ_LOCAL).strftime("%m-%d %H:%M")
-            except Exception:
-                t = "?"
+            t = _fmt_ts(ts)
             url = (p.get("url") or "").replace("https://x.com/", "x.com/")
             if not url and pid:
                 un = users.get(p.get("author_id")) or "i"
@@ -98,8 +125,12 @@ def main():
     warn = (tr("xp_trunc") + "; ".join(trunc)) if trunc else ""
     out = " ".join(counts) + "\n" + (warn + "\n" if warn else "") + "\n".join(lines)
     if a.out:
-        open(a.out, "w").write(out + "\n")
-        print(f"{' '.join(counts)}  → {a.out}（{len(lines)} 条，{len(out)} 字节）")
+        out_dir = os.path.dirname(os.path.abspath(a.out))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(a.out, "w", encoding="utf-8") as fh:
+            fh.write(out + "\n")
+        print(tr("xp_wrote", counts=" ".join(counts), out=a.out, n=len(lines), bytes=len(out.encode("utf-8"))))
         if warn:
             print(warn)
     else:

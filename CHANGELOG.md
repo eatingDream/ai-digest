@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Fixed `NameError` (`L` -> `tr`) in `fetch/fetch.py` (`paper_signals`) when an off-topic paper matches a major-result keyword.
 - Replaced hardcoded year `2026` in `render_html.py` with dynamic year inference (from `--year`, heading, filename, or current year) and fixed cross-year weekly date ranges in both English and Chinese.
 - Hardened `fetch/fetch.py`: thread-local pooled HTTP sessions, thread-safe notes/state updates, explicit UTF-8 file I/O, localized `--reuse`/lock messages, `--reuse --json` output, `--rebuild --no-fold` handling, and removed a duplicate org entry in `fetch/sources.toml`.
+- Hardened `fetch/` helper CLIs (`ledger.py`, `weekly_late.py`, `xparse.py`, `page.py`, `cand.py`, `check_cands.py`): atomic UTF-8 ledger writes with URL merging and isolated backups under `LEDGER_PATH`, working `--chars` abstracts in `weekly_late.py`, epoch-millisecond timestamp parsing and localized summaries in `xparse.py`, in-process parallel fetching in `page.py`, clean missing-file handling in `check_cands.py`, and consistent `--lang` / `DIGEST_ROOT` support.
 
 ## [0.1.0] - 2026-11-20
 

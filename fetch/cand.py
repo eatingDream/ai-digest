@@ -11,16 +11,24 @@ Examples:
 Searches runs/<latest date>/fetch and fetch-extra by default (repeat --dir to choose;
 --since DATE covers every run from DATE on). Each match prints about 5 lines:
 title / source, time, weight, ledger status / URL / authors / first N chars of the abstract.
-Exit code: 0 always (no match prints "0 matches" for that key).
+Exit code: 0 always (no match prints "no match" for that key).
 """
-import argparse, glob, json, os, re, sys
-import os as _os, sys as _sys
-_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-import i18n
+import argparse
+import glob
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+import i18n  # noqa: E402
+
 FL = i18n.resolve_lang()
+
+
 def tr(key, **kw):
     return i18n.ft(FL, key, **kw)
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def main():
@@ -30,16 +38,23 @@ def main():
     ap.add_argument("--since", metavar="YYYY-MM-DD", help="weekly: search runs/<D>/fetch and fetch-extra (D >= this date) plus gap-fill fetches under runs/*-weekly/fetch (no need to pass --dir per day)")
     ap.add_argument("--chars", type=int, default=500, help="abstract characters to print (default 500)")
     ap.add_argument("--max", type=int, default=3, help="max matches printed per key (default 3)")
+    ap.add_argument("--lang", help="language of output labels: en | zh-CN (default: $DIGEST_LANG, else en)")
     a = ap.parse_args()
+    global FL
+    try:
+        FL = i18n.resolve_lang(a.lang)
+    except ValueError as e:
+        ap.error(str(e))
+    root = os.environ.get("DIGEST_ROOT") or ROOT
     dirs = a.dir
     if a.since:
         dirs = []
-        for d in sorted(glob.glob(os.path.join(ROOT, "runs", "20??-??-??"))):
+        for d in sorted(glob.glob(os.path.join(root, "runs", "20??-??-??"))):
             if os.path.basename(d) >= a.since:
                 dirs += [os.path.join(d, "fetch"), os.path.join(d, "fetch-extra")] + sorted(glob.glob(os.path.join(d, "fetch-prev-*")))
-        dirs += sorted(glob.glob(os.path.join(ROOT, "runs", "20??-??-??-weekly", "fetch")))[-1:]
+        dirs += sorted(glob.glob(os.path.join(root, "runs", "20??-??-??-weekly", "fetch")))[-1:]
     if not dirs:
-        days = sorted(d for d in glob.glob(os.path.join(ROOT, "runs", "20??-??-??")))
+        days = sorted(d for d in glob.glob(os.path.join(root, "runs", "20??-??-??")))
         dirs = []
         if days:
             dirs = [os.path.join(days[-1], "fetch"), os.path.join(days[-1], "fetch-extra")]
@@ -47,7 +62,8 @@ def main():
     for d in dirs:
         p = os.path.join(d, "candidates.jsonl")
         if os.path.exists(p):
-            rows += [json.loads(l) for l in open(p) if l.strip()]
+            with open(p, encoding="utf-8") as fh:
+                rows += [json.loads(l) for l in fh if l.strip()]
     for k in a.keys:
         kk = k.lower().lstrip("#")
         hits = [r for r in rows if r["id"].startswith(kk) or r.get("extra", {}).get("arxiv_id") == kk]
