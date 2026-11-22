@@ -18,13 +18,14 @@
 3. **Commit 与 PR 标题规范**：PR 标题（及提交信息）采用 [Conventional Commits](https://www.conventionalcommits.org/)（如 `fix(fetch): ...`、`feat(render): ...`、`docs: ...`）。`main` 仅允许 squash 合并并默认采用 PR 标题，确保每个 PR 在主干上对应一条清晰记录。
 4. **本地自检后提 PR**：推送前跑完下方检查，按模板说明改了什么与为什么，关联对应 Issue（`Closes #N`）；CI 全绿并完成 Review 后 squash 合并，远端分支会自动删除。
 
-## 发版流程
+## 自动发版流程
 
-维护者通过独立发版 PR（`chore/release-vX.Y.Z`）发布版本：
+发版由 [Release Please](https://github.com/googleapis/release-please)（`.github/workflows/release-please.yml`）全自动管理：
 
-1. 更新 [version.py](version.py) 中的 `__version__`，并将 [CHANGELOG.md](CHANGELOG.md) 里 `Unreleased` 下的条目归档到 `## [X.Y.Z] - YYYY-MM-DD`。
-2. 提 PR 到 `main`，等 CI 通过（测试会自动校验 `version.py` 与 `CHANGELOG.md` 一致）后 squash 合并。
-3. 在合并后的 `main` 提交上打 `vX.Y.Z`（预发布可用 `vX.Y.Z-rc.1`）并推送 tag，`.github/workflows/release.yml` 会自动跑测试、构建演示包并创建 GitHub Release。
+1. 日常 PR 使用 Conventional Commits 标题合并到 `main`（`fix:` / `perf:` / `refactor:` 触发 patch，`feat:` 触发 minor，`!:` 或 `BREAKING CHANGE:` 在 1.0 前触发 minor、1.0 后触发 major）。贡献者**无需**手动修改 `version.py` 或 `CHANGELOG.md`。
+2. 每次 `main` 更新后，Release Please 会自动创建或持续更新一个发版 PR（`chore(main): release X.Y.Z`），自动递增 [version.py](version.py)、[.release-please-manifest.json](.release-please-manifest.json) 并生成 [CHANGELOG.md](CHANGELOG.md)。
+3. 准备发版时，只需确认该发版 PR 的 CI 通过后 squash 合并：Release Please 会自动创建 `vX.Y.Z` tag 与 GitHub Release，并自动调用 `.github/workflows/release.yml` 跑完测试、构建并上传源码包、演示站压缩包及 `SHA256SUMS.txt`。
+4. 如需发布预发布版本（如 `v0.2.0-rc.1`），仍可在 `main` 上手动推送对应 tag 直接触发 `.github/workflows/release.yml`。
 
 ## 本地环境与测试
 
@@ -41,11 +42,10 @@ scripts/check_sanitized.sh         # 必须输出 "clean"
 
 ## 提 PR 前自查
 
-- 一个 PR 只做一件事，使用 Conventional Commits 标题，并简要说明改了什么、为什么。
+- 一个 PR 只做一件事，使用 Conventional Commits 标题，并简要说明改了什么、为什么（[CHANGELOG.md](CHANGELOG.md) 会根据 PR 标题自动生成）。
 - 行为变化要补测试，保持 `pytest -q` 离线且很快。
 - 面向用户的文字统一放进 `i18n.py`，`en` 与 `zh-CN` 两份都要有。
 - 文档以英文为默认；改了面向用户的文档，请同步更新对应的 `.zh-CN.md`，用地道的中文表达，不要直译。
-- 对用户可见的改动，在 [CHANGELOG.md](CHANGELOG.md) 的 `Unreleased` 下加一行。
 - 尽量不引入新依赖，确需引入时同步更新 `requirements*.txt`。
 
 ## 反馈问题与想法

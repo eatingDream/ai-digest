@@ -12,4 +12,4 @@
 - [ ] Tests added or updated for behavior changes
 - [ ] No secrets, personal data, real URLs or local paths (public repo; examples and tests are synthetic)
 - [ ] User-facing text is in `i18n.py` for both `en` and `zh-CN`; docs updated with the `.zh-CN.md` twin
-- [ ] `CHANGELOG.md` updated under `Unreleased` (user-visible changes)
+- [ ] PR title follows Conventional Commits (used by Release Please to update `CHANGELOG.md` and bump versions automatically)
