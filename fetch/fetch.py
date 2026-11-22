@@ -1085,7 +1085,7 @@ def paper_signals(c, xref: dict[str, str]) -> list[str]:
     text = f"{c.title} {c.summary or ''}"
     hits = [n for n, rx in BIG_KW_RE if rx.search(text)]
     if hits:
-        tags.append(tr("sig_kw") + "/".join(L(h) for h in hits[:2]))
+        tags.append(tr("sig_kw") + "/".join(tr(h) for h in hits[:2]))
     return tags
 
 
