@@ -139,7 +139,8 @@ def main():
         ab = " ".join(doc.xpath("//blockquote[contains(@class,'abstract')]//text()")).replace("Abstract:", "").strip()
         dl = " ".join(doc.xpath("//div[@class='dateline']//text()")).strip()
         au = ", ".join(doc.xpath("//div[contains(@class,'authors')]//a/text()")[:8])
-        print(f"# {md['title']}\n{dl} | {au}\n{re.sub(chr(10)+'|\\s+', ' ', ab)[: a.chars]}")
+        abstract = re.sub(r"\s+", " ", ab)[: a.chars]
+        print(f"# {md['title']}\n{dl} | {au}\n{abstract}")
         return
     print(f"# {md['title']}" + (f"\n{tr('pg_date')}{md['date']}" if md["date"] else "") + (f"\n{tr('pg_desc')}{md['desc'][:300]}" if md["desc"] else ""))
     if a.meta:

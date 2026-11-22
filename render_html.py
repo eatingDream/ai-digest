@@ -1651,8 +1651,9 @@ def render_sidebar(digest: Digest, lang: str = "en") -> str:
                 title, is_new = toc_title.get(it.number, (it.title, it.is_new))
                 badge = f' <span class="badge badge-hot">{html.escape(i18n.t(lang, "new"))}</span>' if is_new else ""
                 full = max((it.title, title), key=len)
+                cls = ' class="has-new"' if is_new else ""
                 chunks.append(
-                    f'<li><a href="#{html.escape(item_anchor(it.number))}"{" class=\"has-new\"" if is_new else ""} title="{html.escape(full, quote=True)}">'
+                    f'<li><a href="#{html.escape(item_anchor(it.number))}"{cls} title="{html.escape(full, quote=True)}">'
                     f'<span class="n num">{html.escape(it.number)}</span>'
                     f'<span class="t">{html.escape(_short_title(title, keep_rest=_title_head(title) in dup_heads))}</span>{badge}</a></li>'
                 )
