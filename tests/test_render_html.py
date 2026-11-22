@@ -50,7 +50,7 @@ def test_section_anchors_match_across_languages():
 ])
 def test_render_daily_ui_language(tmp_path, lang, needles, absent):
     out = tmp_path / "d.html"
-    digest = rh.render_file(SAMPLES[lang][0], out, lang)
+    digest = rh.render_file(SAMPLES[lang][0], out, lang, year=2026)
     html = out.read_text(encoding="utf-8")
     assert html.lstrip().lower().startswith("<!doctype html")
     assert len(digest.items) == 10 and "Orion-3 Mini" in html
@@ -63,7 +63,7 @@ def test_render_daily_ui_language(tmp_path, lang, needles, absent):
 
 def test_render_weekly_en_front_page(tmp_path):
     out = tmp_path / "w.html"
-    rh.render_file(SAMPLES["en"][1], out, "en")
+    rh.render_file(SAMPLES["en"][1], out, "en", year=2026)
     html = out.read_text(encoding="utf-8")
     for n in ("Must read this week", "Themes of the week", "Follow-up", "Weekly", "Jan 12 – Jan 18, 2026"):
         assert n in html, n
@@ -131,3 +131,29 @@ def test_short_title_latin_uses_head_and_word_boundary():
     cut = rh._short_title("Researchers publish a surprisingly long headline without any colon at all")
     assert cut.endswith("…") and not cut[:-1].endswith(("headl", "surpris"))  # cut at a word boundary
     assert len(cut) <= 29
+
+
+def test_year_inferred_from_filename_and_cli_override(tmp_path):
+    src = tmp_path / "digest-2027-01-15.md"
+    src.write_text("**AI Daily · 1/15**\n\n## Models\n\n### 1. T: x\n`a · 1/15`\n\n**In brief:** ok\n", encoding="utf-8")
+    out = tmp_path / "out.html"
+    rh.render_file(src, out, "en")
+    assert "Friday, January 15, 2027" in out.read_text(encoding="utf-8")
+    assert rh.main([str(src), str(out), "--lang", "en", "--year", "2028"]) == 0
+    assert "Saturday, January 15, 2028" in out.read_text(encoding="utf-8")
+
+
+def test_cross_year_weekly_and_invalid_leap_day():
+    en = rh._period_info("12/28–01/03", weekly=True, lang="en", year=2026)
+    assert en["line"] == "Dec 28, 2026 – Jan 3, 2027"
+    zh = rh._period_info("12/28–01/03", weekly=True, lang="zh-CN", year=2026)
+    assert zh["line"] == "2026 年 12 月 28 日 — 2027 年 1 月 3 日"
+    # Invalid leap date in non-leap year degrades gracefully instead of raising ValueError
+    fallback = rh._period_info("2/29", weekly=False, lang="en", year=2026)
+    assert fallback["line"] == "2/29"
+
+
+def test_render_item_accepts_lang_alias():
+    it = rh.Item(number="1", title="T", fields={"dek": "brief", "followup": "update"})
+    rendered = rh.render_item(it, "zh")
+    assert "本周后续" in rendered

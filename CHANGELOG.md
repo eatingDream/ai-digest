@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 - Restored Python 3.11 compatibility by removing Python 3.12-only backslashes inside f-string expressions in `render_html.py` and `fetch/page.py`, and added a Python 3.11 CI check.
 - Fixed `NameError` (`L` -> `tr`) in `fetch/fetch.py` (`paper_signals`) when an off-topic paper matches a major-result keyword.
+- Replaced hardcoded year `2026` in `render_html.py` with dynamic year inference (from `--year`, heading, filename, or current year) and fixed cross-year weekly date ranges in both English and Chinese.
 
 ## [0.1.0] - 2026-11-20
 
