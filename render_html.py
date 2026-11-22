@@ -14,7 +14,7 @@ import html
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import i18n
@@ -28,8 +28,6 @@ try:
 except Exception:  # pragma: no cover - fallback when the library is absent
     _MD = None
     _HAS_MD = False
-
-CSS_PATH_SIBLING = Path(__file__).with_name("digest.css")
 
 # Third-party notice: the CSS design tokens below (colour/radius/easing custom
 # properties and the font stacks) are adapted from the AIHOT project
@@ -1250,9 +1248,8 @@ def _parse_toc(text: str) -> tuple[list[TocGroup], str]:
             label = line[2:end].strip()
             rest = line[end + 2 :].strip()
         entries: list[TocEntry] = []
-        import re as _re
-        for part in _re.split(r"[\u3000]+|\s{2,}|\n", rest):
-            m = _re.match(r"^(🆕\s*)?(\d+(?:[–-]\d+)?)\.\s*(.+)$", part.strip())
+        for part in re.split(r"[\u3000]+|\s{2,}|\n", rest):
+            m = re.match(r"^(🆕\s*)?(\d+(?:[–-]\d+)?)\.\s*(.+)$", part.strip())
             if not m:
                 continue
             entries.append(
@@ -1334,7 +1331,6 @@ def _link_related(src: str) -> str:
             bits.append(html.escape(body[cursor : n.start()]))
             a, b = n.group(1), n.group(2)
             if b:
-                href = f"#{item_anchor(a + '–' + b)}"
                 # Ranges in 主线 usually refer to inclusive item numbers, not a combined card.
                 # Link the ends individually if no combined item exists; keep a single span.
                 bits.append(
@@ -1351,7 +1347,15 @@ def _link_related(src: str) -> str:
     return RELATED_RE.sub(repl, src)
 
 
-YEAR = 2026
+YEAR = date.today().year
+_FILENAME_YEAR_RE = re.compile(r"(?:^|[^0-9])(20\d{2})-\d{2}-\d{2}")
+_SLASH_DATE_RE = re.compile(r"(?:(\d{4})[/-])?(\d{1,2})/(\d{1,2})")
+_ISO_DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def _year_from_path(src: Path) -> int | None:
+    m = _FILENAME_YEAR_RE.search(src.name)
+    return int(m.group(1)) if m else None
 
 
 def _split_meta(meta: str) -> tuple[str, str, list[str]]:
@@ -1381,13 +1385,19 @@ def _plain_section(title: str) -> str:
     return _LEAD_EMOJI_RE.sub("", title).strip() or title
 
 
-def _period_info(period: str, weekly: bool, lang: str) -> dict[str, str]:
-    parts = [p.strip() for p in re.split(r"[–—-]", period or "") if p.strip()]
+def _period_info(period: str, weekly: bool, lang: str, year: int | None = None) -> dict[str, str]:
+    base_year = year if year is not None else date.today().year
+    raw_matches = _SLASH_DATE_RE.findall(period or "") or _ISO_DATE_RE.findall(period or "")
     dates: list[date] = []
-    for p in parts:
-        m = re.match(r"(\d{1,2})/(\d{1,2})", p)
-        if m:
-            dates.append(date(YEAR, int(m.group(1)), int(m.group(2))))
+    for y_s, mo_s, day_s in raw_matches:
+        y = int(y_s) if y_s else base_year
+        mo, day = int(mo_s), int(day_s)
+        if not y_s and dates and (mo, day) < (dates[-1].month, dates[-1].day):
+            y = dates[-1].year + 1
+        try:
+            dates.append(date(y, mo, day))
+        except ValueError:
+            continue
     motto = i18n.t(lang, "motto")
     edition = i18n.t(lang, "edition_weekly" if weekly else "edition_daily")
     if weekly and len(dates) >= 2:
@@ -1474,6 +1484,7 @@ def _split_list_items(text: str) -> list[str]:
 
 
 def render_item(item: Item, lang: str = "en") -> str:
+    lang = i18n.normalize_lang(lang)
     anchor = item_anchor(item.number)
     source, when, tags = _split_meta(item.meta)
     meta_bits: list[str] = []
@@ -1699,15 +1710,14 @@ def render_themes(digest: Digest, lang: str = "en") -> str:
     return "\n".join(chunks)
 
 
-def render_html(digest: Digest, lang: str | None = None) -> str:
+def render_html(digest: Digest, lang: str | None = None, year: int | None = None) -> str:
     lang = i18n.resolve_lang(lang)
     weekly = i18n.looks_weekly(digest.title)
-    info = _period_info(digest.period, weekly, lang)
+    info = _period_info(digest.period, weekly, lang, year=year)
     full_title = digest.title
     if digest.period:
         full_title = f"{digest.title} · {digest.period}"
     front_left = render_themes(digest, lang)
-    front_right = render_must(digest, lang) + _section_nav(digest, lang)
     sidebar = render_sidebar(digest, lang)
 
     parts = [
@@ -1852,11 +1862,12 @@ def _section_id(title: str) -> str:
     return "sec-" + (slug or "section")
 
 
-def render_file(src: Path, dest: Path, lang: str | None = None) -> Digest:
+def render_file(src: Path, dest: Path, lang: str | None = None, year: int | None = None) -> Digest:
     lang = i18n.resolve_lang(lang)
     digest = parse_digest(src.read_text(encoding="utf-8"), lang)
+    inferred_year = year if year is not None else _year_from_path(src)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(render_html(digest, lang), encoding="utf-8")
+    dest.write_text(render_html(digest, lang, year=inferred_year), encoding="utf-8")
     return digest
 
 
@@ -1879,6 +1890,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("input", type=Path, help="digest markdown (digest-<date>.md or weekly-<range>.md)")
     ap.add_argument("output", type=Path, help="HTML file to write (parent directories are created)")
     ap.add_argument("--lang", help="UI language: en | zh-CN (default: $DIGEST_LANG, else en)")
+    ap.add_argument("--year", type=int, help="issue year override when heading omits it (default: inferred from filename, else current year)")
     ap.add_argument("--json", action="store_true", help="print one JSON object {output, lang, title, items, sections} instead of the text line")
     ns = ap.parse_args(sys.argv[1:] if argv is None else argv)
     try:
@@ -1890,7 +1902,7 @@ def main(argv: list[str] | None = None) -> int:
     if not src.exists():
         print(f"input not found: {src}", file=sys.stderr)
         return 1
-    digest = render_file(src, dest, lang)
+    digest = render_file(src, dest, lang, year=ns.year)
     if ns.json:
         import json
         print(json.dumps({"output": str(dest), "lang": lang, "title": digest.title, "items": len(digest.items),
