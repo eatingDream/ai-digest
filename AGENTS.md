@@ -77,7 +77,7 @@ Markdown contract (what `render_html.py` parses; either language's labels work):
 
 - Never commit secrets, tokens, passwords, salts, personal data, real private URLs or the reader's handles. `site/CONFIG`, password/salt files and `ledger.json` stay local. Never print a token or password in logs or output.
 - Run `scripts/check_sanitized.sh` and `pytest -q` before pushing. Digest content in examples/tests must be synthetic (`example.com` links, fictional names).
-- `main` is protected: work on a branch, open a PR, wait for the required checks, squash-merge. Never force-push or rewrite published history; tags are `vX.Y.Z` and trigger `release.yml`.
+- `main` is protected for everyone (including admins, linear history, squash-only): branch from `main` using `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`, use a Conventional Commit PR title, wait for all required checks and thread resolution, then squash-merge. Never push directly to `main` or force-push published history; releases go through a `chore/release-vX.Y.Z` PR (`version.py` + `CHANGELOG.md`) followed by a `vX.Y.Z` tag on `main` (triggers `release.yml`).
 - `publish.py` deploys to a real site and `--rotate-password` / `--remove` change it: run them only when the task says so. The demo build (`--demo`) is always safe.
 - X/Twitter access is read-only. Do not post, like, follow or message.
 
