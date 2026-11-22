@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- Restored Python 3.11 compatibility by removing Python 3.12-only backslashes inside f-string expressions in `render_html.py` and `fetch/page.py`, and added a Python 3.11 CI check.
+
 ## [0.1.0] - 2026-11-20
 
 Initial release.
