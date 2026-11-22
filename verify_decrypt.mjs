@@ -17,10 +17,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
-const ROOT = process.env.DIGEST_ROOT || dirname(fileURLToPath(import.meta.url));
+const CODE_ROOT = dirname(fileURLToPath(import.meta.url));
+const ROOT = process.env.DIGEST_ROOT || CODE_ROOT;
 const VERSION = (() => {
   try {
-    const m = readFileSync(join(ROOT, "version.py"), "utf8").match(/__version__\s*=\s*"([^"]+)"/);
+    const m = readFileSync(join(CODE_ROOT, "version.py"), "utf8").match(/__version__\s*=\s*"([^"]+)"/);
     return `ai-digest ${m ? m[1] : "unknown"}`;
   } catch {
     return "ai-digest unknown";
@@ -147,15 +148,22 @@ examples:
 
 function parseArgs(argv) {
   const opts = { local: false, urls: [], plains: [], urlBase: null };
+  function needVal(flag, i) {
+    if (i + 1 >= argv.length) throw new Error(`missing value for ${flag}`);
+    return argv[i + 1];
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-h" || a === "--help") { process.stdout.write(HELP); process.exit(0); }
     else if (a === "--version") { process.stdout.write(`${VERSION}\n`); process.exit(0); }
     else if (a === "--local") opts.local = true;
-    else if (a === "--url") opts.urls.push(argv[++i]);
-    else if (a === "--plain") opts.plains.push(argv[++i]);
-    else if (a === "--url-base") opts.urlBase = argv[++i];
+    else if (a === "--url") { opts.urls.push(needVal(a, i)); i++; }
+    else if (a === "--plain") { opts.plains.push(needVal(a, i)); i++; }
+    else if (a === "--url-base") { opts.urlBase = needVal(a, i); i++; }
     else throw new Error(`unknown arg: ${a}`);
+  }
+  if (opts.urls.length !== opts.plains.length) {
+    throw new Error(`--url (${opts.urls.length}) and --plain (${opts.plains.length}) must be paired`);
   }
   return opts;
 }
@@ -176,6 +184,7 @@ async function main() {
   if (opts.local) {
     const pub = `${PUBLIC_ROOT}/${slug}`;
     const plain = `${PLAIN_ROOT}/${slug}`;
+    if (!existsSync(pub)) throw new Error(`encrypted directory not found: ${pub}`);
     const files = walkHtmlSync(pub);
     if (!files.length) throw new Error("no encrypted HTML under public/");
     for (const f of files) {
@@ -190,6 +199,7 @@ async function main() {
 
   if (opts.urlBase) {
     const plain = `${PLAIN_ROOT}/${slug}`;
+    if (!existsSync(plain)) throw new Error(`plaintext directory not found: ${plain}`);
     const files = walkHtmlSync(plain);
     for (const f of files) {
       const rel = f.slice(plain.length + 1);

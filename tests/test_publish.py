@@ -180,3 +180,136 @@ def test_live_template_has_no_demo_hint():
     tmpl = (ROOT / "site" / "password_template.html").read_text(encoding="utf-8")
     assert 'class="demo-hint"' not in publish.localize_template(tmpl, "en")  # no extras -> empty (live pipeline)
     assert 'class="demo-hint"' not in publish.localize_template(tmpl, "en", publish.shell_extras(""))  # no demo password set
+
+
+def test_issue_headlines_unescapes_html_entities(tmp_path):
+    from datetime import date
+    src = tmp_path / "2026-01-15.html"
+    src.write_text(
+        '<article class="story"><h3><span class="story-no num">01</span> '
+        'O&#x27;Reilly &amp; Co &mdash; <code>&lt;fast&gt;</code></h3></article>',
+        encoding="utf-8",
+    )
+    issue = publish.Issue(
+        kind="daily", label="2026-01-15", source=src,
+        start=date(2026, 1, 15), end=date(2026, 1, 15), title="t",
+    )
+    assert publish.issue_headlines(issue) == ["O'Reilly & Co — <fast>"]
+
+
+def test_parse_weekly_label_cross_year_and_full_iso():
+    from datetime import date
+    assert publish.parse_weekly_label("2026-12-28_01-03") == (date(2026, 12, 28), date(2027, 1, 3))
+    assert publish.parse_weekly_label("2026-12-28_2027-01-03") == (date(2026, 12, 28), date(2027, 1, 3))
+
+
+def test_build_demo_restores_module_globals(monkeypatch, tmp_path):
+    monkeypatch.setenv("DIGEST_DEMO_PASSWORD", "demo-password-123")
+    before = (
+        publish.SITE, publish.PUBLIC, publish.PLAIN, publish.SOURCES,
+        publish.CONFIG_PATH, publish.ENC_CACHE_PATH,
+        publish._PASSWORD_OVERRIDE, publish._SALT_OVERRIDE,
+        publish.CLI_LANG, publish.LANG_ALT, publish.LANG,
+    )
+    rc = publish.build_demo(
+        tmp_path / "out", ROOT / "examples",
+        publish.DEMO_DAILY_LABEL, publish.DEMO_WEEKLY_LABEL,
+        langs=("en",),
+    )
+    assert rc == 0
+    after = (
+        publish.SITE, publish.PUBLIC, publish.PLAIN, publish.SOURCES,
+        publish.CONFIG_PATH, publish.ENC_CACHE_PATH,
+        publish._PASSWORD_OVERRIDE, publish._SALT_OVERRIDE,
+        publish.CLI_LANG, publish.LANG_ALT, publish.LANG,
+    )
+    assert after == before
+
+
+def test_incremental_prepare_only_cache_and_node_verify(tmp_path):
+    work = tmp_path / "work"
+    pw_file = tmp_path / "site-password"
+    salt_file = tmp_path / "site-salt"
+    pw1 = "synthetic-test-pass-0001"
+    pw2 = "synthetic-test-pass-0002"
+    pw_file.write_text(pw1 + "\n", encoding="utf-8")
+    pw_file.chmod(0o600)
+
+    env = dict(
+        os.environ,
+        DIGEST_ROOT=str(work),
+        DIGEST_SITE_PASSWORD_FILE=str(pw_file),
+        DIGEST_SITE_SALT_FILE=str(salt_file),
+        DIGEST_TZ="UTC",
+        SITE_SLUG="testslug",
+        SITE_DOMAIN="digest.example.com",
+    )
+    env.pop("DIGEST_LANG", None)
+
+    def run_pub(*args):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "publish.py"), *args],
+            env=env, capture_output=True, text=True, cwd=str(ROOT),
+        )
+
+    # 1. First incremental dry-run from external DIGEST_ROOT renders & encrypts.
+    r1 = run_pub("--issue", "daily/2026-01-15", "--md", "examples/sample-digest.en.md", "--lang", "en", "--prepare-only")
+    assert r1.returncode == 0, r1.stdout + r1.stderr
+    assert "deploy: skipped (--prepare-only)" in r1.stdout
+    assert "daily/2026-01-15.html" in r1.stdout and "index.html" in r1.stdout
+    assert (work / "site" / "enc-cache.json").is_file()
+
+    # 2. Identical run reuses cached encrypted pages.
+    r2 = run_pub("--issue", "daily/2026-01-15", "--md", "examples/sample-digest.en.md", "--lang", "en", "--prepare-only")
+    assert r2.returncode == 0, r2.stdout + r2.stderr
+    assert "changed pages: none" in r2.stdout
+
+    # 3. Node WebCrypto verifier decrypts local pages and matches site/plain/ byte-for-byte.
+    v1 = subprocess.run(
+        ["node", str(ROOT / "verify_decrypt.mjs"), "--local"],
+        env=env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert v1.returncode == 0, v1.stdout + v1.stderr
+    assert "all 2 page(s) decrypted and matched plaintext" in v1.stdout
+
+    # 4. Switching password without rotating salt invalidates enc-cache and re-encrypts.
+    pw_file.write_text(pw2 + "\n", encoding="utf-8")
+    r3 = run_pub("--issue", "daily/2026-01-15", "--lang", "en", "--prepare-only")
+    assert r3.returncode == 0, r3.stdout + r3.stderr
+    assert "changed pages: none" not in r3.stdout
+    v2 = subprocess.run(
+        ["node", str(ROOT / "verify_decrypt.mjs"), "--local"],
+        env=env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert v2.returncode == 0, v2.stdout + v2.stderr
+
+    # 5. Switching shell language invalidates enc-cache and updates lock shell language.
+    r4 = run_pub("--issue", "daily/2026-01-15", "--lang", "zh-CN", "--prepare-only")
+    assert r4.returncode == 0, r4.stdout + r4.stderr
+    assert "changed pages: none" not in r4.stdout
+    shell = (work / "site" / "public" / "testslug" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+    assert '<html lang="zh-CN">' in shell and "记住此设备" in shell
+
+
+def test_verify_decrypt_cli_validation(tmp_path):
+    r_unpaired = subprocess.run(
+        ["node", str(ROOT / "verify_decrypt.mjs"), "--url", "https://example.com/a"],
+        capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert r_unpaired.returncode != 0 and "paired" in r_unpaired.stderr
+
+    r_missing = subprocess.run(
+        ["node", str(ROOT / "verify_decrypt.mjs"), "--url"],
+        capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert r_missing.returncode != 0 and "missing value" in r_missing.stderr
+
+    pw = tmp_path / "pw"
+    pw.write_text("synthetic-test-pass-0003\n", encoding="utf-8")
+    env = dict(os.environ, DIGEST_ROOT=str(tmp_path / "empty"), DIGEST_SITE_PASSWORD_FILE=str(pw), SITE_SLUG="noslug")
+    r_nodir = subprocess.run(
+        ["node", str(ROOT / "verify_decrypt.mjs"), "--local"],
+        env=env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert r_nodir.returncode != 0 and "not found" in r_nodir.stderr
+
