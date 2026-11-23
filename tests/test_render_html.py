@@ -157,3 +157,26 @@ def test_render_item_accepts_lang_alias():
     it = rh.Item(number="1", title="T", fields={"dek": "brief", "followup": "update"})
     rendered = rh.render_item(it, "zh")
     assert "本周后续" in rendered
+
+
+def test_render_sanitizes_raw_html_and_unsafe_urls():
+    md = (
+        "**AI Daily · 1/1**\n\n"
+        "## 🧠 Models\n\n"
+        "### 1. Safe Title\n"
+        "`Lab · 1/1 · Open`\n\n"
+        "**In brief:** Hello <script>alert(1)</script> and <img src=x onerror=alert(2)> "
+        "with [bad](javascript:alert(3)), [data](data:text/html,<svg>) and [good](https://example.com/ok).\n\n"
+        "🔗 [Evil](javascript:alert(4)) · [Good](https://example.com/ref)\n"
+    )
+    out = rh.render_html(rh.parse_digest(md, "en"), "en")
+    assert "<script>alert(1)</script>" not in out
+    assert "<img src=x onerror=alert(2)>" not in out
+    assert "javascript:" not in out.lower()
+    assert "data:text/html" not in out.lower()
+    assert 'href="https://example.com/ok"' in out
+    assert 'href="https://example.com/ref"' in out
+    assert "<span>Evil</span>" in out
+    # Fallback renderer matches the same URL safety policy
+    fb = rh._fallback_markdown("[bad](javascript:alert(1)) [ok](https://example.com/a)")
+    assert "javascript:" not in fb.lower() and 'href="https://example.com/a"' in fb

@@ -289,6 +289,10 @@ def test_incremental_prepare_only_cache_and_node_verify(tmp_path):
     assert "changed pages: none" not in r4.stdout
     shell = (work / "site" / "public" / "testslug" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
     assert '<html lang="zh-CN">' in shell and "记住此设备" in shell
+    headers = (work / "site" / "public" / "_headers").read_text(encoding="utf-8")
+    assert "X-Frame-Options: DENY" in headers
+    assert "Content-Security-Policy:" in headers
+    assert "frame-ancestors 'none'" in headers and "connect-src 'self'" in headers
 
 
 def test_verify_decrypt_cli_validation(tmp_path):

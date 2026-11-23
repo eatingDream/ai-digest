@@ -15,10 +15,13 @@ Exit codes: 0 ok; 1 the page could not be fetched (message says "use WebFetch in
 """
 import argparse
 import concurrent.futures as cf
+import ipaddress
 import os
 import re
+import socket
 import sys
 import threading
+import urllib.parse
 
 import requests
 from lxml import html as lhtml
@@ -48,10 +51,53 @@ def _session() -> requests.Session:
     return sess
 
 
+MAX_REDIRECTS = 5
+_BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
+
+
+def _is_public_ip(addr: str) -> bool:
+    ip = ipaddress.ip_address(addr.split("%", 1)[0])
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+def _validate_public_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"disallowed URL scheme: {parsed.scheme!r}")
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host or host == "localhost" or host.endswith(_BLOCKED_HOST_SUFFIXES):
+        raise ValueError(f"disallowed non-public host: {host!r}")
+    try:
+        if not _is_public_ip(host):
+            raise ValueError(f"disallowed non-public IP: {host}")
+        return url
+    except ValueError as e:
+        if "disallowed" in str(e):
+            raise
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if not infos:
+        raise ValueError(f"could not resolve host: {host}")
+    for _fam, _kind, _proto, _canon, sockaddr in infos:
+        if not _is_public_ip(sockaddr[0]):
+            raise ValueError(f"disallowed non-public IP resolved for {host}: {sockaddr[0]}")
+    return url
+
+
 def get(url, **kw):
-    r = _session().get(url, timeout=25, **kw)
-    r.raise_for_status()
-    return r
+    allow_redirects = kw.pop("allow_redirects", True)
+    cur = url
+    for _ in range(MAX_REDIRECTS + 1):
+        _validate_public_url(cur)
+        r = _session().get(cur, timeout=25, allow_redirects=False, **kw)
+        if allow_redirects and r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+            cur = urllib.parse.urljoin(cur, r.headers["location"])
+            continue
+        r.raise_for_status()
+        return r
+    raise ValueError("too many redirects")
 
 
 def text_of(doc):
