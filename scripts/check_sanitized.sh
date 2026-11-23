@@ -4,9 +4,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 patterns=.github/sanitize-patterns.txt
-grep -vE '^\s*(#|$)' "$patterns" > /tmp/sanitize-patterns.$$
-trap 'rm -f /tmp/sanitize-patterns.$$' EXIT
-if git grep -nEI -f /tmp/sanitize-patterns.$$ -- . ":(exclude)$patterns" ":(exclude)scripts/check_sanitized.sh"; then
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+grep -vE '^[[:space:]]*(#|$)' "$patterns" > "$tmp"
+if git grep -nEI -f "$tmp" -- . ":(exclude)$patterns" ":(exclude)scripts/check_sanitized.sh"; then
   echo "sanitization guard: forbidden pattern found (see matches above)" >&2
   exit 1
 fi

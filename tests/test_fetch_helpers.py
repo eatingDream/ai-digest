@@ -214,3 +214,58 @@ def test_page_fetch_text_and_in_process_many(monkeypatch, capsys):
     pg.run_many(SimpleNamespace(url=["https://example.com/a@@ExampleBench", "https://example.com/empty"], chars=500, ctx=80, meta=False, find=None))
     out = capsys.readouterr().out
     assert "### https://example.com/a" in out and "### https://example.com/empty" in out
+
+
+def test_page_ssrf_blocks_private_targets_and_redirects(monkeypatch):
+    import socket
+    from types import SimpleNamespace
+    import page as pg
+
+    # Direct disallowed schemes and non-public IP literals/hostnames
+    for bad in (
+        "file:///etc/passwd",
+        "ftp://example.com/a",
+        "http://localhost/admin",
+        "http://sub.localhost/x",
+        "http://127.0.0.1:8080/health",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.0.0.1/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+    ):
+        try:
+            pg._validate_public_url(bad)
+            raise AssertionError(f"should have blocked {bad}")
+        except ValueError:
+            pass
+
+    # DNS resolving to public IP passes, private IP fails
+    def fake_getaddrinfo(host, port, type=0):
+        if host == "public.example":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+        if host == "rebind.example":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+        raise socket.gaierror("unknown")
+
+    monkeypatch.setattr(pg.socket, "getaddrinfo", fake_getaddrinfo)
+    assert pg._validate_public_url("https://public.example/article") == "https://public.example/article"
+    try:
+        pg._validate_public_url("https://rebind.example/secret")
+        raise AssertionError("should have blocked private DNS resolution")
+    except ValueError:
+        pass
+
+    # Redirect from public host to loopback/metadata is rejected before connecting
+    class FakeSession:
+        def get(self, url, **kw):
+            assert kw.get("allow_redirects") is False
+            if url == "https://public.example/start":
+                return SimpleNamespace(status_code=302, headers={"location": "http://169.254.169.254/latest/"}, raise_for_status=lambda: None)
+            raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.setattr(pg, "_session", lambda: FakeSession())
+    try:
+        pg.get("https://public.example/start")
+        raise AssertionError("should have blocked redirect to metadata IP")
+    except ValueError as e:
+        assert "disallowed" in str(e)

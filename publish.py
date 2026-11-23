@@ -142,6 +142,18 @@ PROJECT_DEFAULT = "ai-digest"
 DOMAIN_DEFAULT = "digest.example.com"
 PLATFORM = "pages"
 CF_API = "https://api.cloudflare.com/client/v4"
+WRANGLER_VERSION = os.environ.get("WRANGLER_VERSION", "4.166.0").strip() or "4.166.0"
+SECURITY_HEADERS = (
+    "/*\n"
+    "  X-Robots-Tag: noindex, nofollow\n"
+    "  X-Content-Type-Options: nosniff\n"
+    "  Referrer-Policy: no-referrer\n"
+    "  X-Frame-Options: DENY\n"
+    "  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; "
+    "style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+    "form-action 'none'; object-src 'none'\n"
+)
 
 # Output language of the site (en | zh-CN); resolved by load_config() / --lang, see i18n.py.
 LANG = i18n.DEFAULT_LANG
@@ -665,11 +677,8 @@ def write_static_root(slug: str | None = None) -> None:
     # instant while a publish shows up within minutes. Paths do not overlap,
     # so Cache-Control is never merged from two rules.
     (PUBLIC / "_headers").write_text(
-        "/*\n"
-        "  X-Robots-Tag: noindex, nofollow\n"
-        "  X-Content-Type-Options: nosniff\n"
-        "  Referrer-Policy: no-referrer\n"
-        f"/{slug}/\n"
+        SECURITY_HEADERS
+        + f"/{slug}/\n"
         "  Cache-Control: public, max-age=60, stale-while-revalidate=604800\n"
         f"/{slug}/daily/*\n"
         "  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
@@ -1367,7 +1376,7 @@ def deploy_with_wrangler(cfg: dict[str, str], token: str, commit_message: str) -
     local_cache = ROOT / "node_modules" / ".cache" / "wrangler"
     local_cache.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "npx", "--yes", "wrangler@4",
+        "npx", "--yes", f"wrangler@{WRANGLER_VERSION}",
         "pages", "deploy", str(PUBLIC),
         "--project-name", cfg["PROJECT"],
         "--branch", "main",
@@ -2086,9 +2095,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                 f"/{sl}/weekly/*\n  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
                 for sl in slugs.values()
             )
-            (PUBLIC / "_headers").write_text(
-                "/*\n  X-Robots-Tag: noindex, nofollow\n  X-Content-Type-Options: nosniff\n"
-                "  Referrer-Policy: no-referrer\n" + rules, encoding="utf-8")
+            (PUBLIC / "_headers").write_text(SECURITY_HEADERS + rules, encoding="utf-8")
         if out.exists():
             shutil.rmtree(out)
         shutil.copytree(PUBLIC, out)

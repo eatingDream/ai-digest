@@ -24,6 +24,8 @@ try:
     import markdown as mdlib
 
     _MD = mdlib.Markdown(extensions=["nl2br", "sane_lists"])
+    _MD.preprocessors.deregister("html_block")
+    _MD.inlinePatterns.deregister("html")
     _HAS_MD = True
 except Exception:  # pragma: no cover - fallback when the library is absent
     _MD = None
@@ -1056,6 +1058,23 @@ def md_to_html(text: str, inline: bool = False) -> str:
     return html_out
 
 
+_CTRL_WS_RE = re.compile(r"[\x00-\x20\x7f]+")
+_URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
+_ANCHOR_RE = re.compile(r'<a\s[^>]*href="([^"]*)"[^>]*>(.*?)</a>', re.S | re.I)
+
+
+def _is_safe_url(url: str) -> bool:
+    cleaned = _CTRL_WS_RE.sub("", html.unescape(url or "")).strip()
+    if not cleaned or cleaned.startswith("//"):
+        return False
+    if cleaned.startswith("#"):
+        return True
+    m = _URL_SCHEME_RE.match(cleaned)
+    if not m:
+        return True
+    return m.group(1).lower() in ("http", "https")
+
+
 def _fallback_markdown(text: str) -> str:
     placeholders: list[str] = []
 
@@ -1068,6 +1087,8 @@ def _fallback_markdown(text: str) -> str:
 
     def links(m: re.Match) -> str:
         label, url = m.group(1), m.group(2)
+        if not _is_safe_url(url):
+            return stash(html.escape(label))
         return stash(
             f'<a href="{html.escape(url, quote=True)}" target="_blank" '
             f'rel="noopener noreferrer">{html.escape(label)}</a>'
@@ -1087,13 +1108,16 @@ def _fallback_markdown(text: str) -> str:
 
 
 def _decorate_links(src: str) -> str:
-    def add(m: re.Match) -> str:
-        tag = m.group(0)
-        if "target=" in tag:
-            return tag
-        return tag[:-1] + ' target="_blank" rel="noopener noreferrer">'
+    def repl(m: re.Match) -> str:
+        full, href, inner = m.group(0), m.group(1), m.group(2)
+        if not _is_safe_url(href):
+            return inner
+        open_tag = full[: full.index(">") + 1]
+        if "target=" in open_tag:
+            return full
+        return open_tag[:-1] + ' target="_blank" rel="noopener noreferrer">' + inner + "</a>"
 
-    return re.sub(r'<a\s[^>]*href="[^"]+"[^>]*>', add, src)
+    return _ANCHOR_RE.sub(repl, src)
 
 
 def _unwrap_single_p(src: str) -> str:
@@ -1524,12 +1548,16 @@ def render_item(item: Item, lang: str = "en") -> str:
     if item.extra:
         parts.append(f'<div class="extra">{md_to_html(item.extra)}</div>')
     if item.links:
-        pills = "".join(
-            f'<a href="{html.escape(url, quote=True)}" target="_blank" '
-            f'rel="noopener noreferrer">{html.escape(label)}</a>'
-            for label, url in item.links
-        )
-        parts.append(f'<div class="story-links">{pills}</div>')
+        pill_parts = []
+        for label, url in item.links:
+            if _is_safe_url(url):
+                pill_parts.append(
+                    f'<a href="{html.escape(url, quote=True)}" target="_blank" '
+                    f'rel="noopener noreferrer">{html.escape(label)}</a>'
+                )
+            else:
+                pill_parts.append(f"<span>{html.escape(label)}</span>")
+        parts.append(f'<div class="story-links">{"".join(pill_parts)}</div>')
     parts.append("</article>")
     return "\n".join(p for p in parts if p)
 

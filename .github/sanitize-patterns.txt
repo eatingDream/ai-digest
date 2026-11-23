@@ -1,10 +1,39 @@
 # Generic "must never be committed" patterns (extended regex, one per line; '#' = comment).
-# Deliberately generic: no personal identifiers belong in this file or anywhere in the repo.
+# Deliberately broad and platform-agnostic: covers mainstream cloud, VCS, AI, SaaS,
+# payment, messaging, registry, and key formats without identifying any specific provider in use.
+
+# Private keys & certificates with embedded private material
 -----BEGIN (RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----
-CLOUDFLARE_API_TOKEN[ ]*[:=][ ]*["']?[A-Za-z0-9_-]{30,}
-CLOUDFLARE_(ACCOUNT_ID|ZONE_ID)[ ]*[:=][ ]*["']?[0-9a-f]{32}\b
+
+# Cloud providers (AWS, GCP/Google, Alibaba Cloud, Tencent Cloud, Azure, DigitalOcean, Cloudflare, etc.)
+\b(AKIA|ASIA|AIDA|AROA)[0-9A-Z]{16}\b
+\bAIza[0-9A-Za-z_-]{30,}
+\bLTAI[0-9A-Za-z]{12,24}\b
+\bAKID[0-9A-Za-z]{20,40}\b
+\b(CLOUDFLARE|CF|AWS|AZURE|GCP|ALIYUN|ALIBABA|TENCENT|HUAWEI|VOLC|DO|DIGITALOCEAN|VERCEL|NETLIFY|FLY|RAILWAY)_(API_TOKEN|ACCESS_KEY|SECRET_KEY|SECRET_ACCESS_KEY|ACCOUNT_ID|ZONE_ID|CLIENT_SECRET)[ ]*[:=][ ]*["']?[A-Za-z0-9_./+=-]{20,}
+\bdop_v1_[0-9a-f]{64}\b
+\bDefaultEndpointsProtocol=https;AccountName=[^;[:space:]]+;AccountKey=[A-Za-z0-9+/=]{20,}
+
+# Version control & CI platforms (GitHub, GitLab)
 \bgh[pousr]_[A-Za-z0-9]{30,}
 \bgithub_pat_[A-Za-z0-9_]{30,}
-\bAKIA[0-9A-Z]{16}\b
+\bglpat-[A-Za-z0-9_-]{20,}
+
+# AI / LLM & ML platforms (OpenAI, Anthropic, Hugging Face, Groq, xAI, Replicate, Perplexity)
+\bsk-(proj-|ant-api[0-9]+-|or-v1-)?[A-Za-z0-9_-]{24,}
+\bhf_[A-Za-z0-9]{30,}
+\bgsk_[A-Za-z0-9]{30,}
+\bxai-[A-Za-z0-9]{30,}
+\br8_[A-Za-z0-9]{30,}
+\bpplx-[A-Za-z0-9]{30,}
+
+# Messaging, SaaS, payments & package registries (Slack, Stripe, SendGrid, npm, PyPI, crates.io)
 \bxox[abprs]-[A-Za-z0-9-]{10,}
-(/home/[a-z][a-z0-9_-]*/|/Users/[A-Za-z][A-Za-z0-9._-]*/)(secrets|\.ssh|\.config)
+\b(sk|rk)_(live|test)_[0-9A-Za-z]{20,}
+\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}
+\bnpm_[A-Za-z0-9]{30,}
+\bpypi-AgEI[A-Za-z0-9_-]{30,}
+\bcio[A-Za-z0-9]{30,}
+
+# Local home/secret directory paths
+(/home/[a-z][a-z0-9_-]*/|/Users/[A-Za-z][A-Za-z0-9._-]*/)(secrets|\.ssh|\.config|\.aws|\.kube|\.gnupg)
