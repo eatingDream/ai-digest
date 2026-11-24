@@ -35,7 +35,7 @@ What it does:
      fails on hits. The scan runs BEFORE encryption, never on ciphertext.
   6. Encrypts every published HTML page (each issue AND the index) with
      AES-256-GCM, key from PBKDF2-SHA256 (600_000 iterations) and a shared
-     random salt. robots.txt, 404.html, and _headers stay unencrypted.
+     random salt. robots.txt, 404.html, _headers, and _redirects stay unencrypted.
      The password is read from the file named by env DIGEST_SITE_PASSWORD_FILE
      (default ~/.config/ai-digest/site-password) and is never printed or written
      into CONFIG, this script, git, or the site tree.
@@ -370,10 +370,30 @@ _ENV_KEYS = {
     "CF_PAGES_PROJECT": "PROJECT",
     "DIGEST_LANG": "LANG",
     "DIGEST_LANG_ALT": "LANG_ALT",
+    "DIGEST_ROOT_LATEST": "ROOT_LATEST",
 }
 
+_TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
 _PLACEHOLDER_RE = re.compile(r"<[^<>]*>|\{\{[^{}]*\}\}|[<>]")
 _SLUG_SAFE_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def _parse_bool(raw: str | bool | None) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return (raw or "").strip().lower() in _TRUTHY_VALUES
+
+
+def _read_config_raw() -> dict[str, str]:
+    data: dict[str, str] = {}
+    if CONFIG_PATH.exists():
+        for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
+    return data
 
 
 def _parse_lang_alt(raw: str | None, current_lang: str) -> dict[str, str] | None:
@@ -413,16 +433,11 @@ def set_lang(cli: str | None = None, config: str | None = None) -> str:
 
 def load_config() -> dict[str, str]:
     """site/CONFIG (KEY=VALUE lines), overridden by env vars (SITE_DOMAIN,
-    SITE_SLUG, CF_ACCOUNT_ID, CF_ZONE_ID, CF_PAGES_PROJECT, DIGEST_LANG, DIGEST_LANG_ALT)."""
+    SITE_SLUG, CF_ACCOUNT_ID, CF_ZONE_ID, CF_PAGES_PROJECT, DIGEST_LANG,
+    DIGEST_LANG_ALT, DIGEST_ROOT_LATEST)."""
     global LANG_ALT
     data: dict[str, str] = {"PLATFORM": PLATFORM}
-    if CONFIG_PATH.exists():
-        for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            data[k.strip()] = v.strip()
+    data.update(_read_config_raw())
     for alias, canonical in (
         ("CF_ACCOUNT_ID", "ACCOUNT_ID"),
         ("CF_PROJECT", "PROJECT"),
@@ -437,7 +452,7 @@ def load_config() -> dict[str, str]:
     data.setdefault("PROJECT", PROJECT_DEFAULT)
     data.setdefault("DOMAIN", DOMAIN_DEFAULT)
     data.setdefault("ACCOUNT_ID", ACCOUNT_ID_DEFAULT)
-    for chk_key in ("SLUG", "ACCOUNT_ID", "CF_ACCOUNT_ID", "PROJECT", "CF_PROJECT", "DOMAIN", "ZONE_ID", "LANG_ALT"):
+    for chk_key in ("SLUG", "ACCOUNT_ID", "CF_ACCOUNT_ID", "PROJECT", "CF_PROJECT", "DOMAIN", "ZONE_ID", "LANG_ALT", "ROOT_LATEST"):
         val = data.get(chk_key, "")
         if val and _PLACEHOLDER_RE.search(val):
             die(
@@ -460,6 +475,7 @@ def load_config() -> dict[str, str]:
             f"run python3 publish.py --init or edit {CONFIG_PATH}"
         )
     data["SLUG"] = slug
+    data["ROOT_LATEST"] = "1" if _parse_bool(data.get("ROOT_LATEST")) else "0"
     try:
         LANG_ALT = _parse_lang_alt(data.get("LANG_ALT"), LANG)
     except ValueError as e:
@@ -478,6 +494,7 @@ def write_config(data: dict[str, str]) -> None:
         "SLUG",
         "LANG",
         "LANG_ALT",
+        "ROOT_LATEST",
     ]
     lines = [
         "# AI digest public site. No secrets. Do not change SLUG once published.",
@@ -510,7 +527,7 @@ def init_config_if_needed() -> dict[str, str]:
     }
     write_config(data)
     print(f"created {CONFIG_PATH} with slug {slug}", file=sys.stderr)
-    return data
+    return load_config()
 
 
 def parse_weekly_label(label: str) -> tuple[date, date]:
@@ -796,26 +813,129 @@ def save_source(html_path: Path, kind: str, label: str) -> Path:
     return dest
 
 
-def write_static_root(slug: str | None = None) -> None:
-    PUBLIC.mkdir(parents=True, exist_ok=True)
-    (PUBLIC / "robots.txt").write_text(
-        "User-agent: *\nDisallow: /\n", encoding="utf-8"
-    )
-    slug = slug or load_config()["SLUG"]
-    # HTML only changes when an issue is (re)published; short max-age +
-    # long stale-while-revalidate makes back/forward and prefetched clicks
-    # instant while a publish shows up within minutes. Paths do not overlap,
-    # so Cache-Control is never merged from two rules.
-    (PUBLIC / "_headers").write_text(
-        SECURITY_HEADERS
-        + f"/{slug}/\n"
+_ROOT_LATEST_HEADERS = (
+    "/latest\n"
+    "  Cache-Control: no-store\n"
+    "/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/daily/latest\n"
+    "  Cache-Control: no-store\n"
+    "/daily/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/weekly/latest\n"
+    "  Cache-Control: no-store\n"
+    "/weekly/latest/\n"
+    "  Cache-Control: no-store\n"
+)
+
+
+def _slug_cache_headers(slug: str) -> str:
+    """Per-slug Cache-Control rules; latest redirect aliases detach wildcard caching."""
+    return (
+        f"/{slug}/\n"
         "  Cache-Control: public, max-age=60, stale-while-revalidate=604800\n"
         f"/{slug}/daily/*\n"
         "  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
         f"/{slug}/weekly/*\n"
-        "  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n",
-        encoding="utf-8",
+        "  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
+        f"/{slug}/latest\n"
+        "  Cache-Control: no-store\n"
+        f"/{slug}/latest/\n"
+        "  Cache-Control: no-store\n"
+        f"/{slug}/daily/latest\n"
+        "  ! Cache-Control\n"
+        "  Cache-Control: no-store\n"
+        f"/{slug}/daily/latest/\n"
+        "  ! Cache-Control\n"
+        "  Cache-Control: no-store\n"
+        f"/{slug}/weekly/latest\n"
+        "  ! Cache-Control\n"
+        "  Cache-Control: no-store\n"
+        f"/{slug}/weekly/latest/\n"
+        "  ! Cache-Control\n"
+        "  Cache-Control: no-store\n"
     )
+
+
+def _latest_issues(issues: Iterable[Issue]) -> tuple[Issue | None, Issue | None, Issue | None]:
+    """Return (latest_daily, latest_weekly, latest_any) ordered by Issue.sort_key."""
+    dailies = [i for i in issues if i.kind == "daily"]
+    weeklies = [i for i in issues if i.kind == "weekly"]
+    latest_daily = max(dailies, key=lambda i: i.sort_key()) if dailies else None
+    latest_weekly = max(weeklies, key=lambda i: i.sort_key()) if weeklies else None
+    latest_any = latest_daily or latest_weekly
+    return latest_daily, latest_weekly, latest_any
+
+
+def _latest_redirect_rules(
+    slug: str,
+    issues: Iterable[Issue],
+    *,
+    include_root: bool = False,
+) -> list[str]:
+    """Build pure-static Cloudflare Pages 302 redirect lines for latest issues."""
+    latest_daily, latest_weekly, latest_any = _latest_issues(issues)
+    rules: list[str] = []
+    if latest_daily:
+        target = f"/{slug}/daily/{latest_daily.label}"
+        rules.append(f"/{slug}/daily/latest {target} 302")
+        rules.append(f"/{slug}/daily/latest/ {target} 302")
+    if latest_weekly:
+        target = f"/{slug}/weekly/{latest_weekly.label}"
+        rules.append(f"/{slug}/weekly/latest {target} 302")
+        rules.append(f"/{slug}/weekly/latest/ {target} 302")
+    if latest_any:
+        target = f"/{slug}/{latest_any.kind}/{latest_any.label}"
+        rules.append(f"/{slug}/latest {target} 302")
+        rules.append(f"/{slug}/latest/ {target} 302")
+    if include_root:
+        if latest_daily:
+            target = f"/{slug}/daily/{latest_daily.label}"
+            rules.append(f"/daily/latest {target} 302")
+            rules.append(f"/daily/latest/ {target} 302")
+        if latest_weekly:
+            target = f"/{slug}/weekly/{latest_weekly.label}"
+            rules.append(f"/weekly/latest {target} 302")
+            rules.append(f"/weekly/latest/ {target} 302")
+        if latest_any:
+            target = f"/{slug}/{latest_any.kind}/{latest_any.label}"
+            rules.append(f"/latest {target} 302")
+            rules.append(f"/latest/ {target} 302")
+    return rules
+
+
+def write_static_root(
+    slug: str | None = None,
+    issues: list[Issue] | None = None,
+    *,
+    root_latest: bool | None = None,
+) -> None:
+    PUBLIC.mkdir(parents=True, exist_ok=True)
+    (PUBLIC / "robots.txt").write_text(
+        "User-agent: *\nDisallow: /\n", encoding="utf-8"
+    )
+    if slug is None:
+        cfg = load_config()
+        slug = cfg["SLUG"]
+        if root_latest is None:
+            root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
+    elif root_latest is None:
+        env_val = os.environ.get("DIGEST_ROOT_LATEST", "").strip()
+        if env_val:
+            root_latest = _parse_bool(env_val)
+        else:
+            root_latest = _parse_bool(_read_config_raw().get("ROOT_LATEST"))
+    if issues is None:
+        issues = list_sources() if SOURCES.is_dir() else []
+    # HTML only changes when an issue is (re)published; short max-age +
+    # long stale-while-revalidate makes back/forward and prefetched clicks
+    # instant while a publish shows up within minutes. Latest redirect paths
+    # come after daily/* and weekly/* and detach inherited Cache-Control so
+    # they are never cached stale.
+    headers_text = SECURITY_HEADERS + _slug_cache_headers(slug)
+    if root_latest:
+        headers_text += _ROOT_LATEST_HEADERS
+    (PUBLIC / "_headers").write_text(headers_text, encoding="utf-8")
     (PUBLIC / "404.html").write_text(
         "<!DOCTYPE html>\n"
         "<html lang=\"en\">\n"
@@ -829,15 +949,26 @@ def write_static_root(slug: str | None = None) -> None:
         encoding="utf-8",
     )
     # Intentionally no index.html at the site root.
-    # Removed issues: send their old URLs to the index (overrides stale caches).
+    # Static 302 redirects: latest issue aliases first, then removed issues
+    # (sending old URLs to the index to override stale caches), deduplicated by source.
+    rules: list[str] = []
+    seen_sources: set[str] = set()
+
+    def _add_rule(rule: str) -> None:
+        src = rule.split(None, 1)[0]
+        if src not in seen_sources:
+            seen_sources.add(src)
+            rules.append(rule)
+
+    for r in _latest_redirect_rules(slug, issues, include_root=bool(root_latest)):
+        _add_rule(r)
     removed = SITE / "removed-paths.txt"
-    rules = []
     if removed.is_file():
         for line in removed.read_text(encoding="utf-8").split():
             line = line.strip().strip("/")
             if line:
-                rules.append(f"/{slug}/{line} /{slug}/ 302")
-                rules.append(f"/{slug}/{line}.html /{slug}/ 302")
+                _add_rule(f"/{slug}/{line} /{slug}/ 302")
+                _add_rule(f"/{slug}/{line}.html /{slug}/ 302")
     rp = PUBLIC / "_redirects"
     if rules:
         rp.write_text("\n".join(rules) + "\n", encoding="utf-8")
@@ -1505,11 +1636,15 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
     """Build plaintext (nav already injected) under site/plain/.
 
     Does not write issue HTML into public/; encrypt_all_pages does that.
-    Root files (robots.txt, 404, _headers) are written unencrypted to public/.
+    Root files (robots.txt, 404, _headers, _redirects) are written unencrypted to public/.
     """
     slug = cfg["SLUG"]
-    write_static_root(slug=slug)
     issues = list_sources()
+    write_static_root(
+        slug=slug,
+        issues=issues,
+        root_latest=_parse_bool(cfg.get("ROOT_LATEST")),
+    )
     plain_dir = PLAIN / slug
     _clear_files(plain_dir)
     # public/<slug> is NOT cleared: unchanged encrypted pages are reused
@@ -1573,7 +1708,7 @@ def iter_plain_files() -> list[Path]:
 
 
 def iter_unencrypted_public() -> list[Path]:
-    """Root files that stay in plaintext: robots.txt, 404.html, _headers."""
+    """Root files that stay in plaintext: robots.txt, 404.html, _headers, _redirects."""
     out: list[Path] = []
     for name in ("robots.txt", "_headers", "404.html", "_redirects"):
         p = PUBLIC / name
@@ -1598,12 +1733,22 @@ def content_type_for(path: Path, rel: str) -> str:
     return guessed or "application/octet-stream"
 
 
+_PAGES_CONTROL_FILES = frozenset({"_headers", "_redirects", "_worker.js", "_routes.json"})
+
+
 def build_manifest() -> tuple[dict[str, str], dict[str, dict]]:
-    """Return (manifest path->hash, files path->{hash,content,contentType})."""
+    """Return (manifest path->hash, files path->{hash,content,contentType}).
+
+    Excludes Cloudflare Pages control files (_headers, _redirects, _worker.js,
+    _routes.json) from the asset manifest — they are sent as dedicated multipart
+    form fields so Pages never serves them as static files (which would expose SLUG).
+    """
     manifest: dict[str, str] = {}
     files: dict[str, dict] = {}
     for path in iter_public_files():
         rel = path.relative_to(PUBLIC).as_posix()
+        if rel in _PAGES_CONTROL_FILES:
+            continue
         key = "/" + rel
         data = path.read_bytes()
         h = pages_hash(data)
@@ -1849,6 +1994,10 @@ def _deploy_via_pages_api(cfg: dict[str, str], token: str, commit_message: str) 
     add_field("commit_message", commit_message)
     headers_txt = (PUBLIC / "_headers").read_text(encoding="utf-8")
     add_field("_headers", headers_txt, filename="_headers", ctype="text/plain")
+    redirects_path = PUBLIC / "_redirects"
+    if redirects_path.is_file():
+        redirects_txt = redirects_path.read_text(encoding="utf-8")
+        add_field("_redirects", redirects_txt, filename="_redirects", ctype="text/plain")
     body = b"".join(parts) + f"--{boundary}--\r\n".encode("ascii")
     dep = cf_request(
         token,
@@ -2212,6 +2361,11 @@ def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
         body = path.read_text(encoding="utf-8")
         if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
             die(f"{name} must stay unencrypted")
+    redirects_path = PUBLIC / "_redirects"
+    if redirects_path.is_file():
+        body = redirects_path.read_text(encoding="utf-8")
+        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
+            die("_redirects must stay unencrypted")
     print(f"encryption check: {len(pages)} page(s) look encrypted", file=sys.stderr)
 
 
@@ -2356,7 +2510,9 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
     saved_overrides = (_PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE)
     saved_slug = os.environ.get("SITE_SLUG")
     saved_lang_alt = os.environ.get("DIGEST_LANG_ALT")
+    saved_root_latest = os.environ.get("DIGEST_ROOT_LATEST")
     os.environ.pop("DIGEST_LANG_ALT", None)
+    os.environ.pop("DIGEST_ROOT_LATEST", None)
     if multi:  # the language prefixes are the slugs; an env slug would override them in load_config()
         os.environ.pop("SITE_SLUG", None)
     work = Path(tempfile.mkdtemp(prefix="ai-digest-demo-"))
@@ -2374,6 +2530,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
 
         slugs = {lg: (lg if multi else (saved_slug or "demo")) for lg in langs}
         total_issues = total_pages = 0
+        demo_latest_rules: list[str] = []
         for lg in langs:
             CLI_LANG = lg  # beats $DIGEST_LANG inside load_config()
             set_lang(lg)
@@ -2404,21 +2561,18 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                 save_source(h, kind, label)
             cfg = load_config()
             issues = rebuild_all(cfg)
+            demo_latest_rules.extend(_latest_redirect_rules(slugs[lg], issues))
             privacy_scan(iter_plain_files() + iter_unencrypted_public())
             encrypt_all_pages(cfg)
             assert_public_is_encrypted(cfg)
             total_pages += _verify_demo_pages(PUBLIC / slugs[lg], PLAIN / slugs[lg], key)
             total_issues += len(issues)
         entry = slugs[langs[0]]
-        # Pages: send the site root to the (first language's) index; the demo has no Worker.
-        (PUBLIC / "_redirects").write_text(f"/ /{entry}/ 302\n", encoding="utf-8")
+        # Pages: send the site root to the (first language's) index plus per-language latest aliases; the demo has no Worker.
+        demo_redirects = [f"/ /{entry}/ 302", *demo_latest_rules]
+        (PUBLIC / "_redirects").write_text("\n".join(demo_redirects) + "\n", encoding="utf-8")
         if multi:  # one _headers with cache rules for every language prefix
-            rules = "".join(
-                f"/{sl}/\n  Cache-Control: public, max-age=60, stale-while-revalidate=604800\n"
-                f"/{sl}/daily/*\n  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
-                f"/{sl}/weekly/*\n  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
-                for sl in slugs.values()
-            )
+            rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
             (PUBLIC / "_headers").write_text(SECURITY_HEADERS + rules, encoding="utf-8")
         if out.exists():
             shutil.rmtree(out)
@@ -2433,6 +2587,8 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             os.environ["SITE_SLUG"] = saved_slug
         if saved_lang_alt is not None:
             os.environ["DIGEST_LANG_ALT"] = saved_lang_alt
+        if saved_root_latest is not None:
+            os.environ["DIGEST_ROOT_LATEST"] = saved_root_latest
         shutil.rmtree(work, ignore_errors=True)
 
 

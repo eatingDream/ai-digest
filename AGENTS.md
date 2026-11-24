@@ -33,7 +33,7 @@ Build the demo site locally (no secrets, no network): `DIGEST_DEMO_PASSWORD=demo
 | `prompts/<en|zh-CN>/{papers,daily,weekly}.md` | The agent prompts. Self-contained; start each with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and a reader-preference profile (templates); `.zh-CN.md` variants |
 | `render_html.py` | Markdown → single-file HTML (CSS embedded, full-title sidebar TOC, optional `--md-en` single-page bilingual toggle). Parses English and Chinese label vocabularies |
-| `publish.py` | Nav (dual-pane localized for bilingual issues), index, privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
+| `publish.py` | Nav (dual-pane localized for bilingual issues), index, static `_redirects` (`/<slug>/{daily,weekly,}/latest` + opt-in `ROOT_LATEST` root aliases), privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
 | `i18n.py` | All UI strings, date formats, fetch labels and the bilingual Markdown vocabulary (`en`, `zh-CN`) |
 | `site/` | Password page template, `CONFIG.example`, site docs. `site/CONFIG` is local and gitignored |
 | `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`); used by tests, demo and docs |

@@ -102,6 +102,7 @@ python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 | `DIGEST_SITE_SALT_FILE` | — | PBKDF2 盐文件（自动生成） | `~/.config/ai-digest/site-salt` |
 | `DIGEST_LANG` | `LANG` | 日报与站点界面的语言：`en` 或 `zh-CN`（命令行 `--lang` 优先） | `en` |
 | `DIGEST_LANG_ALT` | `LANG_ALT` | 可选的另一语言伴生站点路径/URL（如 `en:/en/`） | — |
+| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | 可选开启根路径 `/latest`、`/daily/latest`、`/weekly/latest` 静态 302 跳转（`1`/`true`/`yes`/`on`；默认关闭以防暴露 `SLUG`；`/<slug>/...latest` 始终自动生成于 `_redirects`） | `0`（关闭） |
 | `DIGEST_TZ` | — | 用来划分「自然日」的 IANA 时区 | `UTC` |
 | `DIGEST_ROOT` | — | `runs/`、`html/`、`site/`、`ledger.json`、`logs/` 与 `state/` 所在的工作目录 | 仓库根目录 |
 | `LEDGER_PATH` | — | 台账 `ledger.json` 路径（首次 `ledger.py add` 自动创建） | `<DIGEST_ROOT>/ledger.json` |
