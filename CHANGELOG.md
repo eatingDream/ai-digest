@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.2.0](https://github.com/eatingDream/ai-digest/compare/v0.1.1...v0.2.0) (2026-11-24)
+
+
+### Features
+
+* harden first-run config/ledger flows, reader UX, and bilingual site support ([#13](https://github.com/eatingDream/ai-digest/issues/13)) ([35f3951](https://github.com/eatingDream/ai-digest/commit/35f39518b9647b649c565b508892ad14c06bb7a8))
+
+
+### Bug Fixes
+
+* **security:** harden HTML/URL sanitization, CSP headers, SSRF guard, and CI pinning ([#11](https://github.com/eatingDream/ai-digest/issues/11)) ([c15f559](https://github.com/eatingDream/ai-digest/commit/c15f55924c3bf88c49dcf577358ce9d65000c7d7))
+
 ## [0.1.1](https://github.com/eatingDream/ai-digest/compare/v0.1.0...v0.1.1) (2026-11-22)
 
 
