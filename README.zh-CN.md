@@ -25,8 +25,8 @@
 - **分层筛选，内容优先**：`prompts/` 下是与平台无关的 agent 提示词。入选只看内容本身的分量，不看热度数字，范围覆盖整个 AI 领域。
 - **不重复推送**：`fetch/ledger.py` 记录「已推送（★）」和「看过未推（☆）」，已推过的内容只有出现实质新进展才会再写。
 - **日报 + 周报**：固定七个版面——模型、论文、工具与项目、行业与产品、算力与基础设施、安全与政策、观点与长文。
-- **中英双语**：一个开关（`DIGEST_LANG=en|zh-CN`）统一决定提示词、抓取标签和整套阅读界面的语言，`LANG_ALT` 还支持将自建的中英文站点互链切换，默认英文。
-- **好读的页面**：`render_html.py` 生成自包含 HTML，带侧栏目录、纯前端即时关键词与标签筛选、解密后 `#锚点` 自动定位、深浅色主题，大屏下排版舒展。
+- **中英双语**：一个开关（`DIGEST_LANG=en|zh-CN`）统一决定提示词、抓取标签和整套阅读界面的语言；`render_html.py --md-en` / `publish.py --md-en`（`zh-CN` 站点下自动发现同目录 `<同名>.en.md`）支持单页内中英文即时切换，`LANG_ALT` 还支持将独立的伴生站点互链，默认英文。
+- **好读的页面**：`render_html.py` 生成自包含 HTML，带完整标题侧栏目录、纯前端即时关键词与标签筛选（双语页面各语言独立筛选）、解密后 `#锚点` 自动定位、深浅色主题，大屏下排版舒展。
 - **加密静态站点**：`publish.py` 在客户端对每个页面做 AES-256-GCM 加密（PBKDF2-SHA256，60 万次迭代），增量部署到 Cloudflare Pages，并逐页解密校验。
 - **自带 CI/CD**：测试、密钥扫描、打 tag 自动发布 Release，以及演示站点工作流（可选部署到 Cloudflare Pages）。
 
@@ -50,8 +50,9 @@
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt          # requests、lxml、markdown、cryptography、pytest
 
-# 1. 渲染示例日报
+# 1. 渲染示例日报（加 --md-en 可将中英文合成带切换按钮的单页双语 HTML）
 python3 render_html.py examples/sample-digest.zh-CN.md /tmp/sample.html --lang zh-CN
+python3 render_html.py examples/sample-digest.zh-CN.md /tmp/bilingual.html --md-en examples/sample-digest.en.md
 
 # 2. 构建加密演示站点（不部署，也不需要任何密钥）
 DIGEST_DEMO_PASSWORD='demo' python3 publish.py --demo --out dist/
