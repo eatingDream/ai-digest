@@ -527,7 +527,7 @@ def init_config_if_needed() -> dict[str, str]:
     }
     write_config(data)
     print(f"created {CONFIG_PATH} with slug {slug}", file=sys.stderr)
-    return data
+    return load_config()
 
 
 def parse_weekly_label(label: str) -> tuple[date, date]:
@@ -1733,12 +1733,22 @@ def content_type_for(path: Path, rel: str) -> str:
     return guessed or "application/octet-stream"
 
 
+_PAGES_CONTROL_FILES = frozenset({"_headers", "_redirects", "_worker.js", "_routes.json"})
+
+
 def build_manifest() -> tuple[dict[str, str], dict[str, dict]]:
-    """Return (manifest path->hash, files path->{hash,content,contentType})."""
+    """Return (manifest path->hash, files path->{hash,content,contentType}).
+
+    Excludes Cloudflare Pages control files (_headers, _redirects, _worker.js,
+    _routes.json) from the asset manifest — they are sent as dedicated multipart
+    form fields so Pages never serves them as static files (which would expose SLUG).
+    """
     manifest: dict[str, str] = {}
     files: dict[str, dict] = {}
     for path in iter_public_files():
         rel = path.relative_to(PUBLIC).as_posix()
+        if rel in _PAGES_CONTROL_FILES:
+            continue
         key = "/" + rel
         data = path.read_bytes()
         h = pages_hash(data)

@@ -855,13 +855,21 @@ def test_deploy_via_pages_api_uploads_redirects_when_present(monkeypatch, tmp_pa
     monkeypatch.setattr(publish, "cf_request", fake_cf_request)
     cfg = {"ACCOUNT_ID": "acc123", "PROJECT": "proj123", "SLUG": "slug1234"}
 
-    # With _redirects present -> multipart payload includes both _headers and _redirects.
+    # With _redirects present -> multipart payload includes both _headers and _redirects,
+    # while the asset manifest excludes Pages control files so they are never served verbatim.
     res = publish._deploy_via_pages_api(cfg, "tok", "test deploy")
     assert res["via"] == "pages-api"
     payload = captured_forms[-1].decode("utf-8")
     assert 'name="_headers"; filename="_headers"' in payload
     assert 'name="_redirects"; filename="_redirects"' in payload
     assert "/slug1234/latest /slug1234/daily/2026-01-15 302" in payload
+    import json
+    m = re.search(r'name="manifest"[^\r\n]*\r\n(?:[^\r\n]+\r\n)*\r\n(\{[^\r\n]+\})', payload)
+    assert m is not None
+    manifest_obj = json.loads(m.group(1))
+    assert "/robots.txt" in manifest_obj
+    assert "/_headers" not in manifest_obj
+    assert "/_redirects" not in manifest_obj
 
     # Without _redirects -> multipart payload omits _redirects cleanly.
     (pub / "_redirects").unlink()
@@ -869,6 +877,17 @@ def test_deploy_via_pages_api_uploads_redirects_when_present(monkeypatch, tmp_pa
     payload2 = captured_forms[-1].decode("utf-8")
     assert 'name="_headers"; filename="_headers"' in payload2
     assert 'name="_redirects"' not in payload2
+
+
+def test_init_config_if_needed_honors_digest_root_latest_on_first_run(monkeypatch, tmp_path):
+    cfg_path = tmp_path / "site" / "CONFIG"
+    cfg_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(publish, "CONFIG_PATH", cfg_path)
+    monkeypatch.delenv("SITE_SLUG", raising=False)
+    monkeypatch.setenv("DIGEST_ROOT_LATEST", "1")
+    cfg = publish.init_config_if_needed()
+    assert cfg_path.is_file()
+    assert cfg["ROOT_LATEST"] == "1"
 
 
 def test_incremental_cli_updates_latest_redirects_and_root_latest(tmp_path):
