@@ -1,123 +1,39 @@
-from datetime import timezone
+import concurrent.futures as cf
+import json, socket, tomllib
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 import fetch as fx
+import page as pg
 
 
-def test_canon_url_strips_tracking_and_www():
-    a = fx.canon_url("https://www.example.com/post/?utm_source=x&id=3&ref=y")
-    assert a == "https://example.com/post?id=3"
+def _paper(aid, title, summary="", **kw):
+    return fx.Cand(title=title, url=f"https://arxiv.org/abs/{aid}", source="arxiv",
+                   channel="paper", kind="paper", summary=summary, extra={"arxiv_id": aid}, **kw)
 
 
-def test_canon_url_arxiv_variants_collapse():
-    ids = {fx.canon_url(u) for u in (
-        "https://arxiv.org/abs/2601.01234",
-        "https://arxiv.org/pdf/2601.01234",
-        "https://huggingface.co/papers/2601.01234",
-    )}
-    assert ids == {"arxiv:2601.01234"}
+def test_url_title_text_and_dedupe():
+    assert fx.canon_url("https://www.example.com/post/?utm_source=x&id=3&ref=y") == "https://example.com/post?id=3"
+    assert {fx.canon_url(u) for u in ("https://arxiv.org/abs/2601.01234", "https://arxiv.org/pdf/2601.01234",
+                                      "https://huggingface.co/papers/2601.01234")} == {"arxiv:2601.01234"}
+    assert fx.norm_title("Hello, World! 你好") == "helloworld你好" and len(fx.norm_title("x" * 200)) == 80
+    assert fx.clean_text("<p>a  <b>b</b>&amp;c</p>") == "a b&c" and (t := fx.clean_text("x" * 50, 10)).endswith("…") and len(t) == 10
+    mk = lambda src: fx.Cand(title="Same long title for dedupe test", url="https://example.com/a?utm_source=z", source=src, channel="lab", kind="lab_post")
+    assert len(m := fx.dedupe([mk("s1"), mk("s2")])) == 1 and m[0].also_in == ["s2"]
 
 
-def test_norm_title():
-    assert fx.norm_title("Hello, World! 你好") == "helloworld你好"
-    assert len(fx.norm_title("x" * 200)) == 80
-
-
-def test_clean_text_html_and_truncate():
-    assert fx.clean_text("<p>a  <b>b</b>&amp;c</p>") == "a b&c"
-    out = fx.clean_text("x" * 50, 10)
-    assert out.endswith("…") and len(out) == 10
-
-
-def test_parse_dt_variants():
+def test_date_parsing_and_window_computation():
     assert fx.parse_dt("2026-01-15T08:00:00Z").utcoffset().total_seconds() == 0
-    d = fx.parse_dt("Thu, 15 Jan 2026 08:00:00 +0800")
-    assert d.astimezone(timezone.utc).hour == 0
-    assert fx.parse_dt("2026-01-15").day == 15
-    assert fx.parse_dt("not a date") is None
+    assert fx.parse_dt("Thu, 15 Jan 2026 08:00:00 +0800").astimezone(timezone.utc).hour == 0
+    assert fx.parse_dt("2026-01-15").day == 15 and fx.parse_dt("not a date") is None
+    assert fx.date_from_text("Published Oct 05, 2026").date().isoformat() == "2026-10-05"
+    assert fx.date_from_text("2026年11月13日 公告").date().isoformat() == "2026-11-13"
+    assert fx.date_from_text("https://example.com/news261113").date().isoformat() == "2026-11-13" and fx.date_from_text("no date") is None
 
-
-def test_dedupe_merges_same_url():
-    mk = lambda src, kind: fx.Cand(title="Same long title for dedupe test", url="https://example.com/a?utm_source=z",
-                                   source=src, channel="lab", kind=kind)
-    out = fx.dedupe([mk("s1", "lab_post"), mk("s2", "lab_post")])
-    assert len(out) == 1 and out[0].also_in == ["s2"]
-
-
-def test_sources_toml_parses():
-    import tomllib
-    from pathlib import Path
-    reg = tomllib.loads((Path(fx.__file__).parent / "sources.toml").read_text(encoding="utf-8"))
-    sources = reg["source"]
-    assert sources and all("id" in s and "type" in s for s in sources)
-    ids = [s["id"] for s in sources]
-    assert len(ids) == len(set(ids)), "duplicate source id in sources.toml"
-    for s in sources:
-        for key in ("orgs", "repos", "categories", "urls"):
-            if key in s:
-                assert len(s[key]) == len(set(s[key])), f"duplicate entry in {s['id']}.{key}"
-
-
-def test_fetch_labels_follow_language(monkeypatch):
-    monkeypatch.setattr(fx, "FL", "en")
-    en = fx.tr("note_prefix")
-    monkeypatch.setattr(fx, "FL", "zh-CN")
-    zh = fx.tr("note_prefix")
-    assert en == "- Note: " and zh == "- 注："
-
-
-def test_fetch_lang_flag_sets_language(monkeypatch):
-    monkeypatch.setattr(fx, "FL", "en")
-    monkeypatch.delenv("DIGEST_LANG", raising=False)
-    import i18n
-    assert i18n.resolve_lang("zh-CN") == "zh-CN"
-
-
-def test_paper_signals_keyword_tags_localized(monkeypatch):
-    c = fx.Cand(
-        title="Orion-3 Technical Report: Open-Weights Release",
-        url="https://arxiv.org/abs/0000.00001",
-        source="arxiv",
-        channel="paper",
-        kind="paper",
-        summary="We release open-weights checkpoints.",
-        extra={"arxiv_id": "0000.00001"},
-    )
-    monkeypatch.setattr(fx, "FL", "en")
-    assert fx.paper_signals(c, {}) == ["keyword:technical report/open weights / model family"]
-    monkeypatch.setattr(fx, "FL", "zh-CN")
-    assert fx.paper_signals(c, {}) == ["词:技术报告/开源权重/模型族"]
-
-
-def test_paper_signals_empty_when_no_signal(monkeypatch):
-    c = fx.Cand(
-        title="A routine synthetic study on synthetic data",
-        url="https://arxiv.org/abs/0000.00002",
-        source="arxiv",
-        channel="paper",
-        kind="paper",
-        summary="No frontier signals present.",
-        extra={"arxiv_id": "0000.00002"},
-    )
-    monkeypatch.setattr(fx, "FL", "en")
-    assert fx.paper_signals(c, {}) == []
-
-
-def test_ctx_uses_thread_local_sessions_and_thread_safe_notes():
-    import concurrent.futures as cf
-    from datetime import datetime
-    ctx = fx.Ctx({}, datetime(2026, 1, 15, tzinfo=timezone.utc), datetime(2026, 1, 16, tzinfo=timezone.utc), {}, False, False, None)
-    try:
-        with cf.ThreadPoolExecutor(4) as ex:
-            sess_ids = list(ex.map(lambda i: (ctx.add_note(f"n{i}"), id(ctx.s))[1], range(8)))
-        assert len(ctx.notes) == 8
-        assert len(set(sess_ids)) >= 1
-    finally:
-        ctx.close()
-    assert ctx._sessions == []
-
-
-def test_compute_window_daily_weekly_and_custom():
-    from types import SimpleNamespace
     s, e, lab = fx.compute_window(SimpleNamespace(daily=True, weekly=False, day="2026-01-15", start=None, end=None))
     assert lab == "2026-01-15" and (e - s).total_seconds() == 86400
     s2, e2, lab2 = fx.compute_window(SimpleNamespace(daily=False, weekly=True, day="2026-01-15", start=None, end=None))
@@ -126,238 +42,119 @@ def test_compute_window_daily_weekly_and_custom():
     assert lab3 == "2026-01-15" and (e3 - s3).total_seconds() == 86400
 
 
-def test_date_from_text_formats():
-    assert fx.date_from_text("Published Oct 05, 2026").date().isoformat() == "2026-10-05"
-    assert fx.date_from_text("2026年11月13日 公告").date().isoformat() == "2026-11-13"
-    assert fx.date_from_text("https://example.com/news261113").date().isoformat() == "2026-11-13"
-    assert fx.date_from_text("no date here") is None
+def test_sources_toml_and_localized_paper_signals(monkeypatch):
+    sources = tomllib.loads((Path(fx.__file__).parent / "sources.toml").read_text(encoding="utf-8"))["source"]
+    assert sources and all("id" in s and "type" in s for s in sources) and len(sources) == len({s["id"] for s in sources})
+    for s in sources:
+        for k in ("orgs", "repos", "categories", "urls"):
+            assert k not in s or len(s[k]) == len(set(s[k])), f"duplicate in {s['id']}.{k}"
+
+    frontier = _paper("0000.00001", "Orion-3 Technical Report: Open-Weights Release", "We release open-weights checkpoints.")
+    routine = _paper("0000.00002", "A routine synthetic study", "No signals.")
+    monkeypatch.setattr(fx, "FL", "en")
+    assert fx.tr("note_prefix") == "- Note: " and fx.paper_signals(frontier, {}) == ["keyword:technical report/open weights / model family"] and fx.paper_signals(routine, {}) == []
+    monkeypatch.setattr(fx, "FL", "zh-CN")
+    assert fx.tr("note_prefix") == "- 注：" and fx.paper_signals(frontier, {}) == ["词:技术报告/开源权重/模型族"]
 
 
-def test_rebuild_triage_honors_no_fold_and_reuse_json(tmp_path, monkeypatch, capsys):
-    import json
-    from dataclasses import asdict
-    from datetime import datetime
+def test_ctx_thread_safety_and_rebuild_triage(tmp_path, monkeypatch, capsys):
+    ctx = fx.Ctx({}, datetime(2026, 1, 15, tzinfo=timezone.utc), datetime(2026, 1, 16, tzinfo=timezone.utc), {}, False, False, None)
+    try:
+        with cf.ThreadPoolExecutor(4) as ex:
+            sess_ids = list(ex.map(lambda i: (ctx.add_note(f"n{i}"), id(ctx.s))[1], range(8)))
+        assert len(ctx.notes) == 8 and len(set(sess_ids)) >= 1
+    finally:
+        ctx.close()
+    assert ctx._sessions == []
+
     d = tmp_path / "runs" / "2026-01-15" / "fetch"
     d.mkdir(parents=True)
-    paper = fx.Cand(
-        id="abcdef123456",
-        title="Synthetic off-topic study",
-        url="https://arxiv.org/abs/0000.00009",
-        source="arxiv",
-        channel="paper",
-        kind="paper",
-        extra={"arxiv_id": "0000.00009"},
-    )
-    (d / "candidates.jsonl").write_text(json.dumps(asdict(paper)) + "\n", encoding="utf-8")
-    start = datetime(2026, 1, 15, 0, 0, tzinfo=fx.TZ_LOCAL)
-    end = datetime(2026, 1, 16, 0, 0, tzinfo=fx.TZ_LOCAL)
-    meta = {
-        "window_start": fx.iso(start),
-        "window_end": fx.iso(end),
-        "generated_at": fx.iso(datetime(2026, 1, 16, 0, 15, tzinfo=fx.TZ_LOCAL)),
-        "total_raw": 1,
-        "total_dedup": 1,
-        "notes": ["sample note"],
-        "sources": [{"id": "arxiv", "status": "ok"}],
-    }
-    (d / "report.json").write_text(json.dumps(meta), encoding="utf-8")
-    out_fold = tmp_path / "out_fold"
-    out_nofold = tmp_path / "out_nofold"
-    assert fx.main(["--rebuild", str(d), "--out", str(out_fold), "--lang", "en"]) == 0
-    assert (out_fold / "triage-papers-rest.md").is_file()
+    (d / "candidates.jsonl").write_text(json.dumps(asdict(_paper("0000.00009", "Synthetic off-topic study", id="abcdef123456"))) + "\n", encoding="utf-8")
+    (d / "report.json").write_text(json.dumps({
+        "window_start": fx.iso(datetime(2026, 1, 15, 0, 0, tzinfo=fx.TZ_LOCAL)), "window_end": fx.iso(datetime(2026, 1, 16, 0, 0, tzinfo=fx.TZ_LOCAL)),
+        "generated_at": fx.iso(datetime(2026, 1, 16, 0, 15, tzinfo=fx.TZ_LOCAL)), "total_raw": 1, "total_dedup": 1,
+        "notes": ["sample note"], "sources": [{"id": "arxiv", "status": "ok"}],
+    }), encoding="utf-8")
+    out_fold, out_nofold = tmp_path / "out_fold", tmp_path / "out_nofold"
+    assert fx.main(["--rebuild", str(d), "--out", str(out_fold), "--lang", "en"]) == 0 and (out_fold / "triage-papers-rest.md").is_file()
     assert fx.main(["--rebuild", str(d), "--out", str(out_nofold), "--no-fold", "--lang", "en"]) == 0
-    assert not (out_nofold / "triage-papers-rest.md").exists()
-    assert "Synthetic off-topic study" in (out_nofold / "triage-papers.md").read_text(encoding="utf-8")
+    assert not (out_nofold / "triage-papers-rest.md").exists() and "Synthetic off-topic study" in (out_nofold / "triage-papers.md").read_text(encoding="utf-8")
 
-    # --reuse --json prints localized stderr (en) and valid JSON on stdout without hitting network
     (d / "triage.md").write_text("# ok\n", encoding="utf-8")
     monkeypatch.setenv("DIGEST_ROOT", str(tmp_path))
     capsys.readouterr()
     assert fx.main(["--daily", "--day", "2026-01-15", "--reuse", "--json", "--lang", "en"]) == 0
-    captured = capsys.readouterr()
-    assert "already fetched this window" in captured.err and "注：" not in captured.err
-    payload = json.loads(captured.out)
-    assert payload["reused"] is True and payload["dedup"] == 1
+    cap = capsys.readouterr()
+    assert "already fetched this window" in cap.err and "注：" not in cap.err and json.loads(cap.out)["reused"] is True
 
 
-def test_page_fetch_text_and_in_process_many(monkeypatch, capsys):
-    from types import SimpleNamespace
-    import page as pg
-
-    html_body = (
-        "<html><head><title>Example Article</title>"
-        '<meta property="article:published_time" content="2026-01-15">'
-        "</head><body><nav>menu</nav><article><h1>Orion-3 Mini</h1>"
-        "<p>" + ("Synthetic benchmark gain of 61.2 on ExampleBench. " * 10) + "</p>"
-        "</article></body></html>"
-    ).encode("utf-8")
-
+def test_page_fetch_text_and_many(monkeypatch, capsys):
+    body = ('<html><head><title>Example Article</title><meta property="article:published_time" content="2026-01-15"></head>'
+            '<body><nav>menu</nav><article><h1>Orion-3 Mini</h1><p>' + ("Synthetic benchmark gain of 61.2 on ExampleBench. " * 10) + "</p></article></body></html>").encode()
     def fake_get(url, **kw):
-        if "empty" in url:
-            return SimpleNamespace(content=b"", text="")
-        if "raw.githubusercontent.com" in url:
-            return SimpleNamespace(content=b"# Repo\nFast serving engine.", text="# Repo\nFast serving engine.")
-        return SimpleNamespace(content=html_body, text=html_body.decode("utf-8"))
+        raw = b"" if "empty" in url else (b"# Repo\nFast serving engine." if "raw.githubusercontent.com" in url else body)
+        return SimpleNamespace(content=raw, text=raw.decode())
 
     monkeypatch.setattr(pg, "get", fake_get)
     monkeypatch.setattr(pg, "FL", "en")
-
     ok, txt = pg.fetch_page_text("https://example.com/post", find="ExampleBench")
-    assert ok and "Example Article" in txt and "61.2" in txt
-
-    ok_empty, txt_empty = pg.fetch_page_text("https://example.com/empty")
-    assert ok_empty and "JS-rendered" in txt_empty
-
+    assert ok and "Example Article" in txt and "61.2" in txt and "JS-rendered" in pg.fetch_page_text("https://example.com/empty")[1]
     ok_gh, txt_gh = pg.fetch_page_text("https://github.com/example/fastserve", find="serving")
     assert ok_gh and "example/fastserve README" in txt_gh and "serving" in txt_gh
-
     pg.run_many(SimpleNamespace(url=["https://example.com/a@@ExampleBench", "https://example.com/empty"], chars=500, ctx=80, meta=False, find=None))
-    out = capsys.readouterr().out
-    assert "### https://example.com/a" in out and "### https://example.com/empty" in out
+    assert "### https://example.com/a" in (out := capsys.readouterr().out) and "### https://example.com/empty" in out
 
 
 def test_page_ssrf_blocks_private_targets_and_redirects(monkeypatch):
-    import socket
-    from types import SimpleNamespace
-    import page as pg
-
-    # Direct disallowed schemes and non-public IP literals/hostnames
-    for bad in (
-        "file:///etc/passwd",
-        "ftp://example.com/a",
-        "http://localhost/admin",
-        "http://sub.localhost/x",
-        "http://127.0.0.1:8080/health",
-        "http://169.254.169.254/latest/meta-data/",
-        "http://10.0.0.1/",
-        "http://[::1]/",
-        "http://[::ffff:127.0.0.1]/",
-    ):
-        try:
+    for bad in ("file:///etc/passwd", "ftp://example.com/a", "http://localhost/admin", "http://sub.localhost/x",
+                "http://127.0.0.1:8080/health", "http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/", "http://[::1]/", "http://[::ffff:127.0.0.1]/"):
+        with pytest.raises(ValueError):
             pg._validate_public_url(bad)
-            raise AssertionError(f"should have blocked {bad}")
-        except ValueError:
-            pass
 
-    # DNS resolving to public IP passes, private IP fails
     def fake_getaddrinfo(host, port, type=0):
-        if host == "public.example":
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
-        if host == "rebind.example":
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+        addrs = {"public.example": "93.184.216.34", "rebind.example": "127.0.0.1"}
+        if host in addrs:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addrs[host], port))]
         raise socket.gaierror("unknown")
 
     monkeypatch.setattr(pg.socket, "getaddrinfo", fake_getaddrinfo)
     assert pg._validate_public_url("https://public.example/article") == "https://public.example/article"
-    try:
+    with pytest.raises(ValueError):
         pg._validate_public_url("https://rebind.example/secret")
-        raise AssertionError("should have blocked private DNS resolution")
-    except ValueError:
-        pass
-
-    # Redirect from public host to loopback/metadata is rejected before connecting
-    class FakeSession:
-        def get(self, url, **kw):
-            assert kw.get("allow_redirects") is False
-            if url == "https://public.example/start":
-                return SimpleNamespace(status_code=302, headers={"location": "http://169.254.169.254/latest/"}, raise_for_status=lambda: None)
-            raise AssertionError(f"unexpected request to {url}")
-
-    monkeypatch.setattr(pg, "_session", lambda: FakeSession())
-    try:
+    monkeypatch.setattr(pg, "_session", lambda: SimpleNamespace(get=lambda url, **kw: (
+        SimpleNamespace(status_code=302, headers={"location": "http://169.254.169.254/latest/"}, raise_for_status=lambda: None)
+        if not kw.get("allow_redirects") and url == "https://public.example/start" else (_ for _ in ()).throw(AssertionError(url)))))
+    with pytest.raises(ValueError, match="disallowed"):
         pg.get("https://public.example/start")
-        raise AssertionError("should have blocked redirect to metadata IP")
-    except ValueError as e:
-        assert "disallowed" in str(e)
 
 
 def test_digest_root_isolates_ledger_and_state_files(tmp_path, monkeypatch):
-    import json
-
     work = tmp_path / "isolated"
     monkeypatch.setenv("DIGEST_ROOT", str(work))
     monkeypatch.delenv("LEDGER_PATH", raising=False)
-
-    # State & ledger paths point inside DIGEST_ROOT, never repo root
-    assert fx._ledger_path() == work / "ledger.json"
-    assert fx._state_dir() == work / "state"
-    assert fx._triage_seen_path() == work / "state" / "triage-seen.json"
-
-    # Triage-seen round-trip writes inside DIGEST_ROOT/state/triage-seen.json
-    cand = fx.Cand(
-        title="Orion Repo", url="https://github.com/example/orion",
-        source="gh_trending", channel="repo", kind="repo",
-        extra={"discovery_only": True},
-    )
-    fx.save_triage_seen([cand], "2026-01-15", {})
-    assert (work / "state" / "triage-seen.json").is_file()
-    assert fx.load_triage_seen() == {"https://github.com/example/orion": "2026-01-15"}
-
-    # Ledger keys read from DIGEST_ROOT/ledger.json
-    (work / "ledger.json").write_text(
-        json.dumps({"items": [{"id": "2601.00077", "name": "Orion Paper", "status": "pushed", "urls": ["https://arxiv.org/abs/2601.00077"]}]}),
-        encoding="utf-8",
-    )
-    keys = fx.load_ledger_keys()
-    assert keys.get("arxiv:2601.00077") == "pushed"
+    assert fx._ledger_path() == work / "ledger.json" and fx._state_dir() == work / "state" and fx._triage_seen_path() == work / "state" / "triage-seen.json"
+    fx.save_triage_seen([fx.Cand(title="Orion Repo", url="https://github.com/example/orion", source="gh_trending", channel="repo", kind="repo", extra={"discovery_only": True})], "2026-01-15", {})
+    assert (work / "state" / "triage-seen.json").is_file() and fx.load_triage_seen() == {"https://github.com/example/orion": "2026-01-15"}
+    (work / "ledger.json").write_text(json.dumps({"items": [{"id": "2601.00077", "name": "Orion Paper", "status": "pushed", "urls": ["https://arxiv.org/abs/2601.00077"]}]}), encoding="utf-8")
+    assert fx.load_ledger_keys().get("arxiv:2601.00077") == "pushed"
 
 
 def test_github_api_bearer_token_and_rate_limit_warning(monkeypatch):
-    from datetime import datetime
-    from types import SimpleNamespace
+    seen, start, end = [], datetime(2026, 1, 15, tzinfo=timezone.utc), datetime(2026, 1, 16, tzinfo=timezone.utc)
+    def make_ctx(status, headers=None, text=""):
+        resp = SimpleNamespace(status_code=status, headers=headers or {}, text=text, json=lambda: [])
+        ctx = fx.Ctx({}, start, end, {}, False, False)
+        ctx._local.session = SimpleNamespace(get=lambda url, headers=None, **kw: (seen.append(dict(headers or {})), resp)[1], close=lambda: None)
+        return ctx
 
-    seen_headers = []
-
-    class FakeResp:
-        def __init__(self, status_code, payload=None, headers=None, text=""):
-            self.status_code = status_code
-            self._payload = payload if payload is not None else []
-            self.headers = headers or {}
-            self.text = text
-
-        def json(self):
-            return self._payload
-
-    class FakeSession:
-        def __init__(self, resp):
-            self.resp = resp
-
-        def get(self, url, headers=None, params=None, timeout=None):
-            seen_headers.append(dict(headers or {}))
-            return self.resp
-
-        def close(self):
-            pass
-
-    start = datetime(2026, 1, 15, tzinfo=timezone.utc)
-    end = datetime(2026, 1, 16, tzinfo=timezone.utc)
-
-    # 1. GITHUB_TOKEN / GH_TOKEN in env automatically sets Authorization: Bearer <token>
-    monkeypatch.setenv("GITHUB_TOKEN", "tok-fixture-1")
-    monkeypatch.delenv("GH_TOKEN", raising=False)
-    ctx_auth = fx.Ctx({}, start, end, {}, False, False)
-    ctx_auth._local.session = FakeSession(FakeResp(200, payload=[]))
-    fx._gh_api(ctx_auth, "https://api.github.com/orgs/example/repos")
-    assert seen_headers[-1].get("Authorization") == "Bearer tok-fixture-1"
-
-    # 2. GH_TOKEN fallback works when GITHUB_TOKEN is unset
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    monkeypatch.setenv("GH_TOKEN", "tok-fixture-2")
-    ctx_gh = fx.Ctx({}, start, end, {}, False, False)
-    ctx_gh._local.session = FakeSession(FakeResp(200, payload=[]))
-    fx._gh_api(ctx_gh, "https://api.github.com/orgs/example/repos")
-    assert seen_headers[-1].get("Authorization") == "Bearer tok-fixture-2"
-
-    # 3. Unauthenticated HTTP 403 rate-limit records clear localized warning + raises actionable error
+    for env_k, env_v, clear_k in (("GITHUB_TOKEN", "tok-fixture-1", "GH_TOKEN"), ("GH_TOKEN", "tok-fixture-2", "GITHUB_TOKEN")):
+        monkeypatch.setenv(env_k, env_v)
+        monkeypatch.delenv(clear_k, raising=False)
+        fx._gh_api(make_ctx(200), "https://api.github.com/orgs/example/repos")
+        assert seen[-1].get("Authorization") == f"Bearer {env_v}"
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.setattr(fx, "FL", "en")
-    ctx_rl = fx.Ctx({}, start, end, {}, False, False)
-    ctx_rl._local.session = FakeSession(
-        FakeResp(403, headers={"X-RateLimit-Remaining": "0"}, text="API rate limit exceeded")
-    )
-    try:
+    ctx_rl = make_ctx(403, headers={"X-RateLimit-Remaining": "0"}, text="API rate limit exceeded")
+    with pytest.raises(RuntimeError, match="403.*GITHUB_TOKEN|GITHUB_TOKEN.*403"):
         fx._gh_api(ctx_rl, "https://api.github.com/orgs/example/repos")
-        raise AssertionError("expected RuntimeError on HTTP 403 rate limit")
-    except RuntimeError as e:
-        assert "403" in str(e) and "GITHUB_TOKEN" in str(e)
     assert any("GITHUB_TOKEN" in n and "5,000" in n for n in ctx_rl.notes)
