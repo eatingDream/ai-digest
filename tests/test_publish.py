@@ -444,3 +444,178 @@ def test_verify_decrypt_cli_validation(tmp_path):
     )
     assert r_nodir.returncode != 0 and "not found" in r_nodir.stderr
 
+
+def test_discover_en_md_explicit_and_auto(monkeypatch, tmp_path):
+    md = tmp_path / "digest-2026-01-15.md"
+    en = tmp_path / "digest-2026-01-15.en.md"
+    md.write_text("x", encoding="utf-8")
+    en.write_text("y", encoding="utf-8")
+    monkeypatch.setattr(publish, "ROOT", tmp_path)
+
+    # Auto-discovers sibling .en.md when LANG == zh-CN
+    monkeypatch.setattr(publish, "LANG", "zh-CN")
+    assert publish._discover_en_md(md) == en
+    # Never auto-discovers for an already-.en.md input
+    assert publish._discover_en_md(en) is None
+    # Does not auto-discover when site LANG == en
+    monkeypatch.setattr(publish, "LANG", "en")
+    assert publish._discover_en_md(md) is None
+    # Explicit path always wins when present, fails cleanly when absent
+    assert publish._discover_en_md(md, en) == en
+    try:
+        publish._discover_en_md(md, tmp_path / "missing.en.md")
+        raise AssertionError("expected SystemExit for missing --md-en")
+    except SystemExit:
+        pass
+
+
+def test_bilingual_inject_nav_idempotent_and_primary_pane_index(monkeypatch, tmp_path):
+    from datetime import date
+    import render_html as rh
+
+    bi = tmp_path / "2026-01-15.html"
+    rh.render_file(
+        ROOT / "examples" / "sample-digest.zh-CN.md",
+        bi,
+        "zh-CN",
+        year=2026,
+        en_md_path=ROOT / "examples" / "sample-digest.en.md",
+    )
+    raw = bi.read_text(encoding="utf-8")
+    issue = publish.Issue(
+        kind="daily", label="2026-01-15", source=bi,
+        start=date(2026, 1, 15), end=date(2026, 1, 15), title=publish.extract_title(raw),
+    )
+    monkeypatch.setattr(publish, "LANG", "zh-CN")
+    monkeypatch.setattr(publish, "LANG_ALT", None)
+
+    once = publish.inject_nav(raw, issue, [issue])
+    twice = publish.inject_nav(once, issue, [issue])
+    assert once == twice  # 100% idempotent
+    assert once.count(publish.NAV_TOP_START) == 2
+    assert once.count(publish.NAV_BOT_START) == 2
+
+    zh_part, en_part = once.split('<div class="lang-pane lang-en"', 1)
+    assert "返回目录" in zh_part and "锁定" in zh_part and "Back to index" not in zh_part
+    assert "Back to index" in en_part and "Lock" in en_part and "返回目录" not in en_part
+
+    stripped = publish.strip_injections(once)
+    assert publish.NAV_TOP_START not in stripped and publish.NAV_BOT_START not in stripped
+    assert stripped == raw
+
+    # Index extraction reads only the primary pane (10 items, not 20)
+    heads = publish.issue_headlines(issue)
+    assert len(heads) == 10
+    tags = publish.issue_tags(issue)
+    assert "开放权重 / 推理" in tags and "Open weights / Reasoning" not in tags
+    assert issue.title == "AI精选日报 · 1/15"
+
+
+def test_incremental_bilingual_autodiscover_explicit_and_rerender_all(tmp_path):
+    import shutil
+
+    work = tmp_path / "work"
+    work.mkdir()
+    pw_file = tmp_path / "site-password"
+    salt_file = tmp_path / "site-salt"
+    pw_file.write_text("synthetic-test-pass-7777\n", encoding="utf-8")
+    pw_file.chmod(0o600)
+
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.en.md", work / "digest-2026-01-15.en.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-14.md")
+    # Stray draft & orphan .en.md that must NEVER become standalone issues on --rerender-all
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15-draft.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.en.md", work / "digest-2026-01-16.en.md")
+
+    (work / "site").mkdir(parents=True)
+    (work / "site" / "CONFIG").write_text("SLUG=bislug1234\nLANG=zh-CN\n", encoding="utf-8")
+
+    env = dict(
+        os.environ,
+        DIGEST_ROOT=str(work),
+        DIGEST_SITE_PASSWORD_FILE=str(pw_file),
+        DIGEST_SITE_SALT_FILE=str(salt_file),
+        DIGEST_TZ="UTC",
+    )
+    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT"):
+        env.pop(k, None)
+
+    def run_pub(*args):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "publish.py"), *args],
+            env=env, capture_output=True, text=True, cwd=str(ROOT),
+        )
+
+    # 1. Auto-discovers digest-2026-01-15.en.md when LANG=zh-CN from CONFIG
+    r1 = run_pub("--issue", "daily/2026-01-15", "--md", "digest-2026-01-15.md", "--prepare-only")
+    assert r1.returncode == 0, r1.stdout + r1.stderr
+    assert "published: daily/2026-01-15 (10 items) + English (digest-2026-01-15.en.md)" in r1.stdout
+
+    plain15 = (work / "site" / "plain" / "bislug1234" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+    assert '<div class="lang-pane lang-zh"' in plain15 and '<div class="lang-pane lang-en"' in plain15
+    assert 'id="digestFilterBar"' in plain15 and 'id="en-digestFilterBar"' in plain15
+    ids = re.findall(r'\bid="([^"]+)"', plain15)
+    assert len(ids) == len(set(ids))
+    zh_part, en_part = plain15.split('<div class="lang-pane lang-en"', 1)
+    assert "返回目录" in zh_part and "Back to index" in en_part
+
+    plain_idx = (work / "site" / "plain" / "bislug1234" / "index.html").read_text(encoding="utf-8")
+    assert "10 条" in plain_idx and "20 条" not in plain_idx
+
+    # Node decrypt verifier passes on bilingual encrypted pages
+    v = subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env, capture_output=True, text=True, cwd=str(ROOT))
+    assert v.returncode == 0, v.stdout + v.stderr
+
+    # 2. Publish single-language issue (no sibling .en.md)
+    r2 = run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--prepare-only")
+    assert r2.returncode == 0, r2.stdout + r2.stderr
+    assert "+ English" not in r2.stdout
+    plain14 = (work / "site" / "plain" / "bislug1234" / "daily" / "2026-01-14.html").read_text(encoding="utf-8")
+    assert '<div class="lang-pane' not in plain14
+    assert 'class="theme-switch lang-switch"' not in plain14
+
+    # 3. --rerender-all preserves bilingual issue, keeps single-lang issue, ignores drafts & orphan .en.md
+    r3 = run_pub("--rerender-all", "--prepare-only")
+    assert r3.returncode == 0, r3.stdout + r3.stderr
+    assert sorted(p.name for p in (work / "site" / "sources" / "daily").glob("*.html")) == [
+        "2026-01-14.html",
+        "2026-01-15.html",
+    ]
+    plain15_after = (work / "site" / "plain" / "bislug1234" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+    assert '<div class="lang-pane lang-en"' in plain15_after
+    assert plain15_after.count(publish.NAV_TOP_START) == 2
+
+    # 4. Explicit --md-en with custom filename works; --md-en without --md fails
+    custom_en = work / "alt-en.md"
+    shutil.copy(ROOT / "examples" / "sample-digest.en.md", custom_en)
+    r4 = run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--md-en", str(custom_en), "--prepare-only")
+    assert r4.returncode == 0, r4.stdout + r4.stderr
+    assert "+ English (alt-en.md)" in r4.stdout
+
+    r_bad = run_pub("--issue", "daily/2026-01-14", "--md-en", str(custom_en), "--prepare-only")
+    assert r_bad.returncode != 0 and "--md-en requires" in r_bad.stderr
+
+
+def test_privacy_scan_catches_leak_in_english_pane(tmp_path):
+    import render_html as rh
+
+    zh_md = tmp_path / "digest-2026-01-15.md"
+    en_md = tmp_path / "digest-2026-01-15.en.md"
+    zh_md.write_text(
+        "**AI精选日报 · 1/15**\n\n## 🧠 模型\n\n### 1. 干净标题\n`示例 · 1/15`\n\n**一句话：** 没有任何隐私信息。\n",
+        encoding="utf-8",
+    )
+    en_md.write_text(
+        "**AI Daily · 1/15**\n\n## 🧠 Models\n\n### 1. Clean title\n`Example · 1/15`\n\n"
+        "**In brief:** Contact leak@example.com from people I follow on X.\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "bi.html"
+    rh.render_file(zh_md, out, "zh-CN", en_md_path=en_md)
+    try:
+        publish.privacy_scan([out])
+        raise AssertionError("expected SystemExit on privacy hit in EN pane")
+    except SystemExit:
+        pass
+

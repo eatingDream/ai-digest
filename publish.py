@@ -2,12 +2,12 @@
 """Publish an AI digest HTML issue to the public Cloudflare Pages site.
 
 Usage (routine runs -- incremental, quiet, prints ~6 lines):
-  python3 publish.py --issue daily/2026-11-16 --md digest-2026-11-16.md
+  python3 publish.py --issue daily/2026-11-16 --md digest-2026-11-16.md [--md-en digest-2026-11-16.en.md]
   python3 publish.py --issue weekly/2026-11-16_11-22 --md weekly-2026-11-16_11-22.md
   python3 publish.py --remove weekly/2026-11-09_11-13
-  (renders that one issue, rebuilds nav/index from site/sources, re-encrypts
-  only pages whose plaintext changed (site/enc-cache.json), deploys, checks
-  HTTP + decrypt; full log in logs/publish-*.log)
+  (renders that one issue — bundling a sibling *.en.md automatically when LANG=zh-CN —
+  rebuilds nav/index from site/sources, re-encrypts only pages whose plaintext changed
+  (site/enc-cache.json), deploys, checks HTTP + decrypt; full log in logs/publish-*.log)
 
 Legacy usage:
   python3 publish.py <html_path> <daily|weekly> <date_label>
@@ -557,8 +557,13 @@ def extract_title(html: str) -> str:
 
 
 def strip_marked(html: str, start: str, end: str) -> str:
-    pattern = re.escape(start) + r".*?" + re.escape(end)
-    return re.sub(pattern, "", html, flags=re.S)
+    pattern = r"\n?" + re.escape(start) + r".*?" + re.escape(end) + r"\n?"
+    return re.sub(
+        pattern,
+        lambda m: "\n" if m.group(0).startswith("\n") and m.group(0).endswith("\n") else "",
+        html,
+        flags=re.S,
+    )
 
 
 def strip_injections(html: str) -> str:
@@ -626,7 +631,50 @@ def lang_switch_link(rel: str = "", cls: str = "lang-switch") -> str:
             f'{_esc(i18n.t(code, "lang_name"))}</a>')
 
 
-def nav_html(issue: Issue, issues: list[Issue], slug_index_rel: str, which: str) -> str:
+_LANG_ZH_RE = re.compile(r'<div\s+class="lang-pane\s+lang-zh"[^>]*>', re.I)
+_LANG_EN_RE = re.compile(r'<div\s+class="lang-pane\s+lang-en"[^>]*>', re.I)
+
+
+def _primary_pane_html(html: str) -> str:
+    """Return the pane matching the site's primary language on bilingual pages."""
+    zh_m = _LANG_ZH_RE.search(html)
+    en_m = _LANG_EN_RE.search(html)
+    if not (zh_m and en_m):
+        return html
+    if zh_m.start() < en_m.start():
+        return html[en_m.start() :] if LANG == "en" else html[zh_m.start() : en_m.start()]
+    return html[en_m.start() : zh_m.start()] if LANG == "en" else html[zh_m.start() :]
+
+
+def _discover_en_md(md_path: Path, explicit: Path | None = None) -> Path | None:
+    """Resolve an explicit --md-en path, or auto-discover sibling <stem>.en.md for zh-CN sites."""
+    if explicit is not None:
+        p = Path(explicit)
+        if not p.is_absolute() and not p.is_file():
+            p = ROOT / p
+        if not p.is_file():
+            die(f"English markdown not found: {p}")
+        return p
+    if LANG == "zh-CN" and not md_path.name.endswith(".en.md"):
+        cand = md_path.with_name(f"{md_path.stem}.en.md")
+        if cand.is_file():
+            return cand
+    return None
+
+
+def nav_html(
+    issue: Issue,
+    issues: list[Issue],
+    slug_index_rel: str,
+    which: str,
+    *,
+    lang: str | None = None,
+) -> str:
+    lg = i18n.normalize_lang(lang) if lang is not None else LANG
+
+    def tr(key: str, **kw) -> str:
+        return i18n.t(lg, key, **kw)
+
     same = sorted(
         [i for i in issues if i.kind == issue.kind],
         key=lambda x: (x.start, x.end, x.label),
@@ -642,10 +690,10 @@ def nav_html(issue: Issue, issues: list[Issue], slug_index_rel: str, which: str)
     def gone(text: str) -> str:
         return f'<span class="gone">{text}</span>'
 
-    parts = [link(slug_index_rel, _t("nav_index"))]
+    parts = [link(slug_index_rel, tr("nav_index"))]
     parts.append('<span class="sep" aria-hidden="true"></span>')
-    parts.append(link(prev.label, _t("nav_prev")) if prev else gone(_t("nav_prev")))
-    parts.append(link(nxt.label, _t("nav_next")) if nxt else gone(_t("nav_next")))
+    parts.append(link(prev.label, tr("nav_prev")) if prev else gone(tr("nav_prev")))
+    parts.append(link(nxt.label, tr("nav_next")) if nxt else gone(tr("nav_next")))
 
     if issue.kind == "daily":
         weeklies = [
@@ -656,7 +704,7 @@ def nav_html(issue: Issue, issues: list[Issue], slug_index_rel: str, which: str)
         weeklies.sort(key=lambda w: (w.end, w.start), reverse=True)
         if weeklies:
             parts.append(
-                link(f"../weekly/{weeklies[0].label}", _t("nav_week"), "week-link")
+                link(f"../weekly/{weeklies[0].label}", tr("nav_week"), "week-link")
             )
 
     if which == "top":
@@ -665,39 +713,58 @@ def nav_html(issue: Issue, issues: list[Issue], slug_index_rel: str, which: str)
         ):
             parts.append('<span class="week-link"></span>')
         parts.append(lang_switch_link(f"{issue.kind}/{issue.label}"))
-        parts.append(f'<button type="button" class="lock" data-lock title="{_esc(_t("lock_title"))}">{_esc(_t("lock"))}</button>')
+        parts.append(f'<button type="button" class="lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>')
     return (
-        f'<nav class="issue-nav {which}" aria-label="{_esc(_t("nav_aria"))}">'
+        f'<nav class="issue-nav {which}" aria-label="{_esc(tr("nav_aria"))}">'
         + "".join(parts)
         + "</nav>"
     )
 
 
-def inject_nav(html: str, issue: Issue, issues: list[Issue]) -> str:
-    html = strip_marked(html, NAV_TOP_START, NAV_TOP_END)
-    html = strip_marked(html, NAV_BOT_START, NAV_BOT_END)
+def _inject_nav_into_fragment(
+    fragment: str,
+    issue: Issue,
+    issues: list[Issue],
+    *,
+    lang: str | None = None,
+) -> str:
     top = (
         f"{NAV_TOP_START}\n"
-        f"{nav_html(issue, issues, '../', 'top')}\n"
-        f"{NAV_TOP_END}\n"
+        f"{nav_html(issue, issues, '../', 'top', lang=lang)}\n"
+        f"{NAV_TOP_END}"
     )
     bot = (
         f"{NAV_BOT_START}\n"
-        f"{nav_html(issue, issues, '../', 'bottom')}\n"
+        f"{nav_html(issue, issues, '../', 'bottom', lang=lang)}\n"
         f"{NAV_BOT_END}"
     )
-    if "</header>" not in html.lower():
+    if "</header>" not in fragment.lower():
         die(f"{issue.kind}/{issue.label}: no </header> to place top nav")
-    html = re.sub(r"</header>", "</header>\n" + top, html, count=1, flags=re.I)
+    fragment = re.sub(r"</header>", lambda m: m.group(0) + "\n" + top, fragment, count=1, flags=re.I)
     # Place bottom nav after the end-of-issue marker, still inside the footer if present.
-    end_m = re.search(r'<div class="end">[^<]*</div>', html)
+    end_m = re.search(r'<div class="end">[^<]*</div>', fragment)
     if end_m:
-        html = html[: end_m.end()] + "\n" + bot + html[end_m.end():]
-    elif "<footer" in html.lower():
-        html = re.sub(r"(<footer[^>]*>)", r"\1\n" + bot, html, count=1, flags=re.I)
+        fragment = fragment[: end_m.end()] + "\n" + bot + fragment[end_m.end():]
+    elif "<footer" in fragment.lower():
+        fragment = re.sub(r"(<footer[^>]*>)", lambda m: m.group(1) + "\n" + bot, fragment, count=1, flags=re.I)
     else:
-        html = re.sub(r"</body>", bot + "\n</body>", html, count=1, flags=re.I)
-    return html
+        fragment = re.sub(r"</body>", lambda m: bot + "\n" + m.group(0), fragment, count=1, flags=re.I)
+    return fragment
+
+
+def inject_nav(html: str, issue: Issue, issues: list[Issue]) -> str:
+    html = strip_marked(html, NAV_TOP_START, NAV_TOP_END)
+    html = strip_marked(html, NAV_BOT_START, NAV_BOT_END)
+    zh_m = _LANG_ZH_RE.search(html)
+    en_m = _LANG_EN_RE.search(html)
+    if zh_m and en_m:
+        first_m, second_m = (zh_m, en_m) if zh_m.start() < en_m.start() else (en_m, zh_m)
+        first_lang = "zh-CN" if first_m is zh_m else "en"
+        second_lang = "en" if first_m is zh_m else "zh-CN"
+        part1 = _inject_nav_into_fragment(html[: second_m.start()], issue, issues, lang=first_lang)
+        part2 = _inject_nav_into_fragment(html[second_m.start():], issue, issues, lang=second_lang)
+        return part1 + part2
+    return _inject_nav_into_fragment(html, issue, issues)
 
 
 def list_sources() -> list[Issue]:
@@ -781,7 +848,7 @@ def write_static_root(slug: str | None = None) -> None:
 def issue_headlines(issue: Issue) -> list[str]:
     """Item headlines of an issue, read from its clean source (TOC first)."""
     try:
-        html = issue.source.read_text(encoding="utf-8")
+        html = _primary_pane_html(issue.source.read_text(encoding="utf-8"))
     except OSError:
         return []
     m = re.search(r'<ol class="toc-items-list">(.*?)</ol>', html, flags=re.S)
@@ -802,7 +869,7 @@ def issue_headlines(issue: Issue) -> list[str]:
 def issue_tags(issue: Issue) -> list[str]:
     """Distinct topic tags of an issue, extracted from its rendered story badges."""
     try:
-        html = issue.source.read_text(encoding="utf-8")
+        html = _primary_pane_html(issue.source.read_text(encoding="utf-8"))
     except OSError:
         return []
     out: list[str] = []
@@ -2220,10 +2287,12 @@ def rerender_all_sources() -> None:
         if not md.is_file():
             print(f"rerender: SKIP {issue.kind}/{issue.label} (no {md.name})", file=sys.stderr)
             continue
+        en_md = _discover_en_md(md)
         out = ROOT / "html" / f"{issue.kind}-{issue.label}.html"
-        render_html.render_file(md, out, LANG, year=issue.start.year)
+        render_html.render_file(md, out, LANG, year=issue.start.year, en_md_path=en_md)
         save_source(out, issue.kind, issue.label)
-        print(f"rerender: {issue.kind}/{issue.label} <- {md.name}", file=sys.stderr)
+        extra = f" + {en_md.name}" if en_md else ""
+        print(f"rerender: {issue.kind}/{issue.label} <- {md.name}{extra}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -2420,6 +2489,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--examples", default=None, help="with --demo: examples directory (default: <repo>/examples)")
     parser.add_argument("--issue", help="incremental publish of one issue: daily/YYYY-MM-DD or weekly/YYYY-MM-DD_MM-DD")
     parser.add_argument("--md", help="with --issue: markdown to render (render_html.py) before publishing")
+    parser.add_argument("--md-en", help="with --issue --md: English companion markdown for single-page bilingual rendering (auto-discovered as <stem>.en.md when LANG=zh-CN)")
     parser.add_argument("--remove", help="remove one issue (daily/LABEL or weekly/LABEL); backup to backfill/removed/")
     parser.add_argument("--no-verify", action="store_true", help="with --issue/--remove: skip post-deploy decrypt check")
     parser.add_argument("--verbose", action="store_true", help="with --issue/--remove: stream full logs instead of a short summary")
@@ -2445,6 +2515,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     _acquire_publish_lock()
+
+    if args.md_en and not (args.issue and args.md):
+        die("--md-en requires --issue and --md")
 
     if args.issue or args.remove:
         return run_incremental(args)
@@ -2636,30 +2709,29 @@ def run_incremental(args) -> int:
                         md = ROOT / md
                     if not md.is_file():
                         die(f"markdown not found: {md}")
+                    en_md = _discover_en_md(md, Path(args.md_en) if args.md_en else None)
                     issue_year = (
                         parse_daily_label(label).year
                         if kind == "daily"
                         else parse_weekly_label(label)[0].year
                     )
-                    proc = subprocess.run(
-                        [
-                            sys.executable,
-                            str(CODE_ROOT / "render_html.py"),
-                            str(md.resolve()),
-                            str(html_path),
-                            "--lang",
+                    if str(CODE_ROOT) not in sys.path:
+                        sys.path.insert(0, str(CODE_ROOT))
+                    import render_html
+
+                    try:
+                        digest = render_html.render_file(
+                            md.resolve(),
+                            html_path,
                             LANG,
-                            "--year",
-                            str(issue_year),
-                        ],
-                        cwd=str(ROOT), capture_output=True, text=True, timeout=120,
-                    )
-                    print(proc.stdout)
-                    print(proc.stderr)
-                    if proc.returncode != 0:
-                        die(f"render_html.py failed (rc={proc.returncode})")
-                    m = re.search(r"\((\d+) items\)", proc.stdout)
-                    items_note = f" ({m.group(1)} items)" if m else ""
+                            year=issue_year,
+                            en_md_path=en_md.resolve() if en_md else None,
+                        )
+                    except ValueError as e:
+                        die(f"render_html failed: {e}")
+                    items_note = f" ({len(digest.items)} items)"
+                    if en_md is not None:
+                        items_note += f" + English ({en_md.name})"
                 elif not html_path.is_file():
                     die(f"no --md given and {html_path} does not exist")
                 rf = SITE / "removed-paths.txt"

@@ -36,15 +36,16 @@ encrypted client-side (AES-256-GCM, key from PBKDF2-HMAC-SHA256, 600k iterations
 ## 发布 / Publish
 
 ```bash
-python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md   # 增量：渲染 + 加密 + 部署 + 校验
+python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md   # 增量：渲染 + 加密 + 部署 + 校验（LANG=zh-CN 时自动合并同目录 *.en.md）
+python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md --md-en digest-2026-01-15.en.md  # 显式指定英文伴生稿
 python3 publish.py --issue weekly/2026-01-12_01-18 --md weekly-2026-01-12_01-18.md
 python3 publish.py --prepare-only <html> daily 2026-01-15              # 只构建，不部署
 python3 publish.py --rebuild | --rerender-all | --deploy-only | --rotate-password | --remove daily/LABEL
 ```
 
-流程：保存干净源 → 注入 noindex 与「返回目录 / 上一期 / 下一期 / 本周周报」导航 → 重建目录页（写到 `site/plain/`）→
-**对明文做隐私扫描**（邮箱 + 自定义规则，命中即失败）→ 加密写入 `site/public/<slug>/`（内容未变的页面复用旧密文，
-见 `site/enc-cache.json`）→ `npx wrangler pages deploy` → HTTP 与解密校验。
+流程：保存干净源 → 注入 noindex 与「返回目录 / 上一期 / 下一期 / 本周周报」导航（单页双语页面会自动为中文和英文视图分别注入对应语言导航）→ 重建目录页（写到 `site/plain/`）→
+**对明文做隐私扫描**（覆盖中英文全部内容，邮箱 + 自定义规则，命中即失败）→ 加密写入 `site/public/<slug>/`（内容未变的页面复用旧密文，
+见 `site/enc-cache.json`）→ `npx wrangler pages deploy` → HTTP 与解密校验。`--rerender-all` 同样会自动发现并保留已发布期次的同目录 `*.en.md` 双语版本。
 
 ## 演示站点（CI，无部署、无密钥）/ Demo build
 
