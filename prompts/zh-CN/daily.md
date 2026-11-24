@@ -1,6 +1,6 @@
 # AI精选日报 · agent 提示词模板（每天 00:30（本地时区，DIGEST_TZ）触发，出前一天那一期）
 
-<!-- 这是一个与平台无关的 agent 提示词模板：把它交给任意带 Shell、文件读写与 Web/X 只读检索工具的 agent 运行器。
+<!-- 这是一个与平台无关的 agent 提示词模板：把它交给任意带 Shell 与文件读写工具的 agent 运行器（X/Web 只读检索工具为可选增强）。
      占位符：<SITE_DOMAIN>=站点域名、<SITE_SLUG>=站点路径 slug；时区由环境变量 DIGEST_TZ 决定（默认 UTC）；
      "读者" = 接收摘要的人或频道。运行器如何把最终摘要送达读者，由你的部署决定。
      输出语言：设置 DIGEST_LANG=zh-CN（或在 site/CONFIG 里写 LANG=zh-CN），这样 fetch/ 与 publish.py 的标签、页面和本提示词一致。 -->
@@ -11,7 +11,7 @@
 |---|---|
 | 工作目录 | 仓库根目录（下文路径都相对于它） |
 | 环境变量 | `DIGEST_LANG=zh-CN`（标签与页面语言）、`DIGEST_TZ=<IANA 时区>`（决定「自然日」，默认 UTC）；要部署还需 `site/CONFIG`、密码文件和 `CLOUDFLARE_API_TOKEN`（见 `site/README.md`） |
-| 工具 | Shell、文件读写、X 只读检索；网页抓取可选（多数核对用 `fetch/page.py` 即可） |
+| 工具 | Shell、文件读写；可选：X 只读检索（`search_posts_all`、`get_users_posts` 等）与网页抓取（多数核对用 `fetch/page.py` 即可） |
 | 输入 | `runs/P/fetch/`（`fetch/fetch.py` 产出）、`runs/P/paper-cands.md`（`papers.md` 产出，可缺）、`filter-notes.zh-CN.md`、经 `fetch/ledger.py` 访问的台账 |
 | 产出 | `digest-P.md`（本期成稿，格式见下）、`runs/P/filter-log.md`、台账更新、已发布的 `daily/P` 页面 |
 | 完成标准 | `python3 publish.py --issue daily/P --md digest-P.md` 退出码为 0 并打印本期 URL，且台账记账已执行 |
@@ -29,9 +29,9 @@
 3. 已推 / 看过未推的去重已经由 `fetch.py` 做进 triage（★ = 已推、☆ = 看过未推）。**不要读 `ledger.json`**。需要核对某条是否推过：`python3 fetch/ledger.py find 关键词|arXiv id|URL片段`；近 3 周「看过未推」条目回看，只做一次：`python3 fetch/ledger.py recent --days 21 --status seen`（约 40 行），与 triage 的 ☆ 和 X 线索对照，出现新的一手证据（正式发布、论文、权重放出、官方文件）才重新判断。
 4. 窗口是整个自然日 `P`，**没有「周日 09:00–21:00 归周报」「周一日报避开周报」之类的重叠规则**（周报改为周一凌晨覆盖上周一至周日，直接汇总本周 7 期日报）。周六、周日（`P` 为周六/周日）没有 arXiv 新批次，非论文条目少是正常的，不要为了凑数降低标准。
 5. **回合预算（额度主要花在「回合数 × 上下文长度」上，不是单次读多少）**：凡是互不依赖的工具调用，**必须放进同一个 block 并行发出**（多个 Read、多个 X 调用、多个 Shell），不要一个一个串行；整次运行目标 ≤ 20 个回合。推荐节奏（读的内容一点不少，只是合并回合）：
-   - ① 同一个 block：Read `filter-notes.zh-CN.md`、Read `fetch/x-recall.zh-CN.md`、Shell 跑第 1 节的抓取命令。
-   - ② 同一个 block：第 2 节的 7–10 个 X 调用，加上 `triage.md` 的全部分页 Read。
-   - ③ Shell：`xparse.py`（一次）；同一个 block 里再对非论文入围条目做一次批量核验（`cand.py` 一次传多个 id，`page.py` 一次传多个 URL）。
+   - ① 同一个 block：Read `filter-notes.zh-CN.md`、Read `fetch/x-recall.zh-CN.md`（若运行器有 X 工具）、Shell 跑第 1 节的抓取命令。
+   - ② 同一个 block：`triage.md` 的全部分页 Read（若运行器提供 X 检索工具，同批并发第 2 节的 5–10 个 X 调用）。
+   - ③ Shell：`xparse.py` 一次（仅在执行了 X 召回时）；同一个 block 里再对非论文入围条目做一次批量核验（`cand.py` 一次传多个 id，`page.py` 一次传多个 URL）。
    - ④ 论文：**优先读 `runs/P/paper-cands.md`**（论文初筛 定时任务 在 00:10 写好的 30–40 篇宽松候选，约 5KB，一次 Read 即可）；只有它不存在（或是 `.tmp`）时才回退为 `triage-papers.md` 的全部分页 Read（各页并行）。见第 3 节「论文」一条。
    - ⑤ 一个 block：论文入围条目的 `cand.py`（所有 arXiv id 一次）+ 其余需要核对的 `page.py`（所有 URL 一次）。
    - ⑥ 写稿（一次写成）→ ⑦ 发布 → ⑧ 记账 + 推送。
@@ -54,10 +54,12 @@ fetch.py 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所�
 - 状态非 ok 的**实验室官方源**（lab 频道），换入口再试一次（官网首页、X 官方账号、GitHub、HF org）；仍打不开就只记在筛选日志里（不要写进日报或推送消息）。新闻/社区源偶发失败（如 reddit 429、GitHub 403）可忽略，**不要为此重跑 fetch**。
 - arXiv 日历：本地周一至周五 09:00 各有一批（夏令时 08:00），周六、周日没有新批次；这些批次都在 `P` 当天的窗口内。
 
-## 2. X 召回（只读，约 7–10 次工具调用，结果不进上下文）
+## 2. X 召回（可选——按工具能力门控，只读，结果不进上下文）
 
-严格按 `fetch/x-recall.zh-CN.md` 顶部的「调用协议」：A（3 组）、B（2 组）、C（2 组）**每次必跑**；每次调用都用 agent 的 X 只读检索工具并让结果落盘（`write_to_file`），`max_results` 50，`start_time`/`end_time` = 窗口（UTC：`P` 的前一天 `T16:00:00Z` → `P` 当天 `T16:00:00Z`，例 `P`=2026-11-18 → `2026-11-17T16:00:00Z` ~ `2026-11-18T16:00:00Z`）；E（`search_news`）2–3 个关键词；D（主题检索）默认不跑，只在某个版面明显空白或某条线索需要交叉验证时补 1–2 个。这些调用互不依赖，**同一个 block 并行发出**（并且与 `triage.md` 的分页 Read 放在一起）。全部跑完后运行一次 `python3 fetch/xparse.py A1=<文件> … --out runs/P/x-raw.md`（不要自己写解析脚本，不要读原始 JSON）；它打印「⚠️ 截断」时按 `x-recall.zh-CN.md` 第 2b 条补页、带上补页文件**重跑一次**，然后读它的输出作为 X 线索。C2（中文关键词）和 D 组一开始就传 `sort_order: "relevancy"`。
-- X 只是线索，必须追到一手出处（官方博客、arXiv、HF、GitHub、公司公告、监管文件、可靠媒体）。X 线索和 `triage.md` 通常指向同一批事件，**两边对一遍，只有 X 独有的线索才需要另查**。线索记到 `runs/P/x-leads.md`（≤ 25 行，只记链接 + 一句话），文件开头先写 xparse 打印的那行每组条数（如 `A1=12 A2=3 A3=0 B1=25 B2=7 C=9 D-论文=…`），没跑的组写 `未跑`——这样漏跑一眼可见。窗口内确实安静也照写条数。
+- **能力门控**：先检查当前 agent 运行环境是否提供只读 X 连接器/检索工具（`search_posts_all`、`get_users_posts`、`search_news`、`get_news`）。
+  - **若运行器没有 X 检索工具**：**直接干净跳过本节，不要报错或中断**，在 `runs/P/filter-log.md` 的 `## 信源情况` 里记一行 `X 召回：未启用（运行器无 X 检索工具）`，直接基于 `fetch/fetch.py` 的约 153 个公开网页/RSS/arXiv/HF/GitHub/HN/Reddit 信源进入第 3 节。
+  - **若运行器有 X 检索工具**：按 `fetch/x-recall.zh-CN.md` 顶部的「调用协议」执行。运行 A（3 组）、B1 和 C2（中文关键词），B2 与 C1 **仅在已把 `<account_1>` / `<zh_account_1>` 占位符替换成真实账号名时才执行**（若仍含 `<account_1>` 或 `<zh_account_1>` 则直接跳过并记 `未配置跳过`）。每次调用结果落盘（`write_to_file`，不支持时由 Shell/文件工具落盘），`max_results` 50，`start_time`/`end_time` = 窗口（UTC：`P` 的前一天 `T16:00:00Z` → `P` 当天 `T16:00:00Z`，例 `P`=2026-11-18 → `2026-11-17T16:00:00Z` ~ `2026-11-18T16:00:00Z`）；E（`search_news`，若支持）2–3 个关键词；D（主题检索）默认不跑，只在某个版面明显空白或某条线索需要交叉验证时补 1–2 个。互不依赖的调用**同一个 block 并行发出**（与 `triage.md` 的分页 Read 一起）。跑完后运行一次 `python3 fetch/xparse.py A1=<文件> … --out runs/P/x-raw.md`；出现「⚠️ 截断」时按 `x-recall.zh-CN.md` 第 2b 条补页后**重跑一次**，再读输出作为 X 线索。C2 和 D 组一开始就传 `sort_order: "relevancy"`。
+- X 只是线索，必须追到一手出处（官方博客、arXiv、HF、GitHub、公司公告、监管文件、可靠媒体）。X 线索和 `triage.md` 通常指向同一批事件，**两边对一遍，只有 X 独有的线索才需要另查**。执行了 X 召回时，把线索记到 `runs/P/x-leads.md`（≤ 25 行，只记链接 + 一句话），文件开头先写 xparse 打印的那行每组条数（如 `A1=12 A2=3 A3=0 B1=25 B2=未配置跳过 C2=9`），没跑的组写 `未跑`。
 - **严禁**发帖、点赞、转发、关注、收藏、私信。
 
 ## 3. 阅读候选（每个文件读一遍，按这个顺序，不重复读、不重复抓取）
@@ -152,7 +154,7 @@ python3 publish.py --issue daily/P --md digest-P.md
 
 **省 token 规则**：
 - 只写本期这一个 markdown 文件，**一次写成**（先在脑子里/草稿里把入围条目和核对结果整理好再落笔，不要先写初稿再整篇重写）；发布失败或改稿才重写对应段落。不要读取、重写或重新生成其他期的 markdown/HTML（`html/`、`site/` 下的文件一律不要打开）。导航、目录、其他期页面的更新全部由 `publish.py` 自动完成。
-- 不要 `cat`/整份打印这些大文件：`ledger.json`、`candidates.jsonl`、`logs/*.log`、HTML、X 原始 JSON。`triage.md`、`x-raw.md`，以及论文这一路（`paper-cands.md`；回退时是 `triage-papers.md`）**必须读完且各读一遍**（第 3 步），用 Read 分页读，不要用 head/tail 截断后就停；省 token 只针对其他期的文件、日志和原始数据，不针对当天的候选。
+- 不要 `cat`/整份打印这些大文件：`ledger.json`、`candidates.jsonl`、`logs/*.log`、HTML、X 原始 JSON。`triage.md`、`x-raw.md`（若执行了 X 召回），以及论文这一路（`paper-cands.md`；回退时是 `triage-papers.md`）**必须读完且各读一遍**（第 3 步），用 Read 分页读，不要用 head/tail 截断后就停；省 token 只针对其他期的文件、日志和原始数据，不针对当天的候选。
 - 不要重跑 `fetch.py --daily`（完整抓取只在第 1 步跑一次）；arXiv 缺批次只按 `fetch/troubleshoot-arxiv.zh-CN.md` 用 `--only arxiv,hf_daily` 补查一次（输出在 `fetch-extra/`）。
 - 发布命令只打印约 6 行摘要；不要加 `--verbose`；成功（`OK` + `decrypt check: OK`）后**不要再单独验证网址、不要再 WebFetch 自己刚发布的页面**。失败时它会打印日志末尾 15 行，按提示处理即可。
 - 推理保持克制：每个版面一次性决定入围名单，核对完再写，不要对同一条目反复权衡；没有新信息就不要换写法重复检索或重复抓取。

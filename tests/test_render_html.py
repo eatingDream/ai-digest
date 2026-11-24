@@ -180,3 +180,45 @@ def test_render_sanitizes_raw_html_and_unsafe_urls():
     # Fallback renderer matches the same URL safety policy
     fb = rh._fallback_markdown("[bad](javascript:alert(1)) [ok](https://example.com/a)")
     assert "javascript:" not in fb.lower() and 'href="https://example.com/a"' in fb
+
+
+def test_malformed_markdown_rejected_in_api_and_cli(tmp_path):
+    import subprocess, sys
+
+    for bad_md in (
+        "",
+        "   \n\n  ",
+        "Just some random prose without any headings or digest items.\nAnother line.",
+        "**AI Daily · 1/15**\n\n## 🧠 Models\n\nSection heading with zero numbered items.\n",
+    ):
+        with pytest.raises(ValueError):
+            rh.parse_digest(bad_md, "en")
+
+    bad_file = tmp_path / "garbage.md"
+    bad_file.write_text("Not a valid digest markdown file at all.\n", encoding="utf-8")
+    out_file = tmp_path / "out.html"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "render_html.py"), str(bad_file), str(out_file)],
+        capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode == 1
+    assert "malformed digest markdown" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert not out_file.exists()
+
+
+@pytest.mark.parametrize("lang,expected_placeholder,expected_all", [
+    ("en", "Search title, summary, source, or tag…", "All"),
+    ("zh-CN", "搜索标题、摘要、来源或标签…", "全部"),
+])
+def test_rendered_issue_includes_filter_bar_theme_sync_and_hash_scroll(tmp_path, lang, expected_placeholder, expected_all):
+    out = tmp_path / f"issue-{lang}.html"
+    rh.render_file(SAMPLES[lang][0], out, lang, year=2026)
+    html = out.read_text(encoding="utf-8")
+    assert 'id="digestFilterBar"' in html
+    assert 'id="digestFilterInput"' in html
+    assert expected_placeholder in html
+    assert f'>{expected_all}</button>' in html
+    assert 'data-tags="' in html and 'data-tag="' in html
+    assert "localStorage.getItem('digest-theme')" in html
+    assert "location.hash.length>1" in html and "scrollIntoView" in html

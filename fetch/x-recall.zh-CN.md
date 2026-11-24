@@ -1,10 +1,14 @@
-# X 召回清单（定时任务 用，只读）
+# X 召回清单（可选、按工具能力启用，只读）
 
-**调用协议（省 token，2026-11-17 起）**
-1. 每次 `search_posts_all` / `search_news` 用 agent 的 X 只读检索工具并让结果落盘（`write_to_file`），**结果落盘、不进上下文**（原来每次调用把 6–20KB 的 JSON 倒进上下文，7–9 次约 100KB+）。参数：`max_results` 50（A/B/C 组；之前默认 25 在 A2、B1、C1 都被截断，召回有缺口）、`start_time`/`end_time` = 窗口、`post.fields=["created_at"]`、`expansions=["author_id"]`、`user.fields=["username"]`；B、C 组查询末尾加 `-is:reply`。
-2. 全部跑完后**只跑一次**解析：`python3 fetch/xparse.py A1=<文件> A2=<文件> A3=<文件> B1=… B2=… C1=… C2=… E1=… --out runs/D/x-raw.md`。它跨组去重、去互动数字，打印第一行条数（`A1=20 A2=25 …`，原样抄进 `x-leads.md` 开头）和每条一行线索（约 200 字节/条）。这一份输出就是 X 线索，读一遍即可，**不要再 cat 原始 JSON，不要自己写解析脚本**。
-2b. **截断补页（2026-11-18 起）**：连接器每次最多回 25 条，`max_results` 50 不一定生效。xparse 第二行出现「⚠️ 截断」时：注意全量检索即使只回几条也可能带 `next_token`（例：11/17 夜间 A1 只回 2 条、最早 12:13，窗口前 3 小时没取到）。A、B 组和 C 组账号那条（C1）用它打印的 `next_token` 补页（参数不变，加 `next_token`；同一个 block 并行、照样 `write_to_file`），然后把补页文件加进**同一条** xparse 命令重跑（标签如 `B1p2=…`）：A 组（官方账号，最重要）补到没有 `next_token` 为止、最多再 2 页；B、C1 只补 1 页。C 组关键词那条（C2）和 D 组主题检索量太大（25 条只覆盖几分钟），不翻页，改为一开始就传 `sort_order: "relevancy"`。
-3. 预算：A×3 + B×2 + C×2 = 7 次必跑；E（`search_news`）按「行业与产品」「政策」版面薄厚跑 2–3 个关键词；D 组默认不跑，仅当 triage + X 线索里某个版面（如具身、融资、人事）明显空白、或某条线索需要交叉验证时，挑 1–2 个相关主题跑。一次检索没有新信息就不要换写法重试。
+**能力与占位符门控**
+- **按运行器能力可选执行**：如果当前 agent 运行环境没有提供只读 X 检索工具（`search_posts_all`、`get_users_posts`、`search_news`、`get_news` 等，例如未接入 X 连接器/MCP 的标准 Claude Code、Cursor、Codex），**直接干净跳过本步骤，不要报错中断**，继续使用 `fetch/fetch.py` 抓取的约 153 个公开网页/RSS/arXiv/HF/GitHub/HN/Reddit 信源完成筛选。
+- **自动跳过未替换的账号占位符**：下文 **B2** 和 **C1** 含有 `<account_1>` / `<zh_account_1>` 个人关注圈模板占位符。调用前先检查是否已替换成真实账号名——若仍含 `<account_1>` 或 `<zh_account_1>`，**直接跳过该条查询**（记为 `B2=未配置跳过` / `C1=未配置跳过`），切勿把字面量 `<...>` 发给检索接口。
+
+**调用协议（省 token，有 X 检索工具时启用）**
+1. 每次 `search_posts_all` / `search_news` 用 agent 的 X 只读检索工具并让结果落盘（`write_to_file`，若连接器不支持该参数则由 Shell/文件工具落盘），**结果落盘、不留在上下文**（原来每次调用把 6–20KB 的 JSON 倒进上下文，7–9 次约 100KB+）。参数：`max_results` 50（A/B/C 组；之前默认 25 在 A2、B1、C1 都被截断，召回有缺口）、`start_time`/`end_time` = 窗口、`post.fields=["created_at"]`、`expansions=["author_id"]`、`user.fields=["username"]`；B、C 组查询末尾加 `-is:reply`。
+2. 全部跑完后**只跑一次**解析：`python3 fetch/xparse.py A1=<文件> A2=<文件> A3=<文件> B1=… C2=… [B2=… C1=…] E1=… --out runs/D/x-raw.md`（`B2` / `C1` 仅在已配置真实账号时传入）。它跨组去重、去互动数字，打印第一行条数（`A1=20 A2=25 …`，原样抄进 `x-leads.md` 开头）和每条一行线索（约 200 字节/条）。这一份输出就是 X 线索，读一遍即可，**不要再 cat 原始 JSON，不要自己写解析脚本**。
+2b. **截断补页（2026-11-18 起）**：连接器每次最多回 25 条，`max_results` 50 不一定生效。xparse 第二行出现「⚠️ 截断」时：注意全量检索即使只回几条也可能带 `next_token`（例：11/17 夜间 A1 只回 2 条、最早 12:13，窗口前 3 小时没取到）。A、B 组和 C 组账号那条（C1，若已启用）用它打印的 `next_token` 补页（参数不变，加 `next_token`；同一个 block 并行、照样落盘），然后把补页文件加进**同一条** xparse 命令重跑（标签如 `B1p2=…`）：A 组（官方账号，最重要）补到没有 `next_token` 为止、最多再 2 页；B、C1 只补 1 页。C 组关键词那条（C2）和 D 组主题检索量太大（25 条只覆盖几分钟），不翻页，改为一开始就传 `sort_order: "relevancy"`。
+3. 预算：A×3 + B1 + C2 = 5 次核心调用（替换 `<account_1>` / `<zh_account_1>` 后再加 B2、C1，共 7 次）；E（`search_news`，若工具支持）按「行业与产品」「政策」版面薄厚跑 2–3 个关键词；D 组默认不跑，仅当 triage + X 线索里某个版面（如具身、融资、人事）明显空白、或某条线索需要交叉验证时，挑 1–2 个相关主题跑。一次检索没有新信息就不要换写法重试。
 4. 只追值得写的线索：把 X 线索和 `triage.md` 对一遍（同一事件通常两边都有），X 独有的才需要追一手出处；写进 `runs/D/x-leads.md` 的只记链接+一句话，≤ 25 行。
 
 X 不走脚本，由 agent 用只读的 X 检索工具（连接器 / API）检索。**只读**：不发帖、不点赞、不关注、不收藏、不发私信。
@@ -12,21 +16,21 @@ X 不走脚本，由 agent 用只读的 X 检索工具（连接器 / API）检�
 每条查询都加 `-is:retweet`；字段见上方「调用协议」（`post.fields=created_at`、`expansions=author_id`、`user.fields=username`）。
 `min_likes:` 之类只能作发现时的去噪手段，不能作为纳入理由，也不写进正文。
 
-## A. 官方与实验室账号（每次必跑；按 1024 字符上限拆成 3 组）
+## A. 官方与实验室账号（有 X 检索工具时必跑；按 1024 字符上限拆成 3 组）
 
 1. `(from:OpenAI OR from:OpenAIDevs OR from:AnthropicAI OR from:claudeai OR from:GoogleDeepMind OR from:GoogleAI OR from:googlegemma OR from:GeminiApp OR from:AIatMeta OR from:MistralAI OR from:xai OR from:MSFTResearch OR from:NVIDIAAI OR from:nvidia OR from:huggingface OR from:thinkymachines OR from:cohere OR from:allen_ai OR from:togethercompute) -is:retweet -is:reply`
 2. `(from:deepseek_ai OR from:Alibaba_Qwen OR from:QwenDevs OR from:Kimi_Moonshot OR from:Zai_org OR from:MiniMax_AI OR from:StepFun_ai OR from:TencentHunyuan OR from:BytedanceTalk OR from:OpenBMB OR from:intern_lm OR from:Xiaomi_MiMo OR from:SakanaAILabs OR from:perplexity_ai OR from:cursor_ai OR from:cognition OR from:windsurf OR from:Replit OR from:LangChainAI OR from:vllm_project OR from:lmsysorg OR from:llama_cpp OR from:ollama) -is:retweet -is:reply`
 3. `(from:METR_Evals OR from:EpochAIResearch OR from:ArtificialAnlys OR from:lmarena_ai OR from:AISecurityInst OR from:apolloaievals OR from:GoodfireAI OR from:TransluceAI OR from:PrimeIntellect OR from:NousResearch OR from:physical_int OR from:Figure_robot OR from:UnitreeRobotics OR from:SemiAnalysis_ OR from:StanfordHAI OR from:CSETGeorgetown) -is:retweet -is:reply`
 
-## B. 研究者 / 工程师 / 评论者（每次必跑，2 组）
+## B. 研究者 / 工程师 / 评论者（有 X 工具时 B1 必跑；B2 配置后启用）
 
 1. `(from:karpathy OR from:natolambert OR from:_jasonwei OR from:polynoamial OR from:soumithchintala OR from:rasbt OR from:omarsar0 OR from:dair_ai OR from:TheTuringPost OR from:_akhaliq OR from:arankomatsuzaki OR from:iScienceLuvr OR from:teortaxesTex OR from:swyx OR from:simonw OR from:emollick OR from:Miles_Brundage OR from:jackclarkSF OR from:ylecun OR from:demishassabis OR from:sama OR from:JeffDean OR from:ilyasut OR from:drfeifei) -is:retweet`
-2. `(from:<account_1> OR from:<account_2> OR … ) -is:retweet`（读者自己的研究者/工程师圈子：把你信任的账号填在这里，每组 ≤ 1024 字符；见 `x-sources.md`）
+2. *（可选——若 `<account_1>` 未替换则直接跳过）* `(from:<account_1> OR from:<account_2> OR … ) -is:retweet`（读者自己的研究者/工程师圈子：把你信任的账号填在这里，每组 ≤ 1024 字符；见 `x-sources.zh-CN.md`）
 
-## C. 中文圈（每次必跑）
+## C. 中文圈（有 X 工具时 C2 关键词必跑；C1 账号组配置后启用）
 
-`(from:<zh_account_1> OR from:<zh_account_2> OR … ) -is:retweet`（读者自己的中文圈子账号，示例见 `x-sources.md`）
-以及关键词：`(发布 OR 开源 OR 上线 OR 论文 OR 融资 OR 收购) (模型 OR 大模型 OR 智能体 OR Agent OR AI) lang:zh -is:retweet`（只取窗口内，仅作线索，一手出处再核）
+*（C1，可选——若 `<zh_account_1>` 未替换则直接跳过）* `(from:<zh_account_1> OR from:<zh_account_2> OR … ) -is:retweet`（读者自己的中文圈子账号，示例见 `x-sources.zh-CN.md`）
+以及关键词 *（C2）*：`(发布 OR 开源 OR 上线 OR 论文 OR 融资 OR 收购) (模型 OR 大模型 OR 智能体 OR Agent OR AI) lang:zh -is:retweet`（只取窗口内，仅作线索，一手出处再核）
 
 ## D. 主题检索（广域，按需全部跑；每组只作线索，必须追到一手出处）
 

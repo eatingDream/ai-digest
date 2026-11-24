@@ -953,7 +953,67 @@ body.toc-open .toc-side-backdrop { display: block; opacity: 1; pointer-events: a
 @media (min-width: 1600px) {
   .dek, .look, .detail, .extra { font-size: 17px; line-height: 1.8; }
 }
-@media print { .toc-side, .toc-side-toggle, .toc-side-backdrop { display: none !important; } .layout { display: block; } }
+@media print { .toc-side, .toc-side-toggle, .toc-side-backdrop, .filter-bar, .filter-empty { display: none !important; } .layout { display: block; } .sec[hidden], .story[hidden], .front[hidden] { display: block !important; } }
+
+/* Client-side keyword + tag filter bar */
+.filter-bar {
+  margin: 14px 0 18px;
+  padding: 10px 12px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.filter-row { display: flex; align-items: center; gap: 8px; }
+.filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13.5px;
+  outline: none;
+}
+.filter-input::placeholder { color: var(--ink-4); }
+.filter-input:focus { border-color: var(--accent); }
+.filter-count { flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 4px; }
+.filter-clear {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.filter-clear:hover { color: var(--ink); border-color: var(--accent); }
+.filter-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.filter-tag {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.filter-tag:hover { color: var(--accent-ink); border-color: var(--accent); }
+.filter-tag[aria-pressed="true"] {
+  background: var(--accent-softer);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.story-meta .badge[data-tag] { cursor: pointer; }
+.story-meta .badge[data-tag]:hover { border-color: var(--accent); color: var(--accent); }
+.filter-empty { margin: 24px 0; color: var(--ink-4); font-size: 14px; text-align: center; }
 
 /* English (Latin) typography: the wide letter-spacing above is tuned for CJK kickers. */
 html[lang="en"] .mast-top .motto, html[lang="en"] .imprint, html[lang="en"] .mark-kicker,
@@ -1241,6 +1301,11 @@ def parse_digest(text: str, lang: str | None = None) -> Digest:
 
     flush_item()
     digest.sections = sections
+    if not digest.sections or not digest.items:
+        raise ValueError(
+            f"malformed digest markdown: parsed {len(digest.sections)} sections and {len(digest.items)} items "
+            "(expected '## Section' headings and numbered '### 1. Title' items)"
+        )
     if not digest.toc_groups and digest.items:
         digest.toc_groups = [
             TocGroup(
@@ -1515,13 +1580,16 @@ def render_item(item: Item, lang: str = "en") -> str:
     if source:
         meta_bits.append(f'<span class="source">{html.escape(source)}</span>')
     for tag in tags:
-        meta_bits.append(f'<span class="{_badge_class(tag)}">{html.escape(tag)}</span>')
+        meta_bits.append(
+            f'<span class="{_badge_class(tag)}" data-tag="{html.escape(tag, quote=True)}">{html.escape(tag)}</span>'
+        )
     if item.is_new:
         meta_bits.append(f'<span class="badge badge-hot">{html.escape(i18n.t(lang, "new"))}</span>')
     if when:
         meta_bits.append(f'<span class="when num">{html.escape(when)}</span>')
+    tags_attr = f' data-tags="{html.escape("|".join(tags), quote=True)}"' if tags else ""
     parts = [
-        f'<article class="story" id="{html.escape(anchor)}">',
+        f'<article class="story" id="{html.escape(anchor)}"{tags_attr}>',
         f'<div class="story-meta">{"".join(meta_bits)}</div>' if meta_bits else "",
         f'<h3><span class="story-no num">{html.escape(item.number)}.</span>{html.escape(item.title)}</h3>',
     ]
@@ -1747,6 +1815,33 @@ def render_html(digest: Digest, lang: str | None = None, year: int | None = None
         full_title = f"{digest.title} · {digest.period}"
     front_left = render_themes(digest, lang)
     sidebar = render_sidebar(digest, lang)
+    issue_tags_list: list[str] = []
+    seen_tags: set[str] = set()
+    for it in digest.items:
+        for tg in _split_meta(it.meta)[2]:
+            if tg and tg not in seen_tags:
+                seen_tags.add(tg)
+                issue_tags_list.append(tg)
+    tag_chips = ""
+    if issue_tags_list:
+        chips = [
+            f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{html.escape(i18n.t(lang, "filter_all"))}</button>'
+        ] + [
+            f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">{html.escape(tg)}</button>'
+            for tg in issue_tags_list
+        ]
+        tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
+    filter_bar_html = (
+        f'<div class="filter-bar" id="digestFilterBar" role="search" aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}"'
+        f' data-total="{len(digest.items)}" data-tpl="{html.escape(i18n.t(lang, "filter_shown"), quote=True)}">'
+        '<div class="filter-row">'
+        f'<input type="search" id="digestFilterInput" class="filter-input" placeholder="{html.escape(i18n.t(lang, "filter_placeholder"), quote=True)}"'
+        f' aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}" autocomplete="off" spellcheck="false">'
+        f'<span id="digestFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
+        f'<button type="button" id="digestFilterClear" class="filter-clear" hidden>{html.escape(i18n.t(lang, "filter_clear"))}</button>'
+        f"</div>{tag_chips}</div>"
+        f'<p id="digestFilterEmpty" class="filter-empty" hidden>{html.escape(i18n.t(lang, "filter_empty"))}</p>'
+    )
 
     parts = [
         "<!DOCTYPE html>",
@@ -1757,6 +1852,7 @@ def render_html(digest: Digest, lang: str | None = None, year: int | None = None
         '<meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6">',
         '<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13191c">',
         f"<title>{html.escape(full_title)}</title>",
+        "<script>(function(){try{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>",
         "<style>",
         _load_css(),
         "</style>",
@@ -1792,6 +1888,7 @@ def render_html(digest: Digest, lang: str | None = None, year: int | None = None
         if front_left:
             parts.append(f'<div class="front-lead">{front_left}</div>')
         parts.append("</section>")
+    parts.append(filter_bar_html)
     parts.append('<main id="content">')
     for i, sec in enumerate(digest.sections, 1):
         sid = _section_id(sec.title)
@@ -1874,6 +1971,88 @@ def render_html(digest: Digest, lang: str | None = None, year: int | None = None
   const tog=()=>top.classList.toggle('show', scrollY>480);
   addEventListener('scroll',tog,{passive:true});tog();
   top.addEventListener('click',()=>scrollTo({top:0,behavior:'smooth'}));
+  const fbar=document.getElementById('digestFilterBar');
+  if(fbar){
+    const finp=document.getElementById('digestFilterInput');
+    const fclr=document.getElementById('digestFilterClear');
+    const fcnt=document.getElementById('digestFilterCount');
+    const femp=document.getElementById('digestFilterEmpty');
+    const ftbtns=[...fbar.querySelectorAll('.filter-tag')];
+    const stories=[...document.querySelectorAll('article.story')];
+    const secs=[...document.querySelectorAll('section.sec')];
+    const front=document.querySelector('section.front');
+    const sText=new Map(stories.map(el=>[el,(el.textContent||'').toLowerCase()]));
+    const sTags=new Map(stories.map(el=>[el,(el.dataset.tags||'').split('|').filter(Boolean)]));
+    const tpl=fbar.dataset.tpl||'{shown} / {total}';
+    let curTag='';
+    function syncTags(){
+      ftbtns.forEach(b=>b.setAttribute('aria-pressed',(b.dataset.tag||'')===curTag?'true':'false'));
+    }
+    function runFilter(){
+      const q=(finp.value||'').trim().toLowerCase();
+      const toks=q?q.split(/\\s+/):[];
+      const active=Boolean(toks.length||curTag);
+      let shown=0;
+      for(const st of stories){
+        const hay=sText.get(st)||'';
+        const tgs=sTags.get(st)||[];
+        const ok=(!curTag||tgs.includes(curTag))&&toks.every(k=>hay.includes(k));
+        st.hidden=!ok;
+        if(ok)shown++;
+      }
+      for(const sec of secs){
+        const has=[...sec.querySelectorAll('article.story')].some(s=>!s.hidden);
+        sec.hidden=active&&!has;
+        for(const sub of sec.querySelectorAll('h3.subhead')){
+          let sib=sub.nextElementSibling,subHas=false;
+          while(sib&&!sib.matches('h3.subhead')){
+            if(sib.matches('article.story')&&!sib.hidden){subHas=true;break;}
+            sib=sib.nextElementSibling;
+          }
+          sub.hidden=active&&!subHas;
+        }
+      }
+      if(front)front.hidden=active;
+      fclr.hidden=!active;
+      fcnt.hidden=!active;
+      if(active)fcnt.textContent=tpl.replace('{shown}',String(shown)).replace('{total}',String(stories.length));
+      if(femp)femp.hidden=!(active&&shown===0);
+    }
+    function resetFilter(){finp.value='';curTag='';syncTags();runFilter();}
+    finp.addEventListener('input',runFilter);
+    finp.addEventListener('keydown',e=>{if(e.key==='Escape')resetFilter();});
+    fclr.addEventListener('click',()=>{resetFilter();finp.focus();});
+    ftbtns.forEach(b=>b.addEventListener('click',()=>{
+      const tg=b.dataset.tag||'';
+      curTag=(tg&&curTag===tg)?'':tg;
+      syncTags();runFilter();
+    }));
+    document.addEventListener('click',e=>{
+      const badge=e.target.closest('.story-meta .badge[data-tag]');
+      if(badge){
+        const tg=badge.dataset.tag||'';
+        curTag=(curTag===tg)?'':tg;
+        syncTags();runFilter();
+        return;
+      }
+      const anc=e.target.closest('a[href^="#"]');
+      if(anc&&(finp.value||curTag)){
+        const tid=decodeURIComponent(anc.getAttribute('href').slice(1));
+        const tel=document.getElementById(tid);
+        if(tel&&tel.closest('[hidden]'))resetFilter();
+      }
+    });
+    addEventListener('keydown',e=>{
+      if(e.key==='/'&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){
+        e.preventDefault();finp.focus();
+      }
+    });
+  }
+  if(location.hash.length>1){
+    let id=location.hash.slice(1);try{id=decodeURIComponent(id);}catch(e){}
+    const el=document.getElementById(id);
+    if(el)requestAnimationFrame(()=>el.scrollIntoView());
+  }
 })();
 </script>"""
     )
@@ -1910,7 +2089,7 @@ def main(argv: list[str] | None = None) -> int:
             "  python3 render_html.py examples/sample-digest.zh-CN.md /tmp/sample.html --lang zh-CN\n"
             "  python3 render_html.py digest.md out.html --json      # one JSON object on stdout\n\n"
             "Markdown from either language parses (English or Chinese labels). Exit codes: "
-            "0 ok; 1 input not found; 2 bad --lang."
+            "0 ok; 1 input not found or malformed Markdown; 2 bad --lang."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1930,7 +2109,11 @@ def main(argv: list[str] | None = None) -> int:
     if not src.exists():
         print(f"input not found: {src}", file=sys.stderr)
         return 1
-    digest = render_file(src, dest, lang, year=ns.year)
+    try:
+        digest = render_file(src, dest, lang, year=ns.year)
+    except ValueError as e:
+        print(f"error: {src}: {e}", file=sys.stderr)
+        return 1
     if ns.json:
         import json
         print(json.dumps({"output": str(dest), "lang": lang, "title": digest.title, "items": len(digest.items),
