@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.4.0](https://github.com/eatingDream/ai-digest/compare/v0.3.0...v0.4.0) (2026-11-24)
+
+
+### Features
+
+* **publish:** generate static latest redirects for daily and weekly issues ([#16](https://github.com/eatingDream/ai-digest/issues/16)) ([baf6578](https://github.com/eatingDream/ai-digest/commit/baf6578880fd71db90f8192f2fe4e40d36b8e846))
+
+
+### Documentation
+
+* trim redundant README, sub-README, and contributor documentation ([#19](https://github.com/eatingDream/ai-digest/issues/19)) ([aa5326b](https://github.com/eatingDream/ai-digest/commit/aa5326b385c8290a1231df5cef3c57596af66825))
+
 ## [0.3.0](https://github.com/eatingDream/ai-digest/compare/v0.2.0...v0.3.0) (2026-11-24)
 
 
