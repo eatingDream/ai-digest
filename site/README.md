@@ -20,6 +20,7 @@ encrypted client-side (AES-256-GCM, key from PBKDF2-HMAC-SHA256, 600k iterations
 | `CLOUDFLARE_API_TOKEN` / `_FILE` | — | 部署用的最小权限 token（Pages · Edit） |
 | `DIGEST_LANG` | `LANG` | 站点输出语言 `en` / `zh-CN`（默认 `en`；命令行 `--lang` 优先） / Site UI language |
 | `DIGEST_LANG_ALT` | `LANG_ALT` | （可选）另一语言伴生站点入口，如 `zh-CN:/zh-CN/` 或 `https://zh.digest.example.com/<slug>/` / Optional companion site link |
+| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | （可选，默认 `0` 关闭）设为 `1`/`true`/`yes`/`on` 时额外在站点根路径生成 `/latest`、`/daily/latest`、`/weekly/latest` 静态 302 跳转（默认关闭以避免暴露不可猜测的 `SLUG`） / Opt-in root-level latest 302 redirects (off by default to keep `SLUG` private) |
 | `DIGEST_PRIVACY_PATTERNS_FILE` | — | 自定义发布前隐私扫描正则（默认 `site/privacy-patterns.txt`，已 gitignore） |
 
 密码、盐、token **都不在仓库里**，也不会写入 `CONFIG` 或站点目录，更不会被打印。
@@ -28,7 +29,8 @@ encrypted client-side (AES-256-GCM, key from PBKDF2-HMAC-SHA256, 600k iterations
 
 - 每个页面（每期 + 目录页）发布时用 AES-256-GCM 加密；密钥 = PBKDF2-HMAC-SHA256(密码, 共享随机盐, 600,000 次)。
 - 明文先 gzip 再加密（`"v":2,"z":"gzip"`），页面用 Web Crypto + `DecompressionStream` 解密。
-- 所有站内链接都不带扩展名；`_headers` 设置 `noindex`、`nosniff`、`no-referrer` 与缓存策略；`robots.txt` 为 `Disallow: /`。
+- 所有站内链接都不带扩展名；`_headers` 设置 `noindex`、`nosniff`、`no-referrer` 与缓存策略（`latest` 跳转路径为 `no-store`）；`robots.txt` 为 `Disallow: /`。
+- 每次构建会自动在 `_redirects` 生成纯静态 302 最新期入口：`/<slug>/daily/latest`、`/<slug>/weekly/latest` 与 `/<slug>/latest`（无 Worker/Functions）；仅在显式开启 `ROOT_LATEST=1`（或 `DIGEST_ROOT_LATEST=1`）时才额外生成根路径 `/daily/latest`、`/weekly/latest`、`/latest`。
 - 「记住此设备」默认勾选：派生密钥（不是密码）存 `localStorage`；不勾选则只存本标签页的 `sessionStorage`。「锁定」按钮清除两者。
 - 这是**公共静态主机上的客户端加密**：密文可被下载。强密码和高迭代次数让离线猜测变贵，但不能替代「路径不公开」。
   阅读需要 JavaScript；首次解锁约需一两秒（600k 次迭代）。
@@ -56,7 +58,7 @@ DIGEST_DEMO_PASSWORD='demo' python3 publish.py --demo --lang zh-CN --out dist/  
 
 用 `examples/` 下的合成示例（`sample-digest.<lang>.md`、`sample-weekly.<lang>.md`，`<lang>` 为 `en` 或 `zh-CN`）构建一个加密演示站点到 `dist/`：
 不需要 CONFIG / Cloudflare / 密码文件；密码仅来自环境变量 `DIGEST_DEMO_PASSWORD`（这是**公开的演示密码**）；
-盐每次随机；构建后会逐页解密比对明文；`dist/_redirects` 把根路径跳到目录页。入口为 `/<SITE_SLUG 或 demo>/`。
+盐每次随机；构建后会逐页解密比对明文；`dist/_redirects` 把根路径跳到目录页，并为每个演示语言前缀生成 `latest` 静态跳转。入口为 `/<SITE_SLUG 或 demo>/`。
 
 ## 轮换密码 / Rotate
 
@@ -71,7 +73,7 @@ DIGEST_DEMO_PASSWORD='demo' python3 publish.py --demo --lang zh-CN --out dist/  
 site/
   CONFIG(.example)         # PLATFORM, PROJECT, ACCOUNT_ID, ZONE_ID, DOMAIN, SLUG
   password_template.html   # 解锁页壳（无密钥）
-  public/                  # 部署目录（robots.txt, _headers, 404.html 不加密；<slug>/ 下是密文）
+  public/                  # 部署目录（robots.txt, _headers, _redirects, 404.html 不加密；<slug>/ 下是密文）
   plain/                   # 导航注入后的明文（gitignore，永不部署）
   sources/                 # 干净 HTML（无导航），用来重建相邻页
 ```
