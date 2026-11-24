@@ -1,6 +1,6 @@
 # AI Weekly · agent prompt template (runs Monday 01:30 local time and summarises the previous week)
 
-<!-- Platform-agnostic agent prompt: hand it to any agent runner that has shell, file read/write and read-only web/X search tools.
+<!-- Platform-agnostic agent prompt: hand it to any agent runner that has shell and file read/write tools (read-only X/web search tools are optional).
      Placeholders: <SITE_DOMAIN> = site domain, <SITE_SLUG> = site path slug. The time zone comes from the DIGEST_TZ environment
      variable (default UTC). "The reader" = the person or channel that receives the digest; how the runner delivers the final
      message is up to your deployment. Set DIGEST_LANG=en so fetch/ and publish.py produce English labels and pages. -->
@@ -11,7 +11,7 @@
 |---|---|
 | Run from | the repository root (all paths below are relative to it) |
 | Environment | `DIGEST_LANG=en`, `DIGEST_TZ=<IANA zone>`; to deploy: `site/CONFIG`, the password file and `CLOUDFLARE_API_TOKEN` |
-| Tools | shell, file read/write, read-only X search; web fetch is optional |
+| Tools | shell, file read/write; optional: read-only X search and web fetch |
 | Inputs | the week's `digest-D.md` files, `runs/*/filter-log*.md`, `python3 fetch/weekly_late.py` output, `filter-notes.md` |
 | Outputs | `weekly-L.md`, the published page `weekly/L`, ledger updates |
 | Done when | `python3 publish.py --issue weekly/L --md weekly-L.md` exits 0 and prints the issue URL |
@@ -44,9 +44,10 @@ The default window is last Monday–Sunday (`--day some-date` picks that day's w
 - The list is only a lead: compare it with the week's 7 dailies and the "seen, not pushed" part of `filter-log.md`, and add an item to the weekly (mark it `🆕`) only with new hindsight evidence (independent reproduction, official release, weights published, adoption by a top lab). For suspicious items in the folded tier use `rg -i -n keyword runs/<D>/fetch/triage-papers-rest.md` to look up that day's full paper titles.
 - The list header names "missing: <date>" days — only when a day has no fetch result (that day's daily did not run), run `python3 fetch/fetch.py --daily --day <that day> --reuse` once for it (this creates that day's `fetch/`) and re-run `weekly_late.py`; handle "⚠️ weekday batch … missing" in `report.md` as in the daily (`fetch/troubleshoot-arxiv.md`). Never run `fetch.py --weekly` for the whole week.
 
-## 2. X recall (read-only)
+## 2. X recall (optional — capability-gated, read-only)
 
-Per `fetch/x-recall.md`: run groups A, B, C once each with the whole-week window (UTC: the day before `M` at `T16:00:00Z` → `S` at `T16:00:00Z` for a UTC+8 reader; adjust to your DIGEST_TZ; page as needed), run all of group D (topic search), and use group E `search_news` to fill in industry and policy. X is only a lead; always trace it to a primary source. **Never** perform any write action (post, like, repost, follow, bookmark, DM).
+- **Capability gate**: if read-only X connector/search tools (`search_posts_all`, `get_users_posts`, `search_news`, `get_news`) are **not** available in your agent runner, **skip this section cleanly without failing**, note `X recall: skipped (no X search tool)` in `runs/S-weekly/filter-log.md`, and proceed with the week's 7 dailies + `weekly_late.py` (~153 open feeds).
+- **When X search tools ARE available**: per `fetch/x-recall.md`, run groups A, B, C once each with the whole-week window (UTC: the day before `M` at `T16:00:00Z` → `S` at `T16:00:00Z` for a UTC+8 reader; adjust to your DIGEST_TZ; page as needed), **skipping B2 and/or C1 if they still contain unreplaced `<account_1>` / `<zh_account_1>` placeholders**; run group D (topic search) and group E `search_news` (if available) to fill in industry and policy. X is only a lead; always trace it to a primary source. **Never** perform any write action (post, like, repost, follow, bookmark, DM).
 
 ## 3. Review and gap-filling
 

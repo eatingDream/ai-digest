@@ -16,8 +16,9 @@
 
 P = pushed (in this issue), S = seen-not-pushed. An empty id becomes a slug of the name; an existing entry with
 the same id or URL gets its status updated instead of a duplicate. The first write of a day backs the ledger up
-to logs/ledger-backup/ledger-<day>.json. Ledger path: $LEDGER_PATH, else <repo>/ledger.json.
-Exit codes: 0 ok; 2 ledger.json missing or unreadable (the message says where it looked).
+to logs/ledger-backup/ledger-<day>.json. Ledger path: $LEDGER_PATH, else $DIGEST_ROOT/ledger.json, else <repo>/ledger.json.
+When ledger.json does not exist yet, read commands (find / recent) return empty results (exit 0) and add creates it automatically.
+Exit codes: 0 ok; 2 ledger.json exists but is corrupt or unreadable.
 """
 import argparse
 import json
@@ -28,9 +29,9 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if CODE_ROOT not in sys.path:
+    sys.path.insert(0, CODE_ROOT)
 import i18n  # noqa: E402
 
 FL = i18n.resolve_lang()
@@ -41,15 +42,21 @@ def tr(key, **kw):
 
 
 TZ_LOCAL = ZoneInfo(os.environ.get("DIGEST_TZ") or "UTC")
-P = os.environ.get("LEDGER_PATH") or os.path.join(ROOT, "ledger.json")
+ROOT = os.environ.get("DIGEST_ROOT", "").strip() or CODE_ROOT
+P = os.environ.get("LEDGER_PATH", "").strip() or os.path.join(ROOT, "ledger.json")
 
 
 def load():
+    if not os.path.exists(P):
+        return {"items": []}
     try:
         with open(P, encoding="utf-8") as fh:
-            return json.load(fh)
+            d = json.load(fh)
+        if not isinstance(d, dict) or not isinstance(d.get("items"), list):
+            raise ValueError("expected JSON object with 'items' list")
+        return d
     except (OSError, ValueError) as e:
-        print(f"error: cannot read ledger {P}: {e} (set LEDGER_PATH or create it with: echo '{{\"items\": []}}' > ledger.json)", file=sys.stderr)
+        print(f"error: cannot read ledger {P}: {e}", file=sys.stderr)
         sys.exit(2)
 
 
@@ -111,12 +118,18 @@ def main():
             for it in rows:
                 print(line(it))
     else:
-        backup_root = os.path.dirname(os.path.abspath(P)) if os.environ.get("LEDGER_PATH") else ROOT
+        p_abs = os.path.abspath(P)
+        os.makedirs(os.path.dirname(p_abs), exist_ok=True)
+        backup_root = os.path.dirname(p_abs) if os.environ.get("LEDGER_PATH", "").strip() else ROOT
         bdir = os.path.join(backup_root, "logs", "ledger-backup")
         os.makedirs(bdir, exist_ok=True)
         bp = os.path.join(bdir, f"ledger-{a.day}.json")
         if not os.path.exists(bp):
-            shutil.copy(P, bp)
+            if os.path.exists(P):
+                shutil.copy(P, bp)
+            else:
+                with open(bp, "w", encoding="utf-8") as bfh:
+                    json.dump({"items": []}, bfh, ensure_ascii=False, indent=1)
         added = upd = 0
         logP, logS = [], []
         for ln in sys.stdin.read().splitlines():

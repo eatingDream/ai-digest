@@ -141,7 +141,7 @@ class Cand:
 class Ctx:
     wait_arxiv_minutes = 0   # cost-opt 2026-11-17: 默认不在 fetch 内等 arXiv（改由 routine 在写论文版面前补查一次）
 
-    def __init__(self, settings, start, end, state, use_state, catchup, gh_token):
+    def __init__(self, settings, start, end, state, use_state, catchup, gh_token=None):
         self.user_agent = settings.get("user_agent", "Mozilla/5.0")
         self._local = threading.local()
         self._sessions: list[requests.Session] = []
@@ -149,7 +149,9 @@ class Ctx:
         self.summary_chars = settings.get("summary_chars", 700)
         self.start, self.end = start, end
         self.state, self.use_state, self.catchup = state, use_state, catchup
-        self.gh_token = gh_token
+        raw_tok = gh_token if gh_token is not None else (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "")
+        self.gh_token = raw_tok.strip() or None
+        self._gh_rate_warned = False
         self.notes: list[str] = []
 
     @property
@@ -874,15 +876,52 @@ def fetch_github_releases(ctx: Ctx, src: dict) -> list[Cand]:
     return out
 
 
-def _gh_api(ctx, url, params=None):
-    h = {"Accept": "application/vnd.github+json"}
-    if ctx.gh_token:
-        h["Authorization"] = f"Bearer {ctx.gh_token}"
-    return ctx.get(url, params=params, headers=h, retries=1)
+def _gh_api(ctx: Ctx, url: str, params=None):
+    tok = (ctx.gh_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    h = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if tok:
+        h["Authorization"] = f"Bearer {tok}"
+    last = None
+    for i in range(2):
+        try:
+            r = ctx.s.get(url, headers=h, params=params, timeout=ctx.timeout)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last = type(e).__name__
+            time.sleep(2 + 3 * i)
+            continue
+        if r.status_code in (403, 429):
+            rem = r.headers.get("X-RateLimit-Remaining", "")
+            body_low = (r.text or "")[:300].lower()
+            is_rl = (
+                r.status_code == 429
+                or rem == "0"
+                or "rate limit" in body_low
+                or "secondary rate" in body_low
+            )
+            warn = tr("gh_rate_auth" if tok else "gh_rate_unauth", code=r.status_code)
+            with lock:
+                if not getattr(ctx, "_gh_rate_warned", False):
+                    ctx._gh_rate_warned = True
+                    ctx.notes.append(warn)
+            detail = "rate limit" if is_rl else "forbidden/rate limit"
+            hint = "check GITHUB_TOKEN/GH_TOKEN" if tok else "set GITHUB_TOKEN or GH_TOKEN"
+            raise RuntimeError(f"HTTP {r.status_code} ({detail}; {hint})")
+        if r.status_code >= 500:
+            last = f"HTTP {r.status_code}"
+            time.sleep(2 + 3 * i)
+            continue
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        return r
+    raise RuntimeError(last or "GitHub API request failed")
 
 
 def fetch_github_org_repos(ctx: Ctx, src: dict) -> list[Cand]:
     errs = []
+    orgs = list(dict.fromkeys(src["orgs"]))
     def one(org):
         try:
             r = _gh_api(ctx, f"https://api.github.com/orgs/{org}/repos", {"sort": "created", "direction": "desc", "per_page": 8})
@@ -892,7 +931,7 @@ def fetch_github_org_repos(ctx: Ctx, src: dict) -> list[Cand]:
             return org, []
     out = []
     with cf.ThreadPoolExecutor(6) as ex:
-        for org, items in ex.map(one, list(dict.fromkeys(src["orgs"]))):
+        for org, items in ex.map(one, orgs):
             for it in items if isinstance(items, list) else []:
                 dt = parse_dt(it.get("created_at"))
                 if not ctx.in_window(dt) or it.get("fork"):
@@ -900,16 +939,24 @@ def fetch_github_org_repos(ctx: Ctx, src: dict) -> list[Cand]:
                 out.append(Cand(it["full_name"], it["html_url"], src["id"], "repo", "repo", iso(dt), clean_text(it.get("description"), 400), extra={"org": org}))
     if errs:
         ctx.add_note(f"gh_org_repos errors ({len(errs)}): " + "; ".join(errs[:6]))
+        if not out and orgs and len(errs) == len(orgs):
+            raise RuntimeError(errs[0])
     return out
 
 
 def fetch_github_search(ctx: Ctx, src: dict) -> list[Cand]:
     since3 = (ctx.end - timedelta(days=3)).astimezone(UTC).strftime("%Y-%m-%d")
     out = []
+    errs = []
     seen_desc: set[str] = set()
-    for q in src["queries"]:
+    queries = src["queries"]
+    for idx, q in enumerate(queries):
         q = q.replace("{since3}", since3)
-        r = _gh_api(ctx, "https://api.github.com/search/repositories", {"q": q, "sort": "stars", "order": "desc", "per_page": 50})
+        try:
+            r = _gh_api(ctx, "https://api.github.com/search/repositories", {"q": q, "sort": "stars", "order": "desc", "per_page": 50})
+        except Exception as e:
+            errs.append(f"q{idx + 1}: {e}")
+            continue
         for it in r.json().get("items", []):
             owner = it["full_name"].split("/")[0]
             dnorm = norm_title(it.get("description") or "")[:40]
@@ -923,7 +970,12 @@ def fetch_github_search(ctx: Ctx, src: dict) -> list[Cand]:
             if not ai_ok(Cand(c.title + " " + " ".join(c.extra["topics"]), "", "", "", "", summary=c.summary)):
                 continue
             out.append(c)
-        time.sleep(1)
+        if idx + 1 < len(queries):
+            time.sleep(1)
+    if errs:
+        ctx.add_note(f"gh_search errors ({len(errs)}): " + "; ".join(errs[:4]))
+        if not out and queries and len(errs) == len(queries):
+            raise RuntimeError(errs[0])
     return out
 
 
@@ -987,10 +1039,25 @@ FETCHERS = {
 
 
 # ───────────────────────── 去重 / 账本 / 输出 ─────────────────────────
+def _work_root() -> Path:
+    env = os.environ.get("DIGEST_ROOT", "").strip()
+    return Path(env) if env else ROOT
+
+
+def _state_dir() -> Path:
+    env = os.environ.get("DIGEST_ROOT", "").strip()
+    return (Path(env) / "state") if env else (HERE / "state")
+
+
+def _ledger_path() -> Path:
+    env = os.environ.get("LEDGER_PATH", "").strip()
+    return Path(env) if env else (_work_root() / "ledger.json")
+
+
 def load_ledger_keys() -> dict[str, str]:
     """ledger.json → {key: 'pushed' | 'seen'}；category/status 含 seen 的是「看过未推」。"""
     keys: dict[str, str] = {}
-    p = Path(os.environ.get("LEDGER_PATH") or (ROOT / "ledger.json"))
+    p = _ledger_path()
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
         for it in d.get("items", []):
@@ -1049,10 +1116,16 @@ def ckey(c) -> str:
     return f"arxiv:{aid}" if aid else canon_url(c.url)
 
 
+def _triage_seen_path() -> Path:
+    if os.environ.get("DIGEST_ROOT", "").strip():
+        return _state_dir() / "triage-seen.json"
+    return SEEN_PATH
+
+
 def load_triage_seen() -> dict[str, str]:
     """discovery-only 条目（trending / GitHub 搜索）首次出现在哪天的 triage：同一条以后只折叠成标题。"""
     try:
-        return json.loads(SEEN_PATH.read_text(encoding="utf-8"))
+        return json.loads(_triage_seen_path().read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -1064,8 +1137,9 @@ def save_triage_seen(cands, label: str, seen: dict[str, str]):
             new.setdefault(ckey(c), label)
     cut = (datetime.strptime(label, "%Y-%m-%d") - timedelta(days=45)).strftime("%Y-%m-%d")
     new = {k: v for k, v in new.items() if v >= cut}
-    SEEN_PATH.parent.mkdir(exist_ok=True)
-    SEEN_PATH.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
+    sp = _triage_seen_path()
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    sp.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
 
 
 SEC_KEYS = ["lab", "model", "tooling", "repo", "research_blog", "newsletter", "podcast",
@@ -1421,7 +1495,7 @@ def main(argv=None):
         drop = set(a.skip.split(","))
         sources = [s for s in sources if s["id"] not in drop]
     start, end, label = compute_window(a)
-    state_path = HERE / "state" / "state.json"
+    state_path = _state_dir() / "state.json"
     state = {}
     if not a.no_state and state_path.exists():
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1437,7 +1511,7 @@ def main(argv=None):
     ctx.seen_prior = load_triage_seen() if ctx.triage_v2 else {}
     # --only 的补查输出写到单独目录，不覆盖整份 fetch/（2026-11-17 事故：--only arxiv 重跑把当天 candidates/triage 清空了）
     default_dir = "fetch" if not a.only else "fetch-extra"
-    root = Path(os.environ.get("DIGEST_ROOT") or ROOT)
+    root = _work_root()
     outdir = Path(a.out) if a.out else root / "runs" / label / default_dir
     # 同一天目录的完整抓取串行化（00:10 论文初筛与 00:30 日报若同时跑，后到的等前一个写完再判断能否复用；2026-11-18 review）
     _lockf = None
@@ -1529,7 +1603,7 @@ def main(argv=None):
         if ctx.triage_v2 and not a.no_state and not a.only:
             save_triage_seen(cands, label, ctx.seen_prior)
         if not a.no_state:
-            state_path.parent.mkdir(exist_ok=True)
+            state_path.parent.mkdir(parents=True, exist_ok=True)
             state_path.write_text(json.dumps(ctx.state, ensure_ascii=False, indent=0), encoding="utf-8")
         errs = [r for r in report if r["status"] != "ok"]
         print(f"done in {elapsed:.1f}s: raw={len(allc)} dedup={len(cands)} errors={len(errs)} → {outdir}/candidates.jsonl", file=sys.stderr)

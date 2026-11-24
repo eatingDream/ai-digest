@@ -1,6 +1,8 @@
 # AI digest site config. No secrets here (password/salt/token live outside the repo).
-# Copy to site/CONFIG, or set the env vars SITE_DOMAIN / SITE_SLUG / CF_ACCOUNT_ID / CF_ZONE_ID / CF_PAGES_PROJECT.
-# `python3 publish.py --init` creates site/CONFIG with a random SLUG. Do not change SLUG once published.
+# Recommended: `python3 publish.py --init` creates site/CONFIG with a random 22-char SLUG.
+# If copying this file (`cp site/CONFIG.example site/CONFIG`), replace every <...> placeholder
+# before running publish.py (leave ACCOUNT_ID empty when only running --prepare-only).
+# Do not change SLUG once published (must be >= 8 chars, [A-Za-z0-9._~-]).
 PLATFORM=pages
 PROJECT=ai-digest
 ACCOUNT_ID=<CF_ACCOUNT_ID>
@@ -9,3 +11,5 @@ DOMAIN=digest.example.com
 SLUG=<random-unguessable-slug>
 # Site language: en | zh-CN (env DIGEST_LANG or --lang overrides)
 LANG=en
+# Optional companion site in the other language (e.g. zh-CN:/zh-CN/ or https://zh.digest.example.com/<slug>/)
+LANG_ALT=

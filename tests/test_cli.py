@@ -64,9 +64,68 @@ def test_ledger_json_roundtrip(tmp_path):
     assert json.loads(r.stdout)["count"] == 2
 
 
-def test_ledger_missing_file_is_a_clean_error(tmp_path):
-    r = run("fetch/ledger.py", "recent", env={"LEDGER_PATH": str(tmp_path / "nope.json")})
+def test_ledger_missing_file_returns_empty_and_add_auto_initializes(tmp_path):
+    # Fresh clone: missing ledger.json returns empty results cleanly (exit 0) without creating a file on read
+    missing = tmp_path / "deep" / "nested" / "ledger.json"
+    env = {"LEDGER_PATH": str(missing), "DIGEST_LANG": "en"}
+    r_recent = run("fetch/ledger.py", "recent", env=env)
+    assert r_recent.returncode == 0 and "0 entries" in r_recent.stdout and not missing.exists()
+    r_recent_json = run("fetch/ledger.py", "recent", "--json", env=env)
+    assert r_recent_json.returncode == 0 and json.loads(r_recent_json.stdout)["count"] == 0
+    r_find = run("fetch/ledger.py", "find", "orion", "--json", env=env)
+    assert r_find.returncode == 0 and json.loads(r_find.stdout) == {"query": {"orion": []}}
+
+    # First `add` auto-creates parent dirs, ledger.json, and logs/ledger-backup/
+    r_add = run(
+        "fetch/ledger.py", "add", "--day", "2026-01-15", "--json", env=env,
+        stdin="P|Orion-3 Mini|orion-3|model|https://example.com/orion|Initial push\n",
+    )
+    assert r_add.returncode == 0, r_add.stderr
+    assert json.loads(r_add.stdout) == {"added": 1, "updated": 0, "total": 1}
+    assert missing.is_file()
+    assert (missing.parent / "logs" / "ledger-backup" / "ledger-2026-01-15.json").is_file()
+
+    # DIGEST_ROOT without LEDGER_PATH isolates ledger.json and logs/ledger-backup/ inside DIGEST_ROOT
+    work_root = tmp_path / "isolated_root"
+    env_root = {"DIGEST_ROOT": str(work_root), "LEDGER_PATH": "", "DIGEST_LANG": "en"}
+    assert run("fetch/ledger.py", "recent", env=env_root).returncode == 0
+    r_iso = run(
+        "fetch/ledger.py", "add", "--day", "2026-01-16", "--json", env=env_root,
+        stdin="S|Nova-2|nova-2|paper|https://arxiv.org/abs/2601.00042|Seen only\n",
+    )
+    assert r_iso.returncode == 0, r_iso.stderr
+    assert (work_root / "ledger.json").is_file()
+    assert (work_root / "logs" / "ledger-backup" / "ledger-2026-01-16.json").is_file()
+    assert not (ROOT / "ledger.json").exists()
+
+
+def test_ledger_corrupt_file_is_a_clean_error(tmp_path):
+    bad = tmp_path / "corrupt.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    r = run("fetch/ledger.py", "recent", env={"LEDGER_PATH": str(bad)})
     assert r.returncode == 2 and "cannot read ledger" in r.stderr and "Traceback" not in r.stderr
+
+
+def test_bilingual_docs_and_capability_gated_x_recall_contracts():
+    # fetch/README.md must be bilingual (both English and Simplified Chinese)
+    fetch_readme = (ROOT / "fetch" / "README.md").read_text(encoding="utf-8")
+    assert "# AI Digest Recall Layer" in fetch_readme and "# AI精选 召回层" in fetch_readme
+
+    # README.md & README.zh-CN.md document optional X watch-account customization + LANG_ALT + DIGEST_ROOT
+    en_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    zh_readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+    assert "<account_1>" in en_readme and "LANG_ALT" in en_readme
+    assert "<account_1>" in zh_readme and "LANG_ALT" in zh_readme
+
+    # All daily/weekly prompts + x-recall files gate X recall by tool availability and placeholder check
+    for rel in (
+        "prompts/en/daily.md", "prompts/en/weekly.md",
+        "prompts/zh-CN/daily.md", "prompts/zh-CN/weekly.md",
+        "fetch/x-recall.md", "fetch/x-recall.zh-CN.md",
+    ):
+        txt = (ROOT / rel).read_text(encoding="utf-8")
+        assert "<account_1>" in txt and "<zh_account_1>" in txt, rel
+        assert ("skip" in txt.lower()) or ("跳过" in txt), rel
 
 
 def test_check_cands_json_and_exit_code(tmp_path):

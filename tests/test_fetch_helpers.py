@@ -269,3 +269,95 @@ def test_page_ssrf_blocks_private_targets_and_redirects(monkeypatch):
         raise AssertionError("should have blocked redirect to metadata IP")
     except ValueError as e:
         assert "disallowed" in str(e)
+
+
+def test_digest_root_isolates_ledger_and_state_files(tmp_path, monkeypatch):
+    import json
+
+    work = tmp_path / "isolated"
+    monkeypatch.setenv("DIGEST_ROOT", str(work))
+    monkeypatch.delenv("LEDGER_PATH", raising=False)
+
+    # State & ledger paths point inside DIGEST_ROOT, never repo root
+    assert fx._ledger_path() == work / "ledger.json"
+    assert fx._state_dir() == work / "state"
+    assert fx._triage_seen_path() == work / "state" / "triage-seen.json"
+
+    # Triage-seen round-trip writes inside DIGEST_ROOT/state/triage-seen.json
+    cand = fx.Cand(
+        title="Orion Repo", url="https://github.com/example/orion",
+        source="gh_trending", channel="repo", kind="repo",
+        extra={"discovery_only": True},
+    )
+    fx.save_triage_seen([cand], "2026-01-15", {})
+    assert (work / "state" / "triage-seen.json").is_file()
+    assert fx.load_triage_seen() == {"https://github.com/example/orion": "2026-01-15"}
+
+    # Ledger keys read from DIGEST_ROOT/ledger.json
+    (work / "ledger.json").write_text(
+        json.dumps({"items": [{"id": "2601.00077", "name": "Orion Paper", "status": "pushed", "urls": ["https://arxiv.org/abs/2601.00077"]}]}),
+        encoding="utf-8",
+    )
+    keys = fx.load_ledger_keys()
+    assert keys.get("arxiv:2601.00077") == "pushed"
+
+
+def test_github_api_bearer_token_and_rate_limit_warning(monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    seen_headers = []
+
+    class FakeResp:
+        def __init__(self, status_code, payload=None, headers=None, text=""):
+            self.status_code = status_code
+            self._payload = payload if payload is not None else []
+            self.headers = headers or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+    class FakeSession:
+        def __init__(self, resp):
+            self.resp = resp
+
+        def get(self, url, headers=None, params=None, timeout=None):
+            seen_headers.append(dict(headers or {}))
+            return self.resp
+
+        def close(self):
+            pass
+
+    start = datetime(2026, 1, 15, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 16, tzinfo=timezone.utc)
+
+    # 1. GITHUB_TOKEN / GH_TOKEN in env automatically sets Authorization: Bearer <token>
+    monkeypatch.setenv("GITHUB_TOKEN", "tok-fixture-1")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    ctx_auth = fx.Ctx({}, start, end, {}, False, False)
+    ctx_auth._local.session = FakeSession(FakeResp(200, payload=[]))
+    fx._gh_api(ctx_auth, "https://api.github.com/orgs/example/repos")
+    assert seen_headers[-1].get("Authorization") == "Bearer tok-fixture-1"
+
+    # 2. GH_TOKEN fallback works when GITHUB_TOKEN is unset
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "tok-fixture-2")
+    ctx_gh = fx.Ctx({}, start, end, {}, False, False)
+    ctx_gh._local.session = FakeSession(FakeResp(200, payload=[]))
+    fx._gh_api(ctx_gh, "https://api.github.com/orgs/example/repos")
+    assert seen_headers[-1].get("Authorization") == "Bearer tok-fixture-2"
+
+    # 3. Unauthenticated HTTP 403 rate-limit records clear localized warning + raises actionable error
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(fx, "FL", "en")
+    ctx_rl = fx.Ctx({}, start, end, {}, False, False)
+    ctx_rl._local.session = FakeSession(
+        FakeResp(403, headers={"X-RateLimit-Remaining": "0"}, text="API rate limit exceeded")
+    )
+    try:
+        fx._gh_api(ctx_rl, "https://api.github.com/orgs/example/repos")
+        raise AssertionError("expected RuntimeError on HTTP 403 rate limit")
+    except RuntimeError as e:
+        assert "403" in str(e) and "GITHUB_TOKEN" in str(e)
+    assert any("GITHUB_TOKEN" in n and "5,000" in n for n in ctx_rl.notes)

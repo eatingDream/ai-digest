@@ -35,11 +35,17 @@ const PUBLIC_ROOT = join(ROOT, "site/public");
 const CONFIG = join(ROOT, "site/CONFIG");
 
 function loadSlug() {
-  if (process.env.SITE_SLUG) return process.env.SITE_SLUG.trim();
-  const text = readFileSync(CONFIG, "utf8");
-  const m = text.match(/^SLUG=(.+)$/m);
-  if (!m) throw new Error("SLUG missing from CONFIG");
-  return m[1].trim();
+  let slug = process.env.SITE_SLUG ? process.env.SITE_SLUG.trim() : "";
+  if (!slug) {
+    const text = readFileSync(CONFIG, "utf8");
+    const m = text.match(/^SLUG=(.+)$/m);
+    if (!m) throw new Error("SLUG missing from CONFIG");
+    slug = m[1].trim();
+  }
+  if (!slug || /<[^>]*>|\{\{.*?\}\}|[<>]/.test(slug) || !/^[A-Za-z0-9._~-]+$/.test(slug)) {
+    throw new Error(`invalid or unreplaced SLUG (${slug}); run python3 publish.py --init or edit site/CONFIG`);
+  }
+  return slug;
 }
 
 function readPassword() {

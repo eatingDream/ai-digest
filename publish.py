@@ -135,8 +135,8 @@ SALT_LEN = 16
 NONCE_LEN = 12
 KEY_LEN = 32
 
-# Placeholders only; real values come from site/CONFIG or env (see load_config).
-ACCOUNT_ID_DEFAULT = "<CF_ACCOUNT_ID>"
+# Defaults when optional keys are unset in site/CONFIG or env (see load_config).
+ACCOUNT_ID_DEFAULT = ""
 ZONE_ID_DEFAULT = ""
 PROJECT_DEFAULT = "ai-digest"
 DOMAIN_DEFAULT = "digest.example.com"
@@ -151,15 +151,16 @@ SECURITY_HEADERS = (
     "  X-Frame-Options: DENY\n"
     "  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; "
     "style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
-    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+    "connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
     "form-action 'none'; object-src 'none'\n"
 )
 
 # Output language of the site (en | zh-CN); resolved by load_config() / --lang, see i18n.py.
 LANG = i18n.DEFAULT_LANG
 CLI_LANG: str | None = None
-# Bilingual demo only: the other language's entry, e.g. {"code": "zh-CN", "base": "/zh-CN/"}.
-# When set, the password page, index and issue pages get a language-switch link.
+_DEMO_MODE: bool = False
+# Companion site in the other language, e.g. {"code": "zh-CN", "base": "/zh-CN/"}.
+# Set via LANG_ALT in site/CONFIG (or DIGEST_LANG_ALT env), or automatically in --demo.
 LANG_ALT: dict[str, str] | None = None
 
 # Markers used so republishing can replace nav without touching renderer output.
@@ -365,9 +366,39 @@ _ENV_KEYS = {
     "SITE_SLUG": "SLUG",
     "CF_ACCOUNT_ID": "ACCOUNT_ID",
     "CF_ZONE_ID": "ZONE_ID",
+    "CF_PROJECT": "PROJECT",
     "CF_PAGES_PROJECT": "PROJECT",
     "DIGEST_LANG": "LANG",
+    "DIGEST_LANG_ALT": "LANG_ALT",
 }
+
+_PLACEHOLDER_RE = re.compile(r"<[^<>]*>|\{\{[^{}]*\}\}|[<>]")
+_SLUG_SAFE_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def _parse_lang_alt(raw: str | None, current_lang: str) -> dict[str, str] | None:
+    """Parse LANG_ALT (e.g. 'zh-CN:/zh-CN/', '/zh-slug/', 'https://zh.example.com/s/') -> {code, base}."""
+    val = (raw or "").strip()
+    if not val:
+        return None
+    m = re.match(r"^([A-Za-z][A-Za-z_-]{1,9}):(?!//)(.+)$", val)
+    if m:
+        code = i18n.normalize_lang(m.group(1))
+        base = m.group(2).strip()
+    else:
+        code = "zh-CN" if i18n.normalize_lang(current_lang) == "en" else "en"
+        base = val
+    if not base:
+        raise ValueError("empty LANG_ALT target base URL/path")
+    low = base.lower()
+    if low.startswith(("http://", "https://")):
+        base = base.rstrip("/") + "/"
+    else:
+        if ":" in base.split("/", 1)[0]:
+            raise ValueError(f"unsupported URL scheme in LANG_ALT {val!r}")
+        clean = base.strip("/")
+        base = f"/{clean}/" if clean else "/"
+    return {"code": code, "base": base}
 
 
 def set_lang(cli: str | None = None, config: str | None = None) -> str:
@@ -382,7 +413,8 @@ def set_lang(cli: str | None = None, config: str | None = None) -> str:
 
 def load_config() -> dict[str, str]:
     """site/CONFIG (KEY=VALUE lines), overridden by env vars (SITE_DOMAIN,
-    SITE_SLUG, CF_ACCOUNT_ID, CF_ZONE_ID, CF_PAGES_PROJECT, DIGEST_LANG)."""
+    SITE_SLUG, CF_ACCOUNT_ID, CF_ZONE_ID, CF_PAGES_PROJECT, DIGEST_LANG, DIGEST_LANG_ALT)."""
+    global LANG_ALT
     data: dict[str, str] = {"PLATFORM": PLATFORM}
     if CONFIG_PATH.exists():
         for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
@@ -391,6 +423,13 @@ def load_config() -> dict[str, str]:
                 continue
             k, v = line.split("=", 1)
             data[k.strip()] = v.strip()
+    for alias, canonical in (
+        ("CF_ACCOUNT_ID", "ACCOUNT_ID"),
+        ("CF_PROJECT", "PROJECT"),
+        ("CF_PAGES_PROJECT", "PROJECT"),
+    ):
+        if alias in data and canonical not in data:
+            data[canonical] = data[alias]
     for env_k, key in _ENV_KEYS.items():
         v = os.environ.get(env_k, "").strip()
         if v:
@@ -398,10 +437,33 @@ def load_config() -> dict[str, str]:
     data.setdefault("PROJECT", PROJECT_DEFAULT)
     data.setdefault("DOMAIN", DOMAIN_DEFAULT)
     data.setdefault("ACCOUNT_ID", ACCOUNT_ID_DEFAULT)
+    for chk_key in ("SLUG", "ACCOUNT_ID", "CF_ACCOUNT_ID", "PROJECT", "CF_PROJECT", "DOMAIN", "ZONE_ID", "LANG_ALT"):
+        val = data.get(chk_key, "")
+        if val and _PLACEHOLDER_RE.search(val):
+            die(
+                f"{chk_key} contains an unreplaced placeholder ({val!r}); "
+                f"run python3 publish.py --init or edit {CONFIG_PATH}"
+            )
     set_lang(CLI_LANG, data.get("LANG"))
     data["LANG"] = LANG
-    if "SLUG" not in data:
-        die(f"SLUG not set: create {CONFIG_PATH} (cp site/CONFIG.example), set env SITE_SLUG, or run --init")
+    slug = data.get("SLUG", "").strip()
+    if not slug:
+        die(f"SLUG not set: run python3 publish.py --init or edit {CONFIG_PATH} (or set env SITE_SLUG)")
+    if slug in {".", ".."} or not _SLUG_SAFE_RE.fullmatch(slug):
+        die(
+            f"invalid SLUG {slug!r}: must contain only URL-safe characters [A-Za-z0-9._~-]; "
+            f"run python3 publish.py --init or edit {CONFIG_PATH}"
+        )
+    if not _DEMO_MODE and len(slug) < 8:
+        die(
+            f"SLUG {slug!r} is too short ({len(slug)} chars; must be >= 8 unless --demo); "
+            f"run python3 publish.py --init or edit {CONFIG_PATH}"
+        )
+    data["SLUG"] = slug
+    try:
+        LANG_ALT = _parse_lang_alt(data.get("LANG_ALT"), LANG)
+    except ValueError as e:
+        die(f"{e}; run python3 publish.py --init or edit {CONFIG_PATH}")
     return data
 
 
@@ -415,6 +477,7 @@ def write_config(data: dict[str, str]) -> None:
         "DOMAIN",
         "SLUG",
         "LANG",
+        "LANG_ALT",
     ]
     lines = [
         "# AI digest public site. No secrets. Do not change SLUG once published.",
@@ -736,6 +799,24 @@ def issue_headlines(issue: Issue) -> list[str]:
     return out
 
 
+def issue_tags(issue: Issue) -> list[str]:
+    """Distinct topic tags of an issue, extracted from its rendered story badges."""
+    try:
+        html = issue.source.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for cls, raw in re.findall(r'<span class="(badge[^"]*)"[^>]*>(.*?)</span>', html, flags=re.S):
+        if "badge-hot" in cls:
+            continue
+        t = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def _md(d: date) -> str:
     return f"{d.month:02d}/{d.day:02d}"
 
@@ -751,9 +832,20 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         key=lambda i: (i.end, i.start, i.label),
         reverse=True,
     )
+    heads_by_key: dict[tuple[str, str], list[str]] = {}
+    tags_by_key: dict[tuple[str, str], list[str]] = {}
+    tag_counts: dict[str, int] = {}
+    for i in dailies + weeklies:
+        k = (i.kind, i.label)
+        heads_by_key[k] = issue_headlines(i)
+        ts = issue_tags(i)
+        tags_by_key[k] = ts
+        for tg in ts:
+            tag_counts[tg] = tag_counts.get(tg, 0) + 1
+    top_tags = [t for t, _n in sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:12]]
 
     def lead_spans(i: Issue) -> str:
-        heads = issue_headlines(i)
+        heads = heads_by_key.get((i.kind, i.label), [])
         if not heads:
             return f'<span class="lab">{_esc(i.title)}</span>'
         lead = f'<span class="lab">{_esc(heads[0])}</span>'
@@ -761,9 +853,16 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
             lead += f'<span class="sub">{_esc(" / ".join(heads[1:3]))}</span>'
         return f'<span class="body">{lead}</span><span class="cnt num">{_esc(i18n.count_items(LANG, len(heads)))}</span>'
 
+    def _item_attrs(i: Issue) -> str:
+        k = (i.kind, i.label)
+        ts = tags_by_key.get(k, [])
+        heads = heads_by_key.get(k, [])
+        blob = " ".join([i.label, i.title, *heads, *ts]).lower()
+        return f' class="archive-item" data-tags="{_esc("|".join(ts))}" data-search="{_esc(blob)}"'
+
     def daily_item(i: Issue) -> str:
         return (
-            f'<li><a href="{i.rel_url}">'
+            f'<li{_item_attrs(i)}><a href="{i.rel_url}">'
             f'<span class="when num">{_md(i.start)}</span>'
             f'<span class="dow">{_esc(i18n.weekday_short(LANG, i.start))}</span>'
             f"{lead_spans(i)}"
@@ -772,7 +871,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
 
     def weekly_item(i: Issue) -> str:
         return (
-            f'<li><a href="{i.rel_url}">'
+            f'<li{_item_attrs(i)}><a href="{i.rel_url}">'
             f'<span class="when num">{_md(i.start)}–{_md(i.end)}</span>'
             f"{lead_spans(i)}"
             f"</a></li>"
@@ -831,6 +930,27 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         if LANG == "zh-CN"
         else f"{i18n.weekday(LANG, today)}, {i18n.date_long(LANG, today)}"
     )
+    tag_chips = ""
+    if top_tags:
+        chips = [
+            f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{_esc(_t("filter_all"))}</button>'
+        ] + [
+            f'<button type="button" class="filter-tag" data-tag="{_esc(tg)}" aria-pressed="false">{_esc(tg)}</button>'
+            for tg in top_tags
+        ]
+        tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
+    filter_bar = (
+        f'<div class="filter-bar" id="archiveFilterBar" role="search" aria-label="{_esc(_t("archive_filter_label"))}"'
+        f' data-total="{len(issues)}" data-tpl="{_esc(_t("filter_shown"))}">'
+        '<div class="filter-row">'
+        f'<input type="search" id="archiveFilterInput" class="filter-input" placeholder="{_esc(_t("archive_filter_placeholder"))}"'
+        f' aria-label="{_esc(_t("archive_filter_label"))}" autocomplete="off" spellcheck="false">'
+        f'<span id="archiveFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
+        f'<button type="button" id="archiveFilterClear" class="filter-clear" hidden>{_esc(_t("filter_clear"))}</button>'
+        f"</div>{tag_chips}</div>"
+        f'<p id="archiveFilterEmpty" class="filter-empty" hidden>{_esc(_t("archive_filter_empty"))}</p>'
+        if issues else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="{_t("html_lang")}">
 <head>
@@ -842,6 +962,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13191c">
 <title>{_esc(_t("index_title"))}</title>
+<script>(function(){{try{{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}}})();</script>
 {perf_head}<style>
 :root {{
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -1123,6 +1244,63 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   .mast-bar .edition {{ display: none; }}
   .mast-bar .theme-switch button {{ height: 24px; padding: 0 6px; font-size: 11.5px; }}
 }}
+.filter-bar {{
+  margin: 18px 0 8px;
+  padding: 10px 12px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}}
+.filter-row {{ display: flex; align-items: center; gap: 8px; }}
+.filter-input {{
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13.5px;
+  outline: none;
+}}
+.filter-input::placeholder {{ color: var(--ink-4); }}
+.filter-input:focus {{ border-color: var(--accent); }}
+.filter-count {{ flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 4px; }}
+.filter-clear {{
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 12px;
+}}
+.filter-clear:hover {{ color: var(--ink); border-color: var(--accent); }}
+.filter-tags {{ display: flex; flex-wrap: wrap; gap: 5px; }}
+.filter-tag {{
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 11.5px;
+}}
+.filter-tag:hover {{ color: var(--accent-ink); border-color: var(--accent); }}
+.filter-tag[aria-pressed="true"] {{
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}}
+.filter-empty {{ margin: 20px 0 0; color: var(--ink-4); font-size: 13.5px; text-align: center; }}
+@media print {{ .filter-bar, .filter-empty {{ display: none !important; }} }}
 </style>
 </head>
 <body>
@@ -1144,11 +1322,12 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 </div>
 <hr class="mast-rule">
 </header>
-<section>
+{filter_bar}
+<section class="archive-sec">
 <div class="kicker"><span class="bar"></span>{_esc(_t("index_daily"))}<span class="cnt num">{_esc(i18n.count_issues(LANG, len(dailies)))}</span></div>
 {daily_ol}
 </section>
-<section>
+<section class="archive-sec">
 <div class="kicker"><span class="bar"></span>{_esc(_t("index_weekly"))}<span class="cnt num">{_esc(i18n.count_issues(LANG, len(weeklies)))}</span></div>
 {weekly_ol}
 </section>
@@ -1165,13 +1344,77 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
     else root.removeAttribute('data-theme');
     btns.forEach(b=>b.setAttribute('aria-pressed', String(b.getAttribute('data-theme')===v)));
   }}
-  const saved=localStorage.getItem(KEY)||'system';
+  let saved='system';try{{saved=localStorage.getItem(KEY)||'system';}}catch(e){{}}
   apply(saved);
   btns.forEach(b=>b.addEventListener('click',()=>{{
     const v=b.getAttribute('data-theme');
-    localStorage.setItem(KEY,v);
+    try{{localStorage.setItem(KEY,v);}}catch(e){{}}
     apply(v);
   }}));
+  const bar=document.getElementById('archiveFilterBar');
+  if(bar){{
+    const inp=document.getElementById('archiveFilterInput');
+    const clr=document.getElementById('archiveFilterClear');
+    const cnt=document.getElementById('archiveFilterCount');
+    const emp=document.getElementById('archiveFilterEmpty');
+    const tbtns=[...bar.querySelectorAll('.filter-tag')];
+    const items=[...document.querySelectorAll('li.archive-item')];
+    const grps=[...document.querySelectorAll('details.grp')];
+    const secs=[...document.querySelectorAll('section.archive-sec')];
+    const initOpen=new Map(grps.map(g=>[g,g.open]));
+    const tpl=bar.dataset.tpl||'{{shown}} / {{total}}';
+    let curTag='';
+    function runFilter(){{
+      const q=(inp.value||'').trim().toLowerCase();
+      const toks=q?q.split(/\\s+/):[];
+      const active=Boolean(toks.length||curTag);
+      let shown=0;
+      for(const li of items){{
+        const hay=li.dataset.search||'';
+        const tags=(li.dataset.tags||'').split('|').filter(Boolean);
+        const ok=(!curTag||tags.includes(curTag))&&toks.every(k=>hay.includes(k));
+        li.hidden=!ok;
+        if(ok)shown++;
+      }}
+      for(const g of grps){{
+        const has=[...g.querySelectorAll('li.archive-item')].some(li=>!li.hidden);
+        if(active){{
+          g.hidden=!has;
+          if(has)g.open=true;
+        }}else{{
+          g.hidden=false;
+          g.open=Boolean(initOpen.get(g));
+        }}
+      }}
+      for(const s of secs){{
+        const gs=[...s.querySelectorAll('details.grp')];
+        if(gs.length) s.hidden=active&&gs.every(g=>g.hidden);
+      }}
+      clr.hidden=!active;
+      cnt.hidden=!active;
+      if(active)cnt.textContent=tpl.replace('{{shown}}',String(shown)).replace('{{total}}',String(items.length));
+      if(emp)emp.hidden=!(active&&shown===0);
+    }}
+    inp.addEventListener('input',runFilter);
+    inp.addEventListener('keydown',e=>{{if(e.key==='Escape'){{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();}}}});
+    clr.addEventListener('click',()=>{{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();inp.focus();}});
+    tbtns.forEach(b=>b.addEventListener('click',()=>{{
+      const tg=b.dataset.tag||'';
+      curTag=(tg&&curTag===tg)?'':tg;
+      tbtns.forEach(x=>x.setAttribute('aria-pressed',(x.dataset.tag||'')===curTag?'true':'false'));
+      runFilter();
+    }}));
+    addEventListener('keydown',e=>{{
+      if(e.key==='/'&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){{
+        e.preventDefault();inp.focus();
+      }}
+    }});
+  }}
+  if(location.hash.length>1){{
+    let id=location.hash.slice(1);try{{id=decodeURIComponent(id);}}catch(e){{}}
+    const el=document.getElementById(id);
+    if(el)requestAnimationFrame(()=>el.scrollIntoView());
+  }}
 }})();
 </script>
 </body>
@@ -1437,8 +1680,12 @@ def deploy_with_token(cfg: dict[str, str], token: str, commit_message: str) -> d
 
     Falls back to the raw Pages asset API only if Wrangler cannot run.
     """
-    account = cfg["ACCOUNT_ID"]
-    project = cfg["PROJECT"]
+    account = cfg.get("ACCOUNT_ID", "").strip()
+    project = cfg.get("PROJECT", "").strip()
+    if not account:
+        die(f"ACCOUNT_ID not set: set env CF_ACCOUNT_ID or edit {CONFIG_PATH}")
+    if not project:
+        die(f"PROJECT not set: set env CF_PAGES_PROJECT or edit {CONFIG_PATH}")
     try:
         cf_request(token, "GET", f"/accounts/{account}/pages/projects/{project}")
     except RuntimeError as e:
@@ -1960,6 +2207,8 @@ def rerender_all_sources() -> None:
     Skips (loudly) any issue whose markdown is missing; its old source stays.
     Normal runs never call this.
     """
+    if CONFIG_PATH.exists() or os.environ.get("SITE_SLUG", "").strip():
+        load_config()
     if str(CODE_ROOT) not in sys.path:
         sys.path.insert(0, str(CODE_ROOT))
     import render_html
@@ -2019,7 +2268,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
     on every page and `/` redirecting to /en/.
     """
     global SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH
-    global _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG
+    global _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE
     import shutil
     import tempfile
 
@@ -2035,12 +2284,15 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             die(f"missing {examples / f'sample-digest.{lg}.md'}")
 
     saved_paths = (SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH)
-    saved_overrides = (_PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG)
+    saved_overrides = (_PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE)
     saved_slug = os.environ.get("SITE_SLUG")
+    saved_lang_alt = os.environ.get("DIGEST_LANG_ALT")
+    os.environ.pop("DIGEST_LANG_ALT", None)
     if multi:  # the language prefixes are the slugs; an env slug would override them in load_config()
         os.environ.pop("SITE_SLUG", None)
     work = Path(tempfile.mkdtemp(prefix="ai-digest-demo-"))
     try:
+        _DEMO_MODE = True
         SITE = work / "site"
         PUBLIC, PLAIN = SITE / "public", SITE / "plain"
         CONFIG_PATH = SITE / "CONFIG"
@@ -2060,14 +2312,17 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             LANG_ALT = {"code": other, "base": f"/{slugs[other]}/"} if multi and other else None
             SOURCES = SITE / f"sources-{lg}"
             ENC_CACHE_PATH = SITE / f"enc-cache-{lg}.json"
-            write_config({
+            cfg_data = {
                 "PLATFORM": PLATFORM,
                 "PROJECT": os.environ.get("CF_PAGES_PROJECT") or PROJECT_DEFAULT,
                 "ACCOUNT_ID": ACCOUNT_ID_DEFAULT,
                 "DOMAIN": os.environ.get("SITE_DOMAIN") or DOMAIN_DEFAULT,
                 "SLUG": slugs[lg],
                 "LANG": lg,
-            })
+            }
+            if multi and other:
+                cfg_data["LANG_ALT"] = f"{other}:/{slugs[other]}/"
+            write_config(cfg_data)
             html_dir = work / f"html-{lg}"
             sample_daily = examples / f"sample-digest.{lg}.md"
             sample_weekly = examples / f"sample-weekly.{lg}.md"
@@ -2104,9 +2359,11 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         return 0
     finally:
         SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH = saved_paths
-        _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG = saved_overrides
+        _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE = saved_overrides
         if saved_slug is not None:
             os.environ["SITE_SLUG"] = saved_slug
+        if saved_lang_alt is not None:
+            os.environ["DIGEST_LANG_ALT"] = saved_lang_alt
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -2193,6 +2450,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_incremental(args)
 
     if args.rerender_all:
+        init_config_if_needed()
         rerender_all_sources()
         args.rebuild = True
 

@@ -18,7 +18,8 @@ encrypted client-side (AES-256-GCM, key from PBKDF2-HMAC-SHA256, 600k iterations
 | `DIGEST_SITE_PASSWORD_FILE` | — | 站点密码文件（默认 `~/.config/ai-digest/site-password`，权限 600） |
 | `DIGEST_SITE_SALT_FILE` | — | PBKDF2 盐文件（默认 `~/.config/ai-digest/site-salt`，自动生成） |
 | `CLOUDFLARE_API_TOKEN` / `_FILE` | — | 部署用的最小权限 token（Pages · Edit） |
-| `DIGEST_LANG` | `LANG` | 站点输出语言 `en` / `zh-CN`（默认 `en`；命令行 `--lang` 优先） |
+| `DIGEST_LANG` | `LANG` | 站点输出语言 `en` / `zh-CN`（默认 `en`；命令行 `--lang` 优先） / Site UI language |
+| `DIGEST_LANG_ALT` | `LANG_ALT` | （可选）另一语言伴生站点入口，如 `zh-CN:/zh-CN/` 或 `https://zh.digest.example.com/<slug>/` / Optional companion site link |
 | `DIGEST_PRIVACY_PATTERNS_FILE` | — | 自定义发布前隐私扫描正则（默认 `site/privacy-patterns.txt`，已 gitignore） |
 
 密码、盐、token **都不在仓库里**，也不会写入 `CONFIG` 或站点目录，更不会被打印。

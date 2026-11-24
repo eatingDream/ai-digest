@@ -59,8 +59,8 @@ Markdown contract (what `render_html.py` parses; either language's labels work):
 
 ## Run a digest end to end with an agent
 
-1. Configure: `cp site/CONFIG.example site/CONFIG` (or `python3 publish.py --init`), put a 16+ char password in `~/.config/ai-digest/site-password` (mode 600), export `CLOUDFLARE_API_TOKEN` (scope: Account · Cloudflare Pages · Edit). Set `DIGEST_LANG` and `DIGEST_TZ`.
-2. Give the agent (shell, file read/write, read-only X search) the prompt file `prompts/en/daily.md` (or `prompts/zh-CN/daily.md`, `weekly.md`, `papers.md`) with the repo root as working directory. The prompt's "Run contract" lists inputs, outputs and the done condition.
+1. Configure: `python3 publish.py --init` (or `cp site/CONFIG.example site/CONFIG` and replace `<...>` placeholders), put a 16+ char password in `~/.config/ai-digest/site-password` (mode 600), export `CLOUDFLARE_API_TOKEN` (scope: Account · Cloudflare Pages · Edit). Set `DIGEST_LANG` and `DIGEST_TZ`.
+2. Give the agent (shell, file read/write; optional read-only X search) the prompt file `prompts/en/daily.md` (or `prompts/zh-CN/daily.md`, `weekly.md`, `papers.md`) with the repo root as working directory. The prompt's "Run contract" lists inputs, outputs and the done condition.
 3. Dry run without deploying: `python3 render_html.py digest-P.md /tmp/p.html`; for the whole build use the demo command above.
 
 ## Conventions
@@ -85,7 +85,7 @@ Markdown contract (what `render_html.py` parses; either language's labels work):
 
 - Do read the relevant prompt in `prompts/` before changing pipeline behavior; they are the spec for the curation step.
 - Do use the helpers (`fetch/ledger.py find`, `fetch/cand.py`, `fetch/page.py`) instead of reading `ledger.json`, `candidates.jsonl` or whole pages into context.
-- Do keep one language per site; the bilingual demo is two sites sharing one salt.
+- Do keep one language per site directory; link companion sites via `LANG_ALT` (the bilingual demo builds `/en/` and `/zh-CN/` sharing one salt).
 - Don't edit generated output (`dist/`, `site/public`, `runs/`) by hand or commit it.
 - Demo builds (`publish.py --demo`) show the public demo password on the unlock page (`{{demo_hint}}` in `site/password_template.html`); the live pipeline never does. Keep it that way.
 - Don't change the encryption parameters or the password-page contract (`id="pw"`, `id="rm"`, `__ENCRYPT_CFG_JSON__`) without updating `verify_decrypt.mjs` and the tests.
