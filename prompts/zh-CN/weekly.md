@@ -1,6 +1,6 @@
 # AI精选周报 · agent 提示词模板（每周一 01:30 本地时间触发，汇总上一周）
 
-<!-- 这是一个与平台无关的 agent 提示词模板：把它交给任意带 Shell、文件读写与 Web/X 只读检索工具的 agent 运行器。
+<!-- 这是一个与平台无关的 agent 提示词模板：把它交给任意带 Shell 与文件读写工具的 agent 运行器（X/Web 只读检索工具为可选增强）。
      占位符：<SITE_DOMAIN>=站点域名、<SITE_SLUG>=站点路径 slug；时区由环境变量 DIGEST_TZ 决定（默认 UTC）；
      "读者" = 接收摘要的人或频道。运行器如何把最终摘要送达读者，由你的部署决定。
      输出语言：设置 DIGEST_LANG=zh-CN（或在 site/CONFIG 里写 LANG=zh-CN），这样 fetch/ 与 publish.py 的标签、页面和本提示词一致。 -->
@@ -11,7 +11,7 @@
 |---|---|
 | 工作目录 | 仓库根目录（下文路径都相对于它） |
 | 环境变量 | `DIGEST_LANG=zh-CN`、`DIGEST_TZ=<IANA 时区>`；要部署还需 `site/CONFIG`、密码文件和 `CLOUDFLARE_API_TOKEN` |
-| 工具 | Shell、文件读写、X 只读检索；网页抓取可选 |
+| 工具 | Shell、文件读写；可选：X 只读检索与网页抓取 |
 | 输入 | 本周各日的 `digest-D.md`、`runs/*/filter-log*.md`、`python3 fetch/weekly_late.py` 的输出、`filter-notes.zh-CN.md` |
 | 产出 | `weekly-L.md`、已发布的 `weekly/L` 页面、台账更新 |
 | 完成标准 | `python3 publish.py --issue weekly/L --md weekly-L.md` 退出码为 0 并打印本期 URL |
@@ -45,9 +45,10 @@ python3 fetch/weekly_late.py
 - 清单头部会列出「缺：<日期>」——某天没有抓取结果（日报当天没跑成）时，才对那一天补一次 `python3 fetch/fetch.py --daily --day <该日> --reuse`（会生成该天的 `fetch/`），再重跑 `weekly_late.py`；`report.md` 里「⚠️ 工作日批次…缺失」的处理同日报（`fetch/troubleshoot-arxiv.zh-CN.md`）。不要对整周再跑 `fetch.py --weekly`。
 
 
-## 2. X 召回（只读）
+## 2. X 召回（可选——按工具能力门控，只读）
 
-按 `fetch/x-recall.zh-CN.md`：A、B、C 组用整周窗口（UTC：`M` 前一天 `T16:00:00Z` → `S` 当天 `T16:00:00Z`）各跑一遍（按需分页），D 组主题检索全部跑一遍，E 组 `search_news` 补行业和政策。X 只是线索，必须追到一手出处。**严禁**任何写操作（发帖、点赞、转发、关注、收藏、私信）。
+- **能力门控**：若当前 agent 运行器没有提供只读 X 检索工具（`search_posts_all`、`get_users_posts`、`search_news`、`get_news`），**直接干净跳过本节，不要报错中断**，在 `runs/S-weekly/filter-log.md` 注明 `X 召回：未启用（无 X 检索工具）`，继续基于本周 7 期日报与 `weekly_late.py`（约 153 个公开信源）完成复盘。
+- **有 X 检索工具时**：按 `fetch/x-recall.zh-CN.md`，A、B、C 组用整周窗口（UTC：`M` 前一天 `T16:00:00Z` → `S` 当天 `T16:00:00Z`）各跑一遍（按需分页；**若 B2 / C1 仍含未替换的 `<account_1>` / `<zh_account_1>` 占位符则直接跳过**），D 组主题检索跑一遍，E 组 `search_news`（若支持）补行业和政策。X 只是线索，必须追到一手出处。**严禁**任何写操作（发帖、点赞、转发、关注、收藏、私信）。
 
 ## 3. 复盘与补漏
 

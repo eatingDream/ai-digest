@@ -25,8 +25,8 @@
 - **分层筛选，内容优先**：`prompts/` 下是与平台无关的 agent 提示词。入选只看内容本身的分量，不看热度数字，范围覆盖整个 AI 领域。
 - **不重复推送**：`fetch/ledger.py` 记录「已推送（★）」和「看过未推（☆）」，已推过的内容只有出现实质新进展才会再写。
 - **日报 + 周报**：固定七个版面——模型、论文、工具与项目、行业与产品、算力与基础设施、安全与政策、观点与长文。
-- **中英双语**：一个开关（`DIGEST_LANG=en|zh-CN`）统一决定提示词、抓取标签和整套阅读界面的语言，默认英文。
-- **好读的页面**：`render_html.py` 生成自包含 HTML，带侧栏目录、深浅色主题，大屏下排版舒展。
+- **中英双语**：一个开关（`DIGEST_LANG=en|zh-CN`）统一决定提示词、抓取标签和整套阅读界面的语言，`LANG_ALT` 还支持将自建的中英文站点互链切换，默认英文。
+- **好读的页面**：`render_html.py` 生成自包含 HTML，带侧栏目录、纯前端即时关键词与标签筛选、解密后 `#锚点` 自动定位、深浅色主题，大屏下排版舒展。
 - **加密静态站点**：`publish.py` 在客户端对每个页面做 AES-256-GCM 加密（PBKDF2-SHA256，60 万次迭代），增量部署到 Cloudflare Pages，并逐页解密校验。
 - **自带 CI/CD**：测试、密钥扫描、打 tag 自动发布 Release，以及演示站点工作流（可选部署到 Cloudflare Pages）。
 
@@ -34,7 +34,7 @@
 
 <p align="center"><img src="docs/architecture.zh-CN.svg" alt="ai-digest 架构图" width="100%"></p>
 
-1. **信源**全程只读：订阅源、论文与代码平台、社区，以及由 agent 执行的 X 检索（`fetch/x-recall.zh-CN.md`）。
+1. **信源**全程只读：约 153 个公开订阅源、论文与代码平台及社区（`fetch/sources.toml`），以及按运行器能力可选启用的 X 只读检索（`fetch/x-recall.zh-CN.md`）。
 2. **抓取与初筛**（`fetch/`）是纯脚本，产出 `triage.md`、`triage-papers.md` 和 `candidates.jsonl`；论文另由一个轻量的初筛 agent 先行收窄。
 3. **LLM 精选**（`prompts/<语言>/`、`filter-notes.md`、`x-sources.md`）核对一手出处，写成 `digest-<P>.md`。
 4. **渲染与加密**：Markdown 转 HTML，注入导航和目录页，对每个页面加密并做解密往返校验。
@@ -65,17 +65,17 @@ pytest -q
 ### 运行你自己的日报
 
 ```bash
-# 1. 配置站点（语言在这里定：site/CONFIG 里写 LANG=zh-CN，或 export DIGEST_LANG=zh-CN）
-cp site/CONFIG.example site/CONFIG                       # 或 python3 publish.py --init（自动生成随机 slug）
+# 1. 配置站点（自动生成带 22 位随机 SLUG 的 site/CONFIG；可在文件里设 LANG=zh-CN 或 export DIGEST_LANG=zh-CN）
+python3 publish.py --init                                # 或 cp site/CONFIG.example site/CONFIG（需替换所有 <...> 占位符）
 install -m 600 /dev/stdin ~/.config/ai-digest/site-password   # 粘贴 16 位以上的密码，Ctrl-D 结束
 export CLOUDFLARE_API_TOKEN=...                          # 权限范围：Account · Cloudflare Pages · Edit
 
-# 2. 抓取昨天的候选（先设好 DIGEST_TZ）
+# 2. 抓取昨天的候选（先设好 DIGEST_TZ；可选设置 GITHUB_TOKEN/GH_TOKEN 提升限额）
 python3 fetch/fetch.py --daily                           # 周报用 --weekly（标签语言跟随 DIGEST_LANG / --lang）
 
 # 3. 交给 agent 精选：在你的 agent 运行器里执行 prompts/zh-CN/daily.md（或 weekly.md；英文用 prompts/en/），得到 digest-<P>.md
 
-# 4. 发布
+# 4. 发布（首次执行 ledger.py add 会自动初始化 ledger.json）
 python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 ```
 
@@ -83,7 +83,7 @@ python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 
 ## 配合 AI agent 使用
 
-[AGENTS.md](AGENTS.md) 是给编码 agent（Cursor、Claude Code、Codex 等）的入口：仓库地图、常用命令、流水线、约定与安全规则。想让 agent 来产出日报：在带 Shell、文件读写和 X 只读检索工具的 agent 运行器里打开仓库根目录，设好 `DIGEST_LANG` 和 `DIGEST_TZ`，把 `prompts/zh-CN/daily.md`（或 `weekly.md`；英文用 `prompts/en/`）交给它。每份提示词开头都有「运行契约」，写明输入、产出和完成标准。所有命令行都带 `--help` 和示例，部分支持 `--json`。
+[AGENTS.md](AGENTS.md) 是给编码 agent（Cursor、Claude Code、Codex 等）的入口：仓库地图、常用命令、流水线、约定与安全规则。想让 agent 来产出日报：在带 Shell 与文件读写工具的 agent 运行器里打开仓库根目录，设好 `DIGEST_LANG` 和 `DIGEST_TZ`，把 `prompts/zh-CN/daily.md`（或 `weekly.md`；英文用 `prompts/en/`）交给它。X/Twitter 只读检索工具（`search_posts_all`、`get_users_posts` 等）为**可选增强**：运行器没有 X 工具时提示词会自动干净跳过，直接用约 153 个公开信源完成筛选；若有 X 工具，可在 `fetch/x-recall.zh-CN.md` 与 `x-sources.zh-CN.md` 中替换 `<account_1>` / `<zh_account_1>` 自定义关注圈账号（未替换的占位查询会自动跳过）。每份提示词开头都有「运行契约」，写明输入、产出和完成标准。所有命令行都带 `--help` 和示例，部分支持 `--json`。
 
 ## 配置
 
@@ -92,7 +92,7 @@ python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 | 变量 | `CONFIG` 键 | 说明 | 默认值 |
 |---|---|---|---|
 | `SITE_DOMAIN` | `DOMAIN` | 站点域名 | `digest.example.com` |
-| `SITE_SLUG` | `SLUG` | 不可猜测的路径前缀（发布后不要再改） | 随机生成（`--init`） |
+| `SITE_SLUG` | `SLUG` | 不可猜测的路径前缀（至少 8 位 URL 安全字符；发布后不要再改） | 随机生成（`--init`） |
 | `CF_ACCOUNT_ID` | `ACCOUNT_ID` | Cloudflare 账号 ID | — |
 | `CF_ZONE_ID` | `ZONE_ID` | 域名所在的 zone（可选） | — |
 | `CF_PAGES_PROJECT` | `PROJECT` | Cloudflare Pages 项目名 | `ai-digest` |
@@ -100,8 +100,10 @@ python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 | `DIGEST_SITE_PASSWORD_FILE` | — | 存放站点密码的文件（权限 600） | `~/.config/ai-digest/site-password` |
 | `DIGEST_SITE_SALT_FILE` | — | PBKDF2 盐文件（自动生成） | `~/.config/ai-digest/site-salt` |
 | `DIGEST_LANG` | `LANG` | 日报与站点界面的语言：`en` 或 `zh-CN`（命令行 `--lang` 优先） | `en` |
+| `DIGEST_LANG_ALT` | `LANG_ALT` | 可选的另一语言伴生站点路径/URL（如 `en:/en/`） | — |
 | `DIGEST_TZ` | — | 用来划分「自然日」的 IANA 时区 | `UTC` |
-| `DIGEST_ROOT` | — | `runs/`、`html/`、`site/` 所在的工作目录 | 仓库根目录 |
+| `DIGEST_ROOT` | — | `runs/`、`html/`、`site/`、`ledger.json`、`logs/` 与 `state/` 所在的工作目录 | 仓库根目录 |
+| `LEDGER_PATH` | — | 台账 `ledger.json` 路径（首次 `ledger.py add` 自动创建） | `<DIGEST_ROOT>/ledger.json` |
 | `DIGEST_PREFERENCES_FILE` | — | 主题偏好权重 JSON（参考 `fetch/preferences.example.json`） | `fetch/preferences.json` |
 | `DIGEST_PRIVACY_PATTERNS_FILE` | — | 发布前额外检查的正则 | `site/privacy-patterns.txt` |
 | `DIGEST_DEMO_PASSWORD` | — | `publish.py --demo` 使用的密码 | — |

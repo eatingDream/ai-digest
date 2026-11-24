@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_config_env_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "CONFIG_PATH", tmp_path / "CONFIG")
-    monkeypatch.setenv("SITE_SLUG", "abc123")
+    monkeypatch.setenv("SITE_SLUG", "abc12345")
     monkeypatch.setenv("SITE_DOMAIN", "d.example.org")
     monkeypatch.setenv("CF_PAGES_PROJECT", "proj")
     cfg = publish.load_config()
-    assert cfg["SLUG"] == "abc123" and cfg["DOMAIN"] == "d.example.org" and cfg["PROJECT"] == "proj"
+    assert cfg["SLUG"] == "abc12345" and cfg["DOMAIN"] == "d.example.org" and cfg["PROJECT"] == "proj"
 
 
 def test_privacy_scan_flags_email_and_custom(monkeypatch, tmp_path):
@@ -133,9 +133,10 @@ def test_config_lang_key_and_default(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "CONFIG_PATH", cfg_path)
     monkeypatch.setattr(publish, "CLI_LANG", None)
     monkeypatch.delenv("DIGEST_LANG", raising=False)
-    cfg_path.write_text("SLUG=abc\n", encoding="utf-8")
+    monkeypatch.delenv("SITE_SLUG", raising=False)
+    cfg_path.write_text("SLUG=abc12345\n", encoding="utf-8")
     assert publish.load_config()["LANG"] == "en"
-    cfg_path.write_text("SLUG=abc\nLANG=zh-CN\n", encoding="utf-8")
+    cfg_path.write_text("SLUG=abc12345\nLANG=zh-CN\n", encoding="utf-8")
     assert publish.load_config()["LANG"] == "zh-CN"
     monkeypatch.setenv("DIGEST_LANG", "en")
     assert publish.load_config()["LANG"] == "en"
@@ -292,7 +293,133 @@ def test_incremental_prepare_only_cache_and_node_verify(tmp_path):
     headers = (work / "site" / "public" / "_headers").read_text(encoding="utf-8")
     assert "X-Frame-Options: DENY" in headers
     assert "Content-Security-Policy:" in headers
-    assert "frame-ancestors 'none'" in headers and "connect-src 'self'" in headers
+    assert "frame-ancestors 'none'" in headers and "connect-src 'self'" in headers and "prefetch-src 'self'" in headers
+
+
+def test_config_rejects_placeholders_and_invalid_slugs(monkeypatch, tmp_path, capsys):
+    cfg_path = tmp_path / "CONFIG"
+    monkeypatch.setattr(publish, "CONFIG_PATH", cfg_path)
+    for k in ("SITE_SLUG", "CF_ACCOUNT_ID", "CF_PROJECT", "CF_PAGES_PROJECT", "DIGEST_LANG_ALT"):
+        monkeypatch.delenv(k, raising=False)
+
+    # 1. Unedited copy of site/CONFIG.example fails with actionable guidance
+    cfg_path.write_text((ROOT / "site" / "CONFIG.example").read_text(encoding="utf-8"), encoding="utf-8")
+    try:
+        publish.load_config()
+        raise AssertionError("expected SystemExit on unedited CONFIG.example")
+    except SystemExit as e:
+        assert e.code == 1
+    err = capsys.readouterr().err
+    assert "publish.py --init" in err and "edit" in err
+
+    # 2. Placeholders (<...> and {{...}}) in SLUG, ACCOUNT_ID / CF_ACCOUNT_ID, PROJECT / CF_PROJECT
+    bad_configs = [
+        "SLUG=<random-unguessable-slug>\n",
+        "SLUG={{secret_slug}}\n",
+        "SLUG=validslug123\nACCOUNT_ID=<CF_ACCOUNT_ID>\n",
+        "SLUG=validslug123\nACCOUNT_ID={{cf_account}}\n",
+        "SLUG=validslug123\nPROJECT=<CF_PROJECT>\n",
+        "SLUG=validslug123\nCF_PROJECT={{cf_proj}}\n",
+        "SLUG=short77\n",
+        "SLUG=bad/slash/slug\n",
+        "SLUG=bad space slug\n",
+        "SLUG=bad?query=1\n",
+        "SLUG=..\n",
+    ]
+    for txt in bad_configs:
+        cfg_path.write_text(txt, encoding="utf-8")
+        try:
+            publish.load_config()
+            raise AssertionError(f"expected SystemExit for config: {txt!r}")
+        except SystemExit as e:
+            assert e.code == 1
+        err = capsys.readouterr().err
+        assert "publish.py --init" in err
+
+    # 3. Env placeholder in CF_ACCOUNT_ID / CF_PROJECT also rejected
+    cfg_path.write_text("SLUG=validslug123\n", encoding="utf-8")
+    monkeypatch.setenv("CF_ACCOUNT_ID", "<CF_ACCOUNT_ID>")
+    try:
+        publish.load_config()
+        raise AssertionError("expected SystemExit for env CF_ACCOUNT_ID placeholder")
+    except SystemExit:
+        pass
+    capsys.readouterr()
+    monkeypatch.delenv("CF_ACCOUNT_ID")
+
+    # 4. Valid URL-safe slug (>= 8 chars, [A-Za-z0-9._~-]) succeeds
+    cfg_path.write_text("SLUG= Good_Slug-2026.~ok \nACCOUNT_ID=acc123\nPROJECT=my-digest\n", encoding="utf-8")
+    cfg = publish.load_config()
+    assert cfg["SLUG"] == "Good_Slug-2026.~ok"
+
+
+def test_rerender_all_respects_config_zh_cn_and_self_hosted_lang_alt(tmp_path):
+    import shutil
+
+    work = tmp_path / "work"
+    work.mkdir()
+    pw_file = tmp_path / "site-password"
+    salt_file = tmp_path / "site-salt"
+    pw_file.write_text("synthetic-test-pass-9999\n", encoding="utf-8")
+    pw_file.chmod(0o600)
+
+    # Copy Chinese markdown sample into DIGEST_ROOT as digest-2026-01-15.md
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15.md")
+    (work / "site").mkdir(parents=True)
+    (work / "site" / "CONFIG").write_text(
+        "SLUG=zhslug1234\nLANG=zh-CN\nLANG_ALT=en:https://digest.example.com/enslug1234/\n",
+        encoding="utf-8",
+    )
+
+    env = dict(
+        os.environ,
+        DIGEST_ROOT=str(work),
+        DIGEST_SITE_PASSWORD_FILE=str(pw_file),
+        DIGEST_SITE_SALT_FILE=str(salt_file),
+        DIGEST_TZ="UTC",
+    )
+    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT"):
+        env.pop(k, None)
+
+    def run_pub(*args):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "publish.py"), *args],
+            env=env, capture_output=True, text=True, cwd=str(ROOT),
+        )
+
+    # Initial publish in English via explicit --lang en so site/sources initially holds English HTML
+    r_init = run_pub("--issue", "daily/2026-01-15", "--md", str(work / "digest-2026-01-15.md"), "--lang", "en", "--prepare-only")
+    assert r_init.returncode == 0, r_init.stdout + r_init.stderr
+    assert '<html lang="en">' in (work / "site" / "sources" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+
+    # Now run `--rerender-all --prepare-only` WITHOUT --lang or $DIGEST_LANG:
+    # must load LANG=zh-CN from site/CONFIG BEFORE rerendering sources -> 100% zh-CN body + nav!
+    r_rerender = run_pub("--rerender-all", "--prepare-only")
+    assert r_rerender.returncode == 0, r_rerender.stdout + r_rerender.stderr
+
+    plain_issue = (work / "site" / "plain" / "zhslug1234" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+    plain_index = (work / "site" / "plain" / "zhslug1234" / "index.html").read_text(encoding="utf-8")
+    shell_issue = (work / "site" / "public" / "zhslug1234" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+
+    assert '<html lang="zh-CN">' in plain_issue
+    assert "值得看" in plain_issue and "返回目录" in plain_issue and "筛选条目" in plain_issue
+    assert "Why it matters" not in plain_issue and "Back to index" not in plain_issue
+    # Self-hosted LANG_ALT switch link present on unlock shell, archive index, and issue page
+    assert 'href="https://digest.example.com/enslug1234/daily/2026-01-15" hreflang="en"' in plain_issue
+    assert 'href="https://digest.example.com/enslug1234/daily/2026-01-15" hreflang="en"' in shell_issue
+    assert 'href="https://digest.example.com/enslug1234/" hreflang="en"' in plain_index
+    # Archive filter bar localized in zh-CN
+    assert 'id="archiveFilterBar"' in plain_index and "搜索期次、标题或标签" in plain_index
+
+
+def test_password_template_theme_sync_and_hash_scroll_restoration():
+    tmpl = (ROOT / "site" / "password_template.html").read_text(encoding="utf-8")
+    assert 'localStorage.getItem("digest-theme")' in tmpl
+    assert ':root:not([data-theme="light"])' in tmpl
+    assert ':root[data-theme="dark"]' in tmpl
+    assert "location.hash" in tmpl and "scrollIntoView" in tmpl
+    tracked_headers = (ROOT / "site" / "public" / "_headers").read_text(encoding="utf-8")
+    assert "prefetch-src 'self'" in tracked_headers and "connect-src 'self'" in tracked_headers
 
 
 def test_verify_decrypt_cli_validation(tmp_path):
