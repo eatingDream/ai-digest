@@ -222,3 +222,159 @@ def test_rendered_issue_includes_filter_bar_theme_sync_and_hash_scroll(tmp_path,
     assert 'data-tags="' in html and 'data-tag="' in html
     assert "localStorage.getItem('digest-theme')" in html
     assert "location.hash.length>1" in html and "scrollIntoView" in html
+
+
+def test_sidebar_toc_displays_full_titles_without_ellipsis():
+    md_zh = (
+        "**AI精选日报 · 1/15**\n\n"
+        "## 🧠 模型\n\n"
+        "### 1. 某某实验室发布首个超长标题模型用于验证侧栏完整显示不截断\n"
+        "`某某实验室 · 1/15 · 开源权重`\n\n"
+        "**一句话：** 示例条目。\n\n"
+        "### 🆕 2. 另一家研究机构发布带新标签的超长标题模型验证侧栏不出现省略号\n"
+        "`研究机构 · 1/15 · 前沿发布`\n\n"
+        "**一句话：** 带新标签的条目。\n"
+    )
+    out_zh = rh.render_html(rh.parse_digest(md_zh, "zh-CN"), "zh-CN")
+    assert '<span class="t">某某实验室发布首个超长标题模型用于验证侧栏完整显示不截断</span>' in out_zh
+    assert '<span class="t">另一家研究机构发布带新标签的超长标题模型验证侧栏不出现省略号</span>' in out_zh
+    assert ".ts-items .t { min-width: 0; overflow-wrap: break-word; }" in out_zh
+    assert ".ts-items a.has-new .t" not in out_zh
+
+    md_en = (
+        "**AI Daily · 1/15**\n\n"
+        "## 🧠 Models\n\n"
+        "### 🆕 1. Example Labs publishes an extra-long headline verifying full sidebar display\n"
+        "`Example Labs · 1/15 · Open weights`\n\n"
+        "**In brief:** Example entry.\n"
+    )
+    out_en = rh.render_html(rh.parse_digest(md_en, "en"), "en")
+    assert (
+        '<span class="t">Example Labs publishes an extra-long headline verifying full sidebar display</span>'
+        in out_en
+    )
+    assert "…" not in out_en.split('<nav class="toc-side"', 1)[1].split("</nav>", 1)[0]
+
+
+def test_single_language_output_has_no_bilingual_chrome(tmp_path):
+    out = tmp_path / "single.html"
+    rh.render_file(SAMPLES["zh-CN"][0], out, "zh-CN", year=2026)
+    html = out.read_text(encoding="utf-8")
+    body = html.split("<body>", 1)[1].split("<script>", 1)[0]
+    assert "lang-pane" not in body
+    assert "lang-switch" not in body
+    assert 'data-lang="en"' not in body
+    assert "localStorage.getItem('digest-lang')" not in html
+
+
+@pytest.mark.parametrize("kind_idx", [0, 1])
+def test_render_bilingual_daily_and_weekly_zero_duplicate_ids(tmp_path, kind_idx):
+    import re
+    import shutil
+    import subprocess
+
+    out = tmp_path / f"bilingual-{kind_idx}.html"
+    digest = rh.render_file(SAMPLES["zh-CN"][kind_idx], out, "zh-CN", year=2026, en_md_path=SAMPLES["en"][kind_idx])
+    html = out.read_text(encoding="utf-8")
+    assert len(digest.items) == (10 if kind_idx == 0 else 3)
+
+    # Zero duplicate HTML IDs across the entire document
+    ids = re.findall(r'\bid="([^"]+)"', html)
+    assert ids, "expected id attributes"
+    assert len(ids) == len(set(ids)), f"duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
+
+    # Pane structure, pre-paint scripts, language switcher, prefixed IDs & filter bars
+    assert '<html lang="zh-CN">' in html
+    assert "localStorage.getItem('digest-theme')" in html
+    assert "localStorage.getItem('digest-lang')" in html
+    assert '<div class="lang-pane lang-zh" data-lang="zh">' in html
+    assert '<div class="lang-pane lang-en" data-lang="en" lang="en" data-title="' in html
+    assert html.count('class="theme-switch lang-switch"') == 2
+    assert 'aria-label="语言"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button>' in html
+    assert 'aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button>' in html
+    for expected_id in (
+        "content", "en-content",
+        "report-start", "en-report-start",
+        "tocToggle", "en-tocToggle",
+        "tocBackdrop", "en-tocBackdrop",
+        "tocSide", "en-tocSide",
+        "tocClose", "en-tocClose",
+        "sec-models", "en-sec-models",
+        "item-1", "en-item-1",
+        "toTop", "en-toTop",
+        "digestFilterBar", "en-digestFilterBar",
+        "digestFilterInput", "en-digestFilterInput",
+        "digestFilterClear", "en-digestFilterClear",
+        "digestFilterCount", "en-digestFilterCount",
+        "digestFilterEmpty", "en-digestFilterEmpty",
+    ):
+        assert f'id="{expected_id}"' in html, expected_id
+    assert 'aria-controls="tocSide"' in html and 'aria-controls="en-tocSide"' in html
+    assert 'html[data-lang="en"] .lang-zh { display: none !important; }' in html
+    assert 'html:not([data-lang="en"]) .lang-en { display: none !important; }' in html
+    assert ".lang-en .look-k" in html
+
+    # Weekly front-matter links inside EN pane use en- prefix
+    if kind_idx == 1:
+        en_pane = html.split('<div class="lang-pane lang-en"', 1)[1]
+        assert 'href="#en-item-1"' in en_pane
+        assert 'href="#item-1"' not in en_pane
+
+    # Validate emitted inline JS syntax with Node if available
+    node = shutil.which("node")
+    if node:
+        scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+        assert len(scripts) == 3  # theme pre-paint, lang pre-paint, footer
+        for idx, body in enumerate(scripts):
+            js_file = tmp_path / f"check-{kind_idx}-{idx}.js"
+            js_file.write_text(body, encoding="utf-8")
+            proc = subprocess.run([node, "--check", str(js_file)], capture_output=True, text=True)
+            assert proc.returncode == 0, proc.stderr
+
+
+def test_render_bilingual_sanitizes_xss_in_en_pane(tmp_path):
+    zh_md = tmp_path / "digest-2026-01-15.md"
+    en_md = tmp_path / "digest-2026-01-15.en.md"
+    zh_md.write_text(
+        "**AI精选日报 · 1/15**\n\n## 🧠 模型\n\n### 1. 安全测试\n`示例 · 1/15 · 开源`\n\n**一句话：** 正常内容。\n",
+        encoding="utf-8",
+    )
+    en_md.write_text(
+        "**AI Daily · 1/15**\n\n## 🧠 Models\n\n### 1. <script>alert(0)</script> Safe\n"
+        "`Example · 1/15 · Open`\n\n"
+        "**In brief:** Hi <script>alert(1)</script> <img src=x onerror=alert(2)> "
+        "[bad](javascript:alert(3)) [d](data:text/html,<svg>) [ok](https://example.com/en).\n\n"
+        "🔗 [Evil](javascript:alert(4)) · [Ref](https://example.com/ref)\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "bi.html"
+    rh.render_file(zh_md, out, "zh-CN", en_md_path=en_md)
+    html = out.read_text(encoding="utf-8")
+    assert "<script>alert(" not in html
+    assert "<img src=x onerror=" not in html
+    assert "javascript:" not in html.lower()
+    assert "data:text/html" not in html.lower()
+    assert 'href="https://example.com/en"' in html
+    assert 'href="https://example.com/ref"' in html
+    assert "<span>Evil</span>" in html
+
+
+def test_render_bilingual_item_count_mismatch_warns(tmp_path, capsys):
+    zh_md = tmp_path / "digest-2026-01-15.md"
+    en_md = tmp_path / "digest-2026-01-15.en.md"
+    zh_md.write_text(
+        "**AI精选日报 · 1/15**\n\n## 🧠 模型\n\n"
+        "### 1. 第一条\n`甲 · 1/15`\n\n**一句话：** 一。\n\n"
+        "### 2. 第二条\n`乙 · 1/15`\n\n**一句话：** 二。\n",
+        encoding="utf-8",
+    )
+    en_md.write_text(
+        "**AI Daily · 1/15**\n\n## 🧠 Models\n\n"
+        "### 1. First\n`A · 1/15`\n\n**In brief:** One.\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "bi.html"
+    rh.render_file(zh_md, out, "zh-CN", en_md_path=en_md)
+    err = capsys.readouterr().err
+    assert "WARNING: English has 1 items vs Chinese 2" in err
+    assert out.is_file()

@@ -57,6 +57,8 @@ STRINGS: dict[str, dict[str, str]] = {
         # masthead / chrome
         "skip": "Skip to content",
         "appearance": "Appearance",
+        "aria_lang_switch": "Language",
+        "lang_short": "English",
         "theme_system": "System", "theme_light": "Light", "theme_dark": "Dark",
         "kicker_daily": "Issue", "kicker_weekly": "Week", "kicker_other": "Issue",
         "edition_daily": "Daily", "edition_weekly": "Weekly",
@@ -112,6 +114,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "motto": "模型 · 研究 · 工程 · 产业",
         "skip": "跳到正文",
         "appearance": "外观",
+        "aria_lang_switch": "语言",
+        "lang_short": "中文",
         "theme_system": "系统", "theme_light": "浅色", "theme_dark": "深色",
         "kicker_daily": "本期", "kicker_weekly": "本期", "kicker_other": "本期",
         "edition_daily": "日报", "edition_weekly": "周报",

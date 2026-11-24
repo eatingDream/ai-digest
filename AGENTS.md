@@ -32,8 +32,8 @@ Build the demo site locally (no secrets, no network): `DIGEST_DEMO_PASSWORD=demo
 | `fetch/x-recall.md` | X (Twitter) search protocol the agent follows (read-only) |
 | `prompts/<en|zh-CN>/{papers,daily,weekly}.md` | The agent prompts. Self-contained; start each with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and a reader-preference profile (templates); `.zh-CN.md` variants |
-| `render_html.py` | Markdown → single-file HTML (CSS embedded). Parses English and Chinese label vocabularies |
-| `publish.py` | Nav, index, privacy scan, AES-256-GCM encryption, deploy, `--demo` |
+| `render_html.py` | Markdown → single-file HTML (CSS embedded, full-title sidebar TOC, optional `--md-en` single-page bilingual toggle). Parses English and Chinese label vocabularies |
+| `publish.py` | Nav (dual-pane localized for bilingual issues), index, privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
 | `i18n.py` | All UI strings, date formats, fetch labels and the bilingual Markdown vocabulary (`en`, `zh-CN`) |
 | `site/` | Password page template, `CONFIG.example`, site docs. `site/CONFIG` is local and gitignored |
 | `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`); used by tests, demo and docs |
@@ -85,7 +85,7 @@ Markdown contract (what `render_html.py` parses; either language's labels work):
 
 - Do read the relevant prompt in `prompts/` before changing pipeline behavior; they are the spec for the curation step.
 - Do use the helpers (`fetch/ledger.py find`, `fetch/cand.py`, `fetch/page.py`) instead of reading `ledger.json`, `candidates.jsonl` or whole pages into context.
-- Do keep one language per site directory; link companion sites via `LANG_ALT` (the bilingual demo builds `/en/` and `/zh-CN/` sharing one salt).
+- Do keep one primary language per site directory; link separate companion sites via `LANG_ALT` (the bilingual demo builds `/en/` and `/zh-CN/` sharing one salt), or bundle an English companion into each `zh-CN` issue page via `--md-en` / sibling `<stem>.en.md`.
 - Don't edit generated output (`dist/`, `site/public`, `runs/`) by hand or commit it.
 - Demo builds (`publish.py --demo`) show the public demo password on the unlock page (`{{demo_hint}}` in `site/password_template.html`); the live pipeline never does. Keep it that way.
 - Don't change the encryption parameters or the password-page contract (`id="pw"`, `id="rm"`, `__ENCRYPT_CFG_JSON__`) without updating `verify_decrypt.mjs` and the tests.

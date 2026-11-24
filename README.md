@@ -25,8 +25,8 @@ English | [简体中文](README.zh-CN.md)
 - **Layered, content-first curation** — platform-agnostic agent prompts in `prompts/`. Selection rests on substance, never popularity counts; scope is the whole AI field.
 - **Never repeat yourself** — `fetch/ledger.py` records what was already pushed (★) or only seen (☆), so repeats appear only with real new developments.
 - **Daily and weekly issues** — seven sections: Models, Papers, Tools & Projects, Industry & Products, Compute & Infrastructure, Safety & Policy, Opinion & Essays.
-- **English and Chinese** — one switch (`DIGEST_LANG=en|zh-CN`) sets the language of the prompts, the fetch labels and the whole reader UI; `LANG_ALT` optionally links self-hosted bilingual companion sites. English is the default.
-- **Polished reader** — `render_html.py` emits self-contained HTML with a sidebar TOC, instant client-side keyword & tag filtering, `#fragment` deep-link scroll after decryption, light/dark themes and a wide-screen layout.
+- **English and Chinese** — one switch (`DIGEST_LANG=en|zh-CN`) sets the language of the prompts, the fetch labels and the whole reader UI; `render_html.py --md-en` / `publish.py --md-en` (auto-discovered as `<stem>.en.md` on `zh-CN` sites) bundles a single-page bilingual toggle, and `LANG_ALT` optionally links separate companion sites. English is the default.
+- **Polished reader** — `render_html.py` emits self-contained HTML with a full-title sidebar TOC, instant client-side keyword & tag filtering (scoped per language pane), `#fragment` deep-link scroll after decryption, light/dark themes and a wide-screen layout.
 - **Encrypted static hosting** — `publish.py` encrypts every page client-side (AES-256-GCM, PBKDF2-SHA256, 600k iterations), deploys incrementally to Cloudflare Pages and decrypt-verifies each page.
 - **CI/CD included** — tests, secret scanning, tagged releases and a demo-site workflow (optional Cloudflare Pages deploy).
 
@@ -50,8 +50,9 @@ Requirements: Python 3.11+ (CI uses 3.12), Node 20 + `npx` (only for deploying w
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt          # requests, lxml, markdown, cryptography, pytest
 
-# 1. Render the sample issue
+# 1. Render the sample issue (or bundle zh-CN + en into one toggleable page with --md-en)
 python3 render_html.py examples/sample-digest.en.md /tmp/sample.html      # add --lang zh-CN for Chinese
+python3 render_html.py examples/sample-digest.zh-CN.md /tmp/bilingual.html --md-en examples/sample-digest.en.md
 
 # 2. Build the encrypted demo site (no deploy, no secrets)
 DIGEST_DEMO_PASSWORD='demo' python3 publish.py --demo --out dist/

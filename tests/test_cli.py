@@ -40,6 +40,21 @@ def test_render_json(tmp_path):
     d = json.loads(r.stdout)
     assert d["items"] == 10 and d["sections"] == 7 and d["lang"] == "en"
 
+    rb = run(
+        "render_html.py",
+        "examples/sample-digest.zh-CN.md",
+        tmp_path / "bi.html",
+        "--md-en",
+        "examples/sample-digest.en.md",
+        "--json",
+    )
+    assert rb.returncode == 0, rb.stderr
+    db = json.loads(rb.stdout)
+    assert db["items"] == 10 and db["lang"] == "zh-CN" and db["bilingual"] is True
+
+    rm = run("render_html.py", "examples/sample-digest.zh-CN.md", tmp_path / "m.html", "--md-en", tmp_path / "nope.en.md")
+    assert rm.returncode == 1 and "not found" in rm.stderr and "Traceback" not in rm.stderr
+
 
 def test_ledger_json_roundtrip(tmp_path):
     led = tmp_path / "ledger.json"

@@ -3,9 +3,10 @@
 """Convert an AI digest markdown file into one self-contained HTML page.
 
 Usage:
-    python3 render_html.py input.md output.html [--lang en|zh-CN]
+    python3 render_html.py input.md output.html [--lang en|zh-CN] [--md-en input.en.md]
 
 The UI language comes from --lang, else $DIGEST_LANG, else "en" (see i18n.py).
+When --md-en is given, both versions are bundled into one bilingual HTML page.
 """
 
 from __future__ import annotations
@@ -909,15 +910,14 @@ body.toc-open .toc-side-backdrop { display: block; opacity: 1; pointer-events: a
   font-size: 12.5px; line-height: 1.45; color: var(--ink-3);
 }
 .ts-items .n { flex-shrink: 0; min-width: 1.7em; font-size: 11.5px; font-weight: 700; color: var(--ink-4); }
-.ts-items .t { min-width: 0; }
+.ts-items .t { min-width: 0; overflow-wrap: break-word; }
 .ts-items .badge { flex-shrink: 0; align-self: center; height: 16px; padding: 0 6px; font-size: 10.5px; } /* the "new" badge stays on the title's line (review 2026-11-18) */
-.ts-items a.has-new .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ts-items a:hover, .ts-sec-link:hover .lab { color: var(--accent); }
 .toc-side a.cur { color: var(--accent); }
 .ts-items a.cur { border-left-color: var(--accent); background: var(--accent-softer); }
 .ts-items a.cur .n { color: var(--accent); }
 .toc-side-note { margin: 12px 0 0; font-size: 11.5px; color: var(--ink-4); }
-.sec, .story, [id^="item-"] { scroll-margin-top: 16px; }
+.sec, .story, [id^="item-"], [id^="en-item-"] { scroll-margin-top: 16px; }
 @media (min-width: 1024px) {
   .layout {
     display: grid;
@@ -1018,13 +1018,25 @@ body.toc-open .toc-side-backdrop { display: block; opacity: 1; pointer-events: a
 /* English (Latin) typography: the wide letter-spacing above is tuned for CJK kickers. */
 html[lang="en"] .mast-top .motto, html[lang="en"] .imprint, html[lang="en"] .mark-kicker,
 html[lang="en"] .kicker, html[lang="en"] .toc-group-label, html[lang="en"] .subhead,
-html[lang="en"] .detail-k, html[lang="en"] .extra-k, html[lang="en"] .colophon .end,
-html[lang="en"] .mast-meta .motto, html[lang="en"] .ts-sublabel, html[lang="en"] .ts-sec-link { letter-spacing: 0.06em; }
-html[lang="en"] .kicker, html[lang="en"] .mark-kicker, html[lang="en"] .detail-k, html[lang="en"] .extra-k,
-html[lang="en"] .toc-group-label { text-transform: uppercase; font-size: 11px; }
-html[lang="en"] .nameplate h1 { letter-spacing: -0.03em; }
-html[lang="en"] .story h3 { text-wrap: balance; }
-html[lang="en"] .dek, html[lang="en"] .look, html[lang="en"] .detail, html[lang="en"] .extra { hyphens: auto; line-height: 1.65; }
+html[lang="en"] .look-k, html[lang="en"] .detail-k, html[lang="en"] .extra-k, html[lang="en"] .colophon .end,
+html[lang="en"] .mast-meta .motto, html[lang="en"] .ts-sublabel, html[lang="en"] .ts-sec-link,
+.lang-en .mast-top .motto, .lang-en .imprint, .lang-en .mark-kicker,
+.lang-en .kicker, .lang-en .toc-group-label, .lang-en .subhead,
+.lang-en .look-k, .lang-en .detail-k, .lang-en .extra-k, .lang-en .colophon .end,
+.lang-en .mast-meta .motto, .lang-en .ts-sublabel, .lang-en .ts-sec-link { letter-spacing: 0.06em; }
+html[lang="en"] .kicker, html[lang="en"] .mark-kicker, html[lang="en"] .look-k, html[lang="en"] .detail-k,
+html[lang="en"] .extra-k, html[lang="en"] .toc-group-label,
+.lang-en .kicker, .lang-en .mark-kicker, .lang-en .look-k, .lang-en .detail-k,
+.lang-en .extra-k, .lang-en .toc-group-label { text-transform: uppercase; font-size: 11px; }
+html[lang="en"] .nameplate h1, .lang-en .nameplate h1 { letter-spacing: -0.03em; }
+html[lang="en"] .story h3, .lang-en .story h3 { text-wrap: balance; }
+html[lang="en"] .dek, html[lang="en"] .look, html[lang="en"] .detail, html[lang="en"] .extra,
+.lang-en .dek, .lang-en .look, .lang-en .detail, .lang-en .extra { hyphens: auto; line-height: 1.65; overflow-wrap: break-word; }
+
+/* Single-page bilingual panes */
+html[data-lang="en"] .lang-zh { display: none !important; }
+html:not([data-lang="en"]) .lang-en { display: none !important; }
+.lang-switch { margin-right: 4px; }
 
 """
 
@@ -1411,7 +1423,7 @@ def _parse_links(line: str) -> list[tuple[str, str]]:
     return [(m.group(1).strip(), m.group(2).strip()) for m in LINK_RE.finditer(line)]
 
 
-def _link_related(src: str) -> str:
+def _link_related(src: str, id_prefix: str = "") -> str:
     def repl(m: re.Match) -> str:
         label, body = m.group(1), m.group(2)
         bits: list[str] = []
@@ -1423,12 +1435,12 @@ def _link_related(src: str) -> str:
                 # Ranges in 主线 usually refer to inclusive item numbers, not a combined card.
                 # Link the ends individually if no combined item exists; keep a single span.
                 bits.append(
-                    f'<a href="#{item_anchor(a)}">{html.escape(a)}</a>'
+                    f'<a href="#{html.escape(id_prefix + item_anchor(a))}">{html.escape(a)}</a>'
                     f"{html.escape(n.group(0)[len(a):-len(b)] if n.group(0).endswith(b) else '–')}"
-                    f'<a href="#{item_anchor(b)}">{html.escape(b)}</a>'
+                    f'<a href="#{html.escape(id_prefix + item_anchor(b))}">{html.escape(b)}</a>'
                 )
             else:
-                bits.append(f'<a href="#{item_anchor(a)}">{html.escape(a)}</a>')
+                bits.append(f'<a href="#{html.escape(id_prefix + item_anchor(a))}">{html.escape(a)}</a>')
             cursor = n.end()
         bits.append(html.escape(body[cursor:]))
         return html.escape(label) + "".join(bits)
@@ -1572,9 +1584,9 @@ def _split_list_items(text: str) -> list[str]:
     return items
 
 
-def render_item(item: Item, lang: str = "en") -> str:
+def render_item(item: Item, lang: str = "en", id_prefix: str = "") -> str:
     lang = i18n.normalize_lang(lang)
-    anchor = item_anchor(item.number)
+    anchor = id_prefix + item_anchor(item.number)
     source, when, tags = _split_meta(item.meta)
     meta_bits: list[str] = []
     if source:
@@ -1720,7 +1732,7 @@ def _short_title(title: str, limit: float = 16.0, keep_rest: bool = False) -> st
     return t
 
 
-def render_sidebar(digest: Digest, lang: str = "en") -> str:
+def render_sidebar(digest: Digest, lang: str = "en", id_prefix: str = "") -> str:
     """Table of contents as a sidebar: sections, each with its items (anchors)."""
     if not digest.sections:
         return ""
@@ -1729,26 +1741,20 @@ def render_sidebar(digest: Digest, lang: str = "en") -> str:
         for e in g.entries:
             toc_title[e.number] = (e.title, e.is_new)
     chunks = [
-        '<button class="toc-side-toggle" id="tocToggle" type="button" aria-controls="tocSide" '
+        f'<button class="toc-side-toggle" id="{id_prefix}tocToggle" type="button" aria-controls="{id_prefix}tocSide" '
         f'aria-expanded="false" aria-label="{html.escape(i18n.t(lang, "toc_open"))}">{html.escape(i18n.t(lang, "toc_open_btn"))}</button>',
-        '<div class="toc-side-backdrop" id="tocBackdrop"></div>',
-        f'<nav class="toc-side" id="tocSide" aria-label="{html.escape(i18n.t(lang, "toc"))}">',
-        f'<div class="toc-side-head"><button class="toc-side-close" id="tocClose" type="button" aria-label="{html.escape(i18n.t(lang, "toc_close"))}">✕</button>'
+        f'<div class="toc-side-backdrop" id="{id_prefix}tocBackdrop"></div>',
+        f'<nav class="toc-side" id="{id_prefix}tocSide" aria-label="{html.escape(i18n.t(lang, "toc"))}">',
+        f'<div class="toc-side-head"><button class="toc-side-close" id="{id_prefix}tocClose" type="button" aria-label="{html.escape(i18n.t(lang, "toc_close"))}">✕</button>'
         f'<div class="kicker"><span class="bar"></span>{html.escape(i18n.t(lang, "toc"))}</div></div>',
     ]
-    all_titles = [
-        toc_title.get(b.number, (b.title, b.is_new))[0]
-        for sec in digest.sections for b in sec.blocks if isinstance(b, Item)
-    ]
-    heads = [_title_head(t) for t in all_titles]
-    dup_heads = {h for h in heads if h and heads.count(h) > 1}
     for i, sec in enumerate(digest.sections, 1):
         items = [b for b in sec.blocks if isinstance(b, Item)]
         label = _plain_section(sec.title)
         cnt = f"{len(items)}" if items else ""
         chunks.append('<div class="ts-sec">')
         chunks.append(
-            f'<a class="ts-sec-link" href="#{html.escape(_section_id(sec.title))}">'
+            f'<a class="ts-sec-link" href="#{html.escape(id_prefix + _section_id(sec.title))}">'
             f'<span class="n num">{i:02d}</span><span class="lab">{html.escape(label)}</span>'
             f'<span class="cnt num">{cnt}</span></a>'
         )
@@ -1760,9 +1766,9 @@ def render_sidebar(digest: Digest, lang: str = "en") -> str:
                 full = max((it.title, title), key=len)
                 cls = ' class="has-new"' if is_new else ""
                 chunks.append(
-                    f'<li><a href="#{html.escape(item_anchor(it.number))}"{cls} title="{html.escape(full, quote=True)}">'
+                    f'<li><a href="#{html.escape(id_prefix + item_anchor(it.number))}"{cls} title="{html.escape(full, quote=True)}">'
                     f'<span class="n num">{html.escape(it.number)}</span>'
-                    f'<span class="t">{html.escape(_short_title(title, keep_rest=_title_head(title) in dup_heads))}</span>{badge}</a></li>'
+                    f'<span class="t">{html.escape(title)}</span>{badge}</a></li>'
                 )
             chunks.append("</ol>")
         chunks.append("</div>")
@@ -1772,7 +1778,7 @@ def render_sidebar(digest: Digest, lang: str = "en") -> str:
     return "\n".join(chunks)
 
 
-def render_must(digest: Digest, lang: str = "en") -> str:
+def render_must(digest: Digest, lang: str = "en", id_prefix: str = "") -> str:
     items = _split_list_items(digest.must)
     if not items:
         return ""
@@ -1787,138 +1793,26 @@ def render_must(digest: Digest, lang: str = "en") -> str:
             f'<span class="minw"><span class="must-title">{html.escape(title)}{when_bit}</span>{dek_html}</span>'
         )
         if href:
-            chunks.append(f'<li><a href="#{html.escape(href)}">{inner}</a></li>')
+            chunks.append(f'<li><a href="#{html.escape(id_prefix + href)}">{inner}</a></li>')
         else:
             chunks.append(f'<li><div class="must-row">{inner}</div></li>')
     chunks.append("</ol>")
     return "\n".join(chunks)
 
 
-def render_themes(digest: Digest, lang: str = "en") -> str:
+def render_themes(digest: Digest, lang: str = "en", id_prefix: str = "") -> str:
     items = _split_list_items(digest.themes)
     if not items:
         return ""
     chunks = [f'<div class="kicker"><span class="bar"></span>{html.escape(i18n.t(lang, "themes"))}</div>', '<div class="themes">']
     for raw in items:
-        body = _link_related(md_to_html(raw))
+        body = _link_related(md_to_html(raw), id_prefix=id_prefix)
         chunks.append(f'<div class="theme-item"><div class="body">{body}</div></div>')
     chunks.append("</div>")
     return "\n".join(chunks)
 
 
-def render_html(digest: Digest, lang: str | None = None, year: int | None = None) -> str:
-    lang = i18n.resolve_lang(lang)
-    weekly = i18n.looks_weekly(digest.title)
-    info = _period_info(digest.period, weekly, lang, year=year)
-    full_title = digest.title
-    if digest.period:
-        full_title = f"{digest.title} · {digest.period}"
-    front_left = render_themes(digest, lang)
-    sidebar = render_sidebar(digest, lang)
-    issue_tags_list: list[str] = []
-    seen_tags: set[str] = set()
-    for it in digest.items:
-        for tg in _split_meta(it.meta)[2]:
-            if tg and tg not in seen_tags:
-                seen_tags.add(tg)
-                issue_tags_list.append(tg)
-    tag_chips = ""
-    if issue_tags_list:
-        chips = [
-            f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{html.escape(i18n.t(lang, "filter_all"))}</button>'
-        ] + [
-            f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">{html.escape(tg)}</button>'
-            for tg in issue_tags_list
-        ]
-        tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
-    filter_bar_html = (
-        f'<div class="filter-bar" id="digestFilterBar" role="search" aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}"'
-        f' data-total="{len(digest.items)}" data-tpl="{html.escape(i18n.t(lang, "filter_shown"), quote=True)}">'
-        '<div class="filter-row">'
-        f'<input type="search" id="digestFilterInput" class="filter-input" placeholder="{html.escape(i18n.t(lang, "filter_placeholder"), quote=True)}"'
-        f' aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}" autocomplete="off" spellcheck="false">'
-        f'<span id="digestFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
-        f'<button type="button" id="digestFilterClear" class="filter-clear" hidden>{html.escape(i18n.t(lang, "filter_clear"))}</button>'
-        f"</div>{tag_chips}</div>"
-        f'<p id="digestFilterEmpty" class="filter-empty" hidden>{html.escape(i18n.t(lang, "filter_empty"))}</p>'
-    )
-
-    parts = [
-        "<!DOCTYPE html>",
-        f'<html lang="{i18n.t(lang, "html_lang")}">',
-        "<head>",
-        '<meta charset="utf-8">',
-        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
-        '<meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6">',
-        '<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13191c">',
-        f"<title>{html.escape(full_title)}</title>",
-        "<script>(function(){try{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>",
-        "<style>",
-        _load_css(),
-        "</style>",
-        "</head>",
-        "<body>",
-        f'<a class="skip" href="#content">{html.escape(i18n.t(lang, "skip"))}</a>',
-        '<article class="paper">',
-        '<header class="mast">',
-        '<div class="mast-bar">',
-        f'<h1 id="report-start" class="np">{_nameplate_html(digest.title)}</h1>',
-        f'<span class="mast-chip"><span class="mark-kicker">{html.escape(info["kicker"])}</span><span class="mark-figure num">{html.escape(info["figure"])}</span></span>',
-        f'<span class="mast-meta"><span class="num">{html.escape(info["line"])}</span><span class="motto">{html.escape(info["motto"])}</span></span>',
-        '<span class="mast-tools">',
-        f'<span class="edition">{html.escape(info["edition"])}</span>',
-        f'<span class="theme-switch" role="group" aria-label="{html.escape(i18n.t(lang, "appearance"))}">',
-        f'<button type="button" data-theme="system">{html.escape(i18n.t(lang, "theme_system"))}</button>',
-        f'<button type="button" data-theme="light">{html.escape(i18n.t(lang, "theme_light"))}</button>',
-        f'<button type="button" data-theme="dark">{html.escape(i18n.t(lang, "theme_dark"))}</button>',
-        "</span></span>",
-        "</div>",
-        '<hr class="mast-rule">',
-        "</header>",
-    ]
-    parts.append('<div class="layout">')
-    parts.append(sidebar)
-    parts.append('<div class="layout-body">')
-    if digest.must or digest.themes:
-        # Weekly 头版: stacked bands, then straight into the sections.
-        must_html = render_must(digest, lang)
-        parts.append(f'<section class="front front-stack" aria-label="{html.escape(i18n.t(lang, "front_aria"))}">')
-        if must_html:
-            parts.append(f'<div class="front-must">{must_html}</div>')
-        if front_left:
-            parts.append(f'<div class="front-lead">{front_left}</div>')
-        parts.append("</section>")
-    parts.append(filter_bar_html)
-    parts.append('<main id="content">')
-    for i, sec in enumerate(digest.sections, 1):
-        sid = _section_id(sec.title)
-        label = _plain_section(sec.title)
-        parts.append(f'<section class="sec" id="{html.escape(sid)}">')
-        parts.append(
-            f'<header class="sec-head"><span class="sec-no num">{i:02d}</span>'
-            f"<h2>{html.escape(label)}</h2></header>"
-        )
-        if sec.note:
-            parts.append(f'<p class="sec-note">{html.escape(sec.note)}</p>')
-        for block in sec.blocks:
-            if isinstance(block, Item):
-                parts.append(render_item(block, lang))
-            elif isinstance(block, tuple) and block[0] == "sub":
-                parts.append(
-                    f'<h3 class="subhead"><span class="bar"></span>{html.escape(block[1])}</h3>'
-                )
-        parts.append("</section>")
-    parts.append("</main>")
-    parts.append(
-        f'<footer class="colophon"><div class="end">{html.escape(i18n.t(lang, "end"))}</div></footer>'
-    )
-    parts.append("</div></div>")  # .layout-body, .layout
-    parts.append("</article>")
-    parts.append(
-        f'<button class="to-top" id="toTop" type="button" aria-label="{html.escape(i18n.t(lang, "to_top"))}">↑</button>'
-    )
-    parts.append(
-        """<script>
+_FOOTER_SCRIPT = """<script>
 (function(){
   const KEY='digest-theme';
   const root=document.documentElement;
@@ -1941,121 +1835,346 @@ def render_html(digest: Digest, lang: str | None = None, year: int | None = None
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{
     let m='system';try{m=localStorage.getItem(KEY)||'system';}catch(e){} if(m==='system') apply('system');
   });
-  const side=document.getElementById('tocSide');
-  if(side){
-    const tg=document.getElementById('tocToggle'),bd=document.getElementById('tocBackdrop'),cl=document.getElementById('tocClose');
-    const setOpen=o=>{document.body.classList.toggle('toc-open',o);tg.setAttribute('aria-expanded',o?'true':'false');};
-    tg.addEventListener('click',()=>setOpen(true));
-    bd.addEventListener('click',()=>setOpen(false));
-    cl.addEventListener('click',()=>setOpen(false));
-    addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
-    side.addEventListener('click',e=>{if(e.target.closest('a'))setOpen(false);});
-    const links=[...side.querySelectorAll('a[href^="#"]')];
-    const targets=links.map(a=>document.getElementById(decodeURIComponent(a.getAttribute('href').slice(1))));
-    let cur=-1,tick=false;
-    const upd=()=>{
-      tick=false;let k=-1;
-      for(let i=0;i<targets.length;i++){const t=targets[i];if(t&&t.getBoundingClientRect().top<=90)k=i;}
-      if(k===cur)return;
-      if(cur>=0)links[cur].classList.remove('cur');
-      cur=k;
-      if(k<0)side.scrollTop=0;
-      if(k>=0){links[k].classList.add('cur');
-        if(innerWidth>=1024){const r=links[k].getBoundingClientRect(),sr=side.getBoundingClientRect();
-          if(r.top<sr.top+40||r.bottom>sr.bottom-40)side.scrollTop+=r.top-sr.top-sr.height/3;}}
-    };
-    addEventListener('scroll',()=>{if(!tick){tick=true;requestAnimationFrame(upd);}},{passive:true});
-    addEventListener('resize',upd);upd();
-  }
-  const top=document.getElementById('toTop');
-  const tog=()=>top.classList.toggle('show', scrollY>480);
-  addEventListener('scroll',tog,{passive:true});tog();
-  top.addEventListener('click',()=>scrollTo({top:0,behavior:'smooth'}));
-  const fbar=document.getElementById('digestFilterBar');
-  if(fbar){
-    const finp=document.getElementById('digestFilterInput');
-    const fclr=document.getElementById('digestFilterClear');
-    const fcnt=document.getElementById('digestFilterCount');
-    const femp=document.getElementById('digestFilterEmpty');
-    const ftbtns=[...fbar.querySelectorAll('.filter-tag')];
-    const stories=[...document.querySelectorAll('article.story')];
-    const secs=[...document.querySelectorAll('section.sec')];
-    const front=document.querySelector('section.front');
-    const sText=new Map(stories.map(el=>[el,(el.textContent||'').toLowerCase()]));
-    const sTags=new Map(stories.map(el=>[el,(el.dataset.tags||'').split('|').filter(Boolean)]));
-    const tpl=fbar.dataset.tpl||'{shown} / {total}';
-    let curTag='';
-    function syncTags(){
-      ftbtns.forEach(b=>b.setAttribute('aria-pressed',(b.dataset.tag||'')===curTag?'true':'false'));
-    }
-    function runFilter(){
-      const q=(finp.value||'').trim().toLowerCase();
-      const toks=q?q.split(/\\s+/):[];
-      const active=Boolean(toks.length||curTag);
-      let shown=0;
-      for(const st of stories){
-        const hay=sText.get(st)||'';
-        const tgs=sTags.get(st)||[];
-        const ok=(!curTag||tgs.includes(curTag))&&toks.every(k=>hay.includes(k));
-        st.hidden=!ok;
-        if(ok)shown++;
-      }
-      for(const sec of secs){
-        const has=[...sec.querySelectorAll('article.story')].some(s=>!s.hidden);
-        sec.hidden=active&&!has;
-        for(const sub of sec.querySelectorAll('h3.subhead')){
-          let sib=sub.nextElementSibling,subHas=false;
-          while(sib&&!sib.matches('h3.subhead')){
-            if(sib.matches('article.story')&&!sib.hidden){subHas=true;break;}
-            sib=sib.nextElementSibling;
-          }
-          sub.hidden=active&&!subHas;
+  const panes=[...document.querySelectorAll('.lang-pane')];
+  const scopes=panes.length?panes:[document];
+  const isVisible=s=>s===document||getComputedStyle(s).display!=='none';
+  const setups=scopes.map(function(scope){
+    const side=scope.querySelector('.toc-side');
+    const top=scope.querySelector('.to-top');
+    let upd=function(){},reset=function(){},close=function(){};
+    if(side){
+      const tg=scope.querySelector('.toc-side-toggle'),bd=scope.querySelector('.toc-side-backdrop'),cl=scope.querySelector('.toc-side-close');
+      const setOpen=o=>{document.body.classList.toggle('toc-open',o);tg.setAttribute('aria-expanded',o?'true':'false');};
+      close=()=>setOpen(false);
+      tg.addEventListener('click',()=>setOpen(true));
+      bd.addEventListener('click',()=>setOpen(false));
+      cl.addEventListener('click',()=>setOpen(false));
+      addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+      side.addEventListener('click',e=>{if(e.target.closest('a'))setOpen(false);});
+      const links=[...side.querySelectorAll('a[href^="#"]')];
+      const targets=links.map(a=>document.getElementById(decodeURIComponent(a.getAttribute('href').slice(1))));
+      let cur=-1,tick=false;
+      reset=()=>{if(cur>=0)links[cur].classList.remove('cur');cur=-1;};
+      upd=()=>{
+        tick=false;if(!isVisible(scope))return;
+        let k=-1;
+        for(let i=0;i<targets.length;i++){
+          const t=targets[i];
+          if(t&&!t.hidden&&!(t.closest&&t.closest('[hidden]'))&&t.getBoundingClientRect().top<=90)k=i;
         }
-      }
-      if(front)front.hidden=active;
-      fclr.hidden=!active;
-      fcnt.hidden=!active;
-      if(active)fcnt.textContent=tpl.replace('{shown}',String(shown)).replace('{total}',String(stories.length));
-      if(femp)femp.hidden=!(active&&shown===0);
+        if(k===cur)return;
+        if(cur>=0)links[cur].classList.remove('cur');
+        cur=k;
+        if(k<0)side.scrollTop=0;
+        if(k>=0){links[k].classList.add('cur');
+          if(innerWidth>=1024){const r=links[k].getBoundingClientRect(),sr=side.getBoundingClientRect();
+            if(r.top<sr.top+40||r.bottom>sr.bottom-40)side.scrollTop+=r.top-sr.top-sr.height/3;}}
+      };
+      addEventListener('scroll',()=>{if(!tick){tick=true;requestAnimationFrame(upd);}},{passive:true});
+      addEventListener('resize',upd);
     }
-    function resetFilter(){finp.value='';curTag='';syncTags();runFilter();}
-    finp.addEventListener('input',runFilter);
-    finp.addEventListener('keydown',e=>{if(e.key==='Escape')resetFilter();});
-    fclr.addEventListener('click',()=>{resetFilter();finp.focus();});
-    ftbtns.forEach(b=>b.addEventListener('click',()=>{
-      const tg=b.dataset.tag||'';
-      curTag=(tg&&curTag===tg)?'':tg;
-      syncTags();runFilter();
-    }));
-    document.addEventListener('click',e=>{
-      const badge=e.target.closest('.story-meta .badge[data-tag]');
-      if(badge){
-        const tg=badge.dataset.tag||'';
-        curTag=(curTag===tg)?'':tg;
+    if(top){
+      const tog=()=>top.classList.toggle('show', scrollY>480);
+      addEventListener('scroll',tog,{passive:true});tog();
+      top.addEventListener('click',()=>scrollTo({top:0,behavior:'smooth'}));
+    }
+    const fbar=scope.querySelector('.filter-bar');
+    if(fbar){
+      const finp=fbar.querySelector('.filter-input');
+      const fclr=fbar.querySelector('.filter-clear');
+      const fcnt=fbar.querySelector('.filter-count');
+      const femp=scope.querySelector('.filter-empty');
+      const ftbtns=[...fbar.querySelectorAll('.filter-tag')];
+      const stories=[...scope.querySelectorAll('article.story')];
+      const secs=[...scope.querySelectorAll('section.sec')];
+      const front=scope.querySelector('section.front');
+      const sText=new Map(stories.map(el=>[el,(el.textContent||'').toLowerCase()]));
+      const sTags=new Map(stories.map(el=>[el,(el.dataset.tags||'').split('|').filter(Boolean)]));
+      const tpl=fbar.dataset.tpl||'{shown} / {total}';
+      let curTag='';
+      function syncTags(){
+        ftbtns.forEach(b=>b.setAttribute('aria-pressed',(b.dataset.tag||'')===curTag?'true':'false'));
+      }
+      function runFilter(){
+        const q=(finp.value||'').trim().toLowerCase();
+        const toks=q?q.split(/\\s+/):[];
+        const active=Boolean(toks.length||curTag);
+        let shown=0;
+        for(const st of stories){
+          const hay=sText.get(st)||'';
+          const tgs=sTags.get(st)||[];
+          const ok=(!curTag||tgs.includes(curTag))&&toks.every(k=>hay.includes(k));
+          st.hidden=!ok;
+          if(ok)shown++;
+        }
+        for(const sec of secs){
+          const has=[...sec.querySelectorAll('article.story')].some(s=>!s.hidden);
+          sec.hidden=active&&!has;
+          for(const sub of sec.querySelectorAll('h3.subhead')){
+            let sib=sub.nextElementSibling,subHas=false;
+            while(sib&&!sib.matches('h3.subhead')){
+              if(sib.matches('article.story')&&!sib.hidden){subHas=true;break;}
+              sib=sib.nextElementSibling;
+            }
+            sub.hidden=active&&!subHas;
+          }
+        }
+        if(front)front.hidden=active;
+        fclr.hidden=!active;
+        fcnt.hidden=!active;
+        if(active)fcnt.textContent=tpl.replace('{shown}',String(shown)).replace('{total}',String(stories.length));
+        if(femp)femp.hidden=!(active&&shown===0);
+        upd();
+      }
+      function resetFilter(){finp.value='';curTag='';syncTags();runFilter();}
+      finp.addEventListener('input',runFilter);
+      finp.addEventListener('keydown',e=>{if(e.key==='Escape')resetFilter();});
+      fclr.addEventListener('click',()=>{resetFilter();finp.focus();});
+      ftbtns.forEach(b=>b.addEventListener('click',()=>{
+        const tg=b.dataset.tag||'';
+        curTag=(tg&&curTag===tg)?'':tg;
         syncTags();runFilter();
-        return;
+      }));
+      scope.addEventListener('click',e=>{
+        const badge=e.target.closest('.story-meta .badge[data-tag]');
+        if(badge){
+          const tg=badge.dataset.tag||'';
+          curTag=(curTag===tg)?'':tg;
+          syncTags();runFilter();
+          return;
+        }
+        const anc=e.target.closest('a[href^="#"]');
+        if(anc&&(finp.value||curTag)){
+          const tid=decodeURIComponent(anc.getAttribute('href').slice(1));
+          const tel=document.getElementById(tid);
+          if(tel&&tel.closest('[hidden]'))resetFilter();
+        }
+      });
+      addEventListener('keydown',e=>{
+        if(e.key==='/'&&isVisible(scope)&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){
+          e.preventDefault();finp.focus();
+        }
+      });
+    }
+    return {upd:upd,reset:reset,close:close};
+  });
+  if(panes.length){
+    const de=document.documentElement;
+    const LK='digest-lang';
+    const lbtns=[...document.querySelectorAll('.lang-switch [data-lang]')];
+    const enPane=panes.find(p=>p.dataset.lang==='en');
+    const titles={zh:document.title,en:(enPane&&enPane.dataset.title)||document.title};
+    const curLang=()=>de.dataset.lang==='en'?'en':'zh';
+    const paintLang=()=>{const l=curLang();lbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.lang===l?'true':'false'));};
+    function anchorOf(pane){
+      let r=null;
+      for(const e of pane.querySelectorAll('article.story, section.sec')){
+        if(e.hidden)continue;
+        if(e.getBoundingClientRect().top<=90)r=e;else break;
       }
-      const anc=e.target.closest('a[href^="#"]');
-      if(anc&&(finp.value||curTag)){
-        const tid=decodeURIComponent(anc.getAttribute('href').slice(1));
-        const tel=document.getElementById(tid);
-        if(tel&&tel.closest('[hidden]'))resetFilter();
-      }
-    });
-    addEventListener('keydown',e=>{
-      if(e.key==='/'&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){
-        e.preventDefault();finp.focus();
-      }
-    });
+      return r;
+    }
+    function setLang(l){
+      const from=curLang();
+      if(l===from){paintLang();return;}
+      const fp=panes.find(p=>p.dataset.lang===from);
+      const ref=fp?anchorOf(fp):null;
+      const off=ref?ref.getBoundingClientRect().top:0;
+      const key=ref?ref.id.replace(/^en-/,''):null;
+      de.dataset.lang=l;de.lang=(l==='en'?'en':'zh-CN');document.title=titles[l];
+      try{localStorage.setItem(LK,l);}catch(e){}
+      setups.forEach(s=>{s.close();s.reset();});
+      paintLang();
+      if(key){
+        const tp=document.getElementById((l==='en'?'en-':'')+key);
+        if(tp&&!tp.closest('[hidden]'))scrollTo({top:scrollY+tp.getBoundingClientRect().top-off,behavior:'instant'});
+      }else if(scrollY<60){scrollTo({top:0,behavior:'instant'});}
+      setups.forEach(s=>s.upd());
+    }
+    lbtns.forEach(b=>b.addEventListener('click',()=>setLang(b.dataset.lang)));
+    document.title=titles[curLang()];paintLang();
   }
+  setups.forEach(s=>s.upd());
   if(location.hash.length>1){
     let id=location.hash.slice(1);try{id=decodeURIComponent(id);}catch(e){}
-    const el=document.getElementById(id);
+    let el=document.getElementById(id);
+    if(panes.length){
+      const isEn=document.documentElement.dataset.lang==='en';
+      const base=id.replace(/^en-/,'');
+      const want=(isEn?'en-':'')+base;
+      el=document.getElementById(want)||el;
+    }
     if(el)requestAnimationFrame(()=>el.scrollIntoView());
   }
 })();
 </script>"""
+
+
+def _render_pane_body(
+    digest: Digest,
+    lang: str,
+    *,
+    year: int | None = None,
+    id_prefix: str = "",
+    lang_switch: bool = False,
+) -> tuple[str, list[str]]:
+    lang = i18n.normalize_lang(lang)
+    weekly = i18n.looks_weekly(digest.title)
+    info = _period_info(digest.period, weekly, lang, year=year)
+    full_title = digest.title
+    if digest.period:
+        full_title = f"{digest.title} · {digest.period}"
+    front_left = render_themes(digest, lang, id_prefix=id_prefix)
+    sidebar = render_sidebar(digest, lang, id_prefix=id_prefix)
+    issue_tags_list: list[str] = []
+    seen_tags: set[str] = set()
+    for it in digest.items:
+        for tg in _split_meta(it.meta)[2]:
+            if tg and tg not in seen_tags:
+                seen_tags.add(tg)
+                issue_tags_list.append(tg)
+    tag_chips = ""
+    if issue_tags_list:
+        chips = [
+            f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{html.escape(i18n.t(lang, "filter_all"))}</button>'
+        ] + [
+            f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">{html.escape(tg)}</button>'
+            for tg in issue_tags_list
+        ]
+        tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
+    filter_bar_html = (
+        f'<div class="filter-bar" id="{id_prefix}digestFilterBar" role="search" aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}"'
+        f' data-total="{len(digest.items)}" data-tpl="{html.escape(i18n.t(lang, "filter_shown"), quote=True)}">'
+        '<div class="filter-row">'
+        f'<input type="search" id="{id_prefix}digestFilterInput" class="filter-input" placeholder="{html.escape(i18n.t(lang, "filter_placeholder"), quote=True)}"'
+        f' aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}" autocomplete="off" spellcheck="false">'
+        f'<span id="{id_prefix}digestFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
+        f'<button type="button" id="{id_prefix}digestFilterClear" class="filter-clear" hidden>{html.escape(i18n.t(lang, "filter_clear"))}</button>'
+        f"</div>{tag_chips}</div>"
+        f'<p id="{id_prefix}digestFilterEmpty" class="filter-empty" hidden>{html.escape(i18n.t(lang, "filter_empty"))}</p>'
     )
+    parts = [
+        f'<a class="skip" href="#{id_prefix}content">{html.escape(i18n.t(lang, "skip"))}</a>',
+        '<article class="paper">',
+        '<header class="mast">',
+        '<div class="mast-bar">',
+        f'<h1 id="{id_prefix}report-start" class="np">{_nameplate_html(digest.title)}</h1>',
+        f'<span class="mast-chip"><span class="mark-kicker">{html.escape(info["kicker"])}</span><span class="mark-figure num">{html.escape(info["figure"])}</span></span>',
+        f'<span class="mast-meta"><span class="num">{html.escape(info["line"])}</span><span class="motto">{html.escape(info["motto"])}</span></span>',
+        '<span class="mast-tools">',
+        f'<span class="edition">{html.escape(info["edition"])}</span>',
+    ]
+    if lang_switch:
+        parts.append(
+            f'<span class="theme-switch lang-switch" role="group" aria-label="{html.escape(i18n.t(lang, "aria_lang_switch"))}">'
+            f'<button type="button" data-lang="zh">{html.escape(i18n.t("zh-CN", "lang_short"))}</button>'
+            f'<button type="button" data-lang="en">{html.escape(i18n.t("en", "lang_short"))}</button>'
+            "</span>"
+        )
+    parts.extend([
+        f'<span class="theme-switch" role="group" aria-label="{html.escape(i18n.t(lang, "appearance"))}">',
+        f'<button type="button" data-theme="system">{html.escape(i18n.t(lang, "theme_system"))}</button>',
+        f'<button type="button" data-theme="light">{html.escape(i18n.t(lang, "theme_light"))}</button>',
+        f'<button type="button" data-theme="dark">{html.escape(i18n.t(lang, "theme_dark"))}</button>',
+        "</span></span>",
+        "</div>",
+        '<hr class="mast-rule">',
+        "</header>",
+        '<div class="layout">',
+        sidebar,
+        '<div class="layout-body">',
+    ])
+    if digest.must or digest.themes:
+        # Weekly 头版: stacked bands, then straight into the sections.
+        must_html = render_must(digest, lang, id_prefix=id_prefix)
+        parts.append(f'<section class="front front-stack" aria-label="{html.escape(i18n.t(lang, "front_aria"))}">')
+        if must_html:
+            parts.append(f'<div class="front-must">{must_html}</div>')
+        if front_left:
+            parts.append(f'<div class="front-lead">{front_left}</div>')
+        parts.append("</section>")
+    parts.append(filter_bar_html)
+    parts.append(f'<main id="{id_prefix}content">')
+    for i, sec in enumerate(digest.sections, 1):
+        sid = id_prefix + _section_id(sec.title)
+        label = _plain_section(sec.title)
+        parts.append(f'<section class="sec" id="{html.escape(sid)}">')
+        parts.append(
+            f'<header class="sec-head"><span class="sec-no num">{i:02d}</span>'
+            f"<h2>{html.escape(label)}</h2></header>"
+        )
+        if sec.note:
+            parts.append(f'<p class="sec-note">{html.escape(sec.note)}</p>')
+        for block in sec.blocks:
+            if isinstance(block, Item):
+                parts.append(render_item(block, lang, id_prefix=id_prefix))
+            elif isinstance(block, tuple) and block[0] == "sub":
+                parts.append(
+                    f'<h3 class="subhead"><span class="bar"></span>{html.escape(block[1])}</h3>'
+                )
+        parts.append("</section>")
+    parts.append("</main>")
+    parts.append(
+        f'<footer class="colophon"><div class="end">{html.escape(i18n.t(lang, "end"))}</div></footer>'
+    )
+    parts.append("</div></div>")  # .layout-body, .layout
+    parts.append("</article>")
+    parts.append(
+        f'<button class="to-top" id="{id_prefix}toTop" type="button" aria-label="{html.escape(i18n.t(lang, "to_top"))}">↑</button>'
+    )
+    return full_title, parts
+
+
+def _html_head(title: str, html_lang: str, *, bilingual: bool = False) -> list[str]:
+    parts = [
+        "<!DOCTYPE html>",
+        f'<html lang="{html_lang}">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
+        '<meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6">',
+        '<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13191c">',
+        f"<title>{html.escape(title)}</title>",
+        "<script>(function(){try{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>",
+    ]
+    if bilingual:
+        parts.append(
+            "<script>(function(){try{var l=localStorage.getItem('digest-lang');if(l==='en'){document.documentElement.dataset.lang='en';document.documentElement.lang='en';}}catch(e){}})();</script>"
+        )
+    parts.extend([
+        "<style>",
+        _load_css(),
+        "</style>",
+        "</head>",
+        "<body>",
+    ])
+    return parts
+
+
+def render_html(digest: Digest, lang: str | None = None, year: int | None = None) -> str:
+    lang = i18n.resolve_lang(lang)
+    full_title, body_parts = _render_pane_body(digest, lang, year=year)
+    parts = _html_head(full_title, i18n.t(lang, "html_lang"), bilingual=False)
+    parts.extend(body_parts)
+    parts.append(_FOOTER_SCRIPT)
+    parts.append("</body></html>")
+    return "\n".join(parts) + "\n"
+
+
+def render_bilingual_html(zh_digest: Digest, en_digest: Digest, year: int | None = None) -> str:
+    """Render primary zh-CN digest and English companion digest into one toggleable HTML page."""
+    zh_title, zh_parts = _render_pane_body(zh_digest, "zh-CN", year=year, id_prefix="", lang_switch=True)
+    en_title, en_parts = _render_pane_body(en_digest, "en", year=year, id_prefix="en-", lang_switch=True)
+    parts = _html_head(zh_title, i18n.t("zh-CN", "html_lang"), bilingual=True)
+    parts.append('<div class="lang-pane lang-zh" data-lang="zh">')
+    parts.extend(zh_parts)
+    parts.append("</div>")
+    parts.append("<!-- digest-lang:en:start -->")
+    parts.append(f'<div class="lang-pane lang-en" data-lang="en" lang="en" data-title="{html.escape(en_title, quote=True)}">')
+    parts.extend(en_parts)
+    parts.append("</div>")
+    parts.append("<!-- digest-lang:en:end -->")
+    parts.append(_FOOTER_SCRIPT)
     parts.append("</body></html>")
     return "\n".join(parts) + "\n"
 
@@ -2069,11 +2188,27 @@ def _section_id(title: str) -> str:
     return "sec-" + (slug or "section")
 
 
-def render_file(src: Path, dest: Path, lang: str | None = None, year: int | None = None) -> Digest:
-    lang = i18n.resolve_lang(lang)
-    digest = parse_digest(src.read_text(encoding="utf-8"), lang)
+def render_file(
+    src: Path,
+    dest: Path,
+    lang: str | None = None,
+    year: int | None = None,
+    en_md_path: Path | None = None,
+) -> Digest:
     inferred_year = year if year is not None else _year_from_path(src)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if en_md_path is not None:
+        zh_digest = parse_digest(src.read_text(encoding="utf-8"), "zh-CN")
+        en_digest = parse_digest(en_md_path.read_text(encoding="utf-8"), "en")
+        if len(en_digest.items) != len(zh_digest.items):
+            print(
+                f"WARNING: English has {len(en_digest.items)} items vs Chinese {len(zh_digest.items)}",
+                file=sys.stderr,
+            )
+        dest.write_text(render_bilingual_html(zh_digest, en_digest, year=inferred_year), encoding="utf-8")
+        return zh_digest
+    lang = i18n.resolve_lang(lang)
+    digest = parse_digest(src.read_text(encoding="utf-8"), lang)
     dest.write_text(render_html(digest, lang, year=inferred_year), encoding="utf-8")
     return digest
 
@@ -2087,6 +2222,7 @@ def main(argv: list[str] | None = None) -> int:
             "examples:\n"
             "  python3 render_html.py digest-2026-01-15.md html/daily-2026-01-15.html\n"
             "  python3 render_html.py examples/sample-digest.zh-CN.md /tmp/sample.html --lang zh-CN\n"
+            "  python3 render_html.py digest.md out.html --md-en digest.en.md  # single-page bilingual\n"
             "  python3 render_html.py digest.md out.html --json      # one JSON object on stdout\n\n"
             "Markdown from either language parses (English or Chinese labels). Exit codes: "
             "0 ok; 1 input not found or malformed Markdown; 2 bad --lang."
@@ -2097,6 +2233,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("input", type=Path, help="digest markdown (digest-<date>.md or weekly-<range>.md)")
     ap.add_argument("output", type=Path, help="HTML file to write (parent directories are created)")
     ap.add_argument("--lang", help="UI language: en | zh-CN (default: $DIGEST_LANG, else en)")
+    ap.add_argument("--md-en", type=Path, help="English companion markdown to bundle into a single bilingual HTML page (primary input rendered as zh-CN)")
     ap.add_argument("--year", type=int, help="issue year override when heading omits it (default: inferred from filename, else current year)")
     ap.add_argument("--json", action="store_true", help="print one JSON object {output, lang, title, items, sections} instead of the text line")
     ns = ap.parse_args(sys.argv[1:] if argv is None else argv)
@@ -2109,17 +2246,30 @@ def main(argv: list[str] | None = None) -> int:
     if not src.exists():
         print(f"input not found: {src}", file=sys.stderr)
         return 1
+    if ns.md_en is not None and not ns.md_en.exists():
+        print(f"English input not found: {ns.md_en}", file=sys.stderr)
+        return 1
     try:
-        digest = render_file(src, dest, lang, year=ns.year)
+        digest = render_file(src, dest, lang, year=ns.year, en_md_path=ns.md_en)
     except ValueError as e:
         print(f"error: {src}: {e}", file=sys.stderr)
         return 1
+    out_lang = "zh-CN" if ns.md_en is not None else lang
     if ns.json:
         import json
-        print(json.dumps({"output": str(dest), "lang": lang, "title": digest.title, "items": len(digest.items),
-                          "sections": len(digest.sections)}, ensure_ascii=False))
+        payload = {
+            "output": str(dest),
+            "lang": out_lang,
+            "title": digest.title,
+            "items": len(digest.items),
+            "sections": len(digest.sections),
+        }
+        if ns.md_en is not None:
+            payload["bilingual"] = True
+        print(json.dumps(payload, ensure_ascii=False))
     else:
-        print(f"wrote {dest} ({len(digest.items)} items)")
+        suffix = ", bilingual" if ns.md_en is not None else ""
+        print(f"wrote {dest} ({len(digest.items)} items{suffix})")
     return 0
 
 
