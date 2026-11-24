@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.3.0](https://github.com/eatingDream/ai-digest/compare/v0.2.0...v0.3.0) (2026-11-24)
+
+
+### Features
+
+* add single-page bilingual rendering and full sidebar TOC titles ([#14](https://github.com/eatingDream/ai-digest/issues/14)) ([3ac3e09](https://github.com/eatingDream/ai-digest/commit/3ac3e095b758d9dc85ff5f3249677529145ab2b3))
+
 ## [0.2.0](https://github.com/eatingDream/ai-digest/compare/v0.1.1...v0.2.0) (2026-11-24)
 
 
