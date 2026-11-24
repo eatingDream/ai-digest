@@ -4,9 +4,7 @@ Guidance for AI coding agents (Cursor, Claude Code, Codex, …) working in this 
 
 ## What this is
 
-`ai-digest` turns ~150 sources into a daily and a weekly AI digest: a script fetches and triages candidates, an LLM agent curates them into Markdown, `render_html.py` renders one-file HTML, and `publish.py` encrypts every page client-side and deploys a static site to Cloudflare Pages. Output language is `en` (default) or `zh-CN` (`DIGEST_LANG` / `--lang`).
-
-Python 3.11+, no framework. Runtime deps: `requests`, `lxml`, `markdown`, `cryptography`. Node is only used for `verify_decrypt.mjs` and `npx wrangler`.
+`ai-digest` turns ~155 open sources into daily and weekly AI digests: a script fetches and triages candidates, an LLM agent curates Markdown, `render_html.py` renders single-file HTML, and `publish.py` encrypts every page client-side and deploys to Cloudflare Pages (`DIGEST_LANG` / `--lang`: `en` default, `zh-CN`). Python 3.11+ (`requests`, `lxml`, `markdown`, `cryptography`); Node is only used for `verify_decrypt.mjs` and `npx wrangler`.
 
 ## Setup, test, lint (run before every PR)
 
@@ -19,32 +17,30 @@ node --check verify_decrypt.mjs
 scripts/check_sanitized.sh                           # forbidden-pattern guard (must print "clean")
 ```
 
-CI (`.github/workflows/ci.yml`) also runs gitleaks over the full history. Required checks on `main`: `Python (compile + pytest)`, `Node (syntax check)`, `Secret scan (gitleaks) + sanitization guard`.
-
-Build the demo site locally (no secrets, no network): `DIGEST_DEMO_PASSWORD=demo python3 publish.py --demo --out dist/` → `/en/` and `/zh-CN/` (add `--lang en` for a single `/demo/`).
+CI (`.github/workflows/ci.yml`) also runs gitleaks over full history. Required checks on `main`: `Python (compile + pytest)`, `Node (syntax check)`, `Secret scan (gitleaks) + sanitization guard`. Local demo build (no secrets/network): `DIGEST_DEMO_PASSWORD=demo python3 publish.py --demo --out dist/` → `/en/` and `/zh-CN/` (`--lang en` for single `/demo/`).
 
 ## Repo map
 
 | Path | Purpose |
 |---|---|
 | `fetch/fetch.py` | Recall: parallel fetch of `fetch/sources.toml` → `runs/<P>/fetch/{candidates.jsonl,triage.md,triage-papers.md,report.json,report.md}` |
-| `fetch/cand.py`, `page.py`, `xparse.py`, `weekly_late.py`, `check_cands.py`, `ledger.py` | Small helpers the curation agent calls (candidate lookup, slim page fetch, X result compaction, weekly "late signal" list, papers-list validation, ledger queries/writes) |
-| `fetch/x-recall.md` | X (Twitter) search protocol the agent follows (read-only) |
-| `prompts/<en|zh-CN>/{papers,daily,weekly}.md` | The agent prompts. Self-contained; start each with a "Run contract" table |
-| `filter-notes.md`, `x-sources.md` | Selection rules and a reader-preference profile (templates); `.zh-CN.md` variants |
-| `render_html.py` | Markdown → single-file HTML (CSS embedded, full-title sidebar TOC, optional `--md-en` single-page bilingual toggle). Parses English and Chinese label vocabularies |
-| `publish.py` | Nav (dual-pane localized for bilingual issues), index, static `_redirects` (`/<slug>/{daily,weekly,}/latest` + opt-in `ROOT_LATEST` root aliases), privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
-| `i18n.py` | All UI strings, date formats, fetch labels and the bilingual Markdown vocabulary (`en`, `zh-CN`) |
-| `site/` | Password page template, `CONFIG.example`, site docs. `site/CONFIG` is local and gitignored |
-| `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`); used by tests, demo and docs |
-| `tests/` | pytest suite (offline) |
+| `fetch/cand.py`, `page.py`, `xparse.py`, `weekly_late.py`, `check_cands.py`, `ledger.py` | Curation helpers (candidate lookup, slim page fetch, X compaction, weekly "late signal" list, papers validation, ledger queries/writes) |
+| `fetch/x-recall.md` | Optional read-only X/Twitter search protocol (`.zh-CN.md` twin) |
+| `prompts/<en\|zh-CN>/{papers,daily,weekly}.md` | Self-contained agent prompts; each starts with a "Run contract" table |
+| `filter-notes.md`, `x-sources.md` | Selection rules and reader-preference profile template (`.zh-CN.md` twins) |
+| `render_html.py` | Markdown → single-file HTML (embedded CSS, full-title sidebar TOC, optional `--md-en` single-page bilingual toggle; parses EN & ZH labels) |
+| `publish.py` | Dual-pane localized nav, index, static `_redirects` (`/<slug>/{daily,weekly,}/latest` + opt-in `ROOT_LATEST`), privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
+| `i18n.py` | All UI strings, date formats, fetch labels, and bilingual Markdown vocabulary (`en`, `zh-CN`) |
+| `site/` | Password page template, `CONFIG.example`, site docs (`site/CONFIG` is local and gitignored) |
+| `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`) for tests, demo, and docs |
+| `tests/` | Offline pytest suite |
 | `version.py` | `__version__` (also `--version` on `publish.py`, `render_html.py`, `fetch/fetch.py`) |
 
-Working data is gitignored: `runs/`, `logs/`, `html/`, `ledger.json`, `digest-*.md`, `weekly-*.md`, `site/plain|sources|public`, `dist/`.
+Gitignored working data: `runs/`, `logs/`, `html/`, `ledger.json`, `digest-*.md`, `weekly-*.md`, `site/plain|sources|public`, `dist/`.
 
 ## How the pipeline runs
 
-Times are local (`DIGEST_TZ`, default UTC). A "day" `P` is a natural calendar day, windows are half-open `[P 00:00, P+1 00:00)`.
+Times are local (`DIGEST_TZ`, default UTC); natural-day windows are half-open `[P 00:00, P+1 00:00)`. Run prompts from the repo root with shell + file tools (optional read-only X search); dry-run rendering via `python3 render_html.py digest-P.md /tmp/p.html`.
 
 | Step | When | Command / prompt | Output |
 |---|---|---|---|
@@ -55,37 +51,20 @@ Times are local (`DIGEST_TZ`, default UTC). A "day" `P` is a natural calendar da
 
 File names: daily `digest-YYYY-MM-DD.md`, weekly `weekly-YYYY-MM-DD_MM-DD.md`; issue ids `daily/YYYY-MM-DD`, `weekly/YYYY-MM-DD_MM-DD`.
 
-Markdown contract (what `render_html.py` parses; either language's labels work): title `**AI Daily · M/D**` or `**AI Weekly · MM/DD–MM/DD**` (zh: `**AI精选日报 · M/D**`); seven `##` sections (Models, Papers, Tools & Projects, Industry & Products, Compute & Infrastructure, Safety & Policy, Opinions & Essays); numbered `###` items with a metadata line and the fields In brief / Why it matters / Details (/ Follow-up in weeklies). Copy the shape of `examples/sample-digest.en.md`.
-
-## Run a digest end to end with an agent
-
-1. Configure: `python3 publish.py --init` (or `cp site/CONFIG.example site/CONFIG` and replace `<...>` placeholders), put a 16+ char password in `~/.config/ai-digest/site-password` (mode 600), export `CLOUDFLARE_API_TOKEN` (scope: Account · Cloudflare Pages · Edit). Set `DIGEST_LANG` and `DIGEST_TZ`.
-2. Give the agent (shell, file read/write; optional read-only X search) the prompt file `prompts/en/daily.md` (or `prompts/zh-CN/daily.md`, `weekly.md`, `papers.md`) with the repo root as working directory. The prompt's "Run contract" lists inputs, outputs and the done condition.
-3. Dry run without deploying: `python3 render_html.py digest-P.md /tmp/p.html`; for the whole build use the demo command above.
+Markdown contract (parsed by `render_html.py` in either language): title `**AI Daily · M/D**` or `**AI Weekly · MM/DD–MM/DD**` (zh: `**AI精选日报 · M/D**`); seven `##` sections (Models, Papers, Tools & Projects, Industry & Products, Compute & Infrastructure, Safety & Policy, Opinions & Essays); numbered `###` items with a metadata line and fields In brief / Why it matters / Details (/ Follow-up in weeklies). Follow `examples/sample-digest.en.md`.
 
 ## Conventions
 
-- Python: standard library first, type hints where cheap, no new dependency without a strong reason (update `requirements*.txt`).
-- User-facing text goes through `i18n.py` (`t()` / `ft()`); never hard-code English or Chinese in `render_html.py`, `publish.py` or `fetch/`. Every key must exist in both languages (`tests/test_i18n.py` enforces it).
-- CLIs: `--help` with examples, non-interactive by default, errors on stderr with a non-zero exit code, `--json` where output is a summary. Keep behavior backward compatible.
-- Docs: English is the default; add the idiomatic Chinese in the `.zh-CN.md` / `README.zh-CN.md` twin when you change user-facing docs. Keep READMEs lean.
-- Add or update tests with every behavior change; keep `pytest -q` offline and fast.
-- Changelog & releases: managed automatically by Release Please (`.github/workflows/release-please.yml`, `release-please-config.json`, `.release-please-manifest.json`) from Conventional Commit PR titles; normal PRs do not need to edit `version.py` or `CHANGELOG.md`.
-- Community files: `CONTRIBUTING.md` (+ `.zh-CN.md`), `SECURITY.md`, `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE.md` describe the human contribution flow; keep them in sync with the rules here (required checks, sanitization).
+- Python: stdlib first, light type hints, minimize new deps (update `requirements*.txt`), add offline tests for behavior changes.
+- i18n & docs: all user-facing strings go through `i18n.py` (`t()` / `ft()`) in both `en` and `zh-CN` (`tests/test_i18n.py` enforces parity); keep `.zh-CN.md` doc twins idiomatic and READMEs lean.
+- CLIs: `--help` with examples, non-interactive by default, stderr + non-zero exit on errors, `--json` for summaries, backward compatible.
+- Releases & community files: Release Please (`.github/workflows/release-please.yml`) manages `version.py`, `CHANGELOG.md`, and tagged releases from Conventional Commit PR titles — don't edit them in normal PRs. Keep `CONTRIBUTING*.md` and `.github/` templates in sync with rules here.
 
-## Safety rules
+## Safety rules & do / don't
 
-- Never commit secrets, tokens, passwords, salts, personal data, real private URLs or the reader's handles. `site/CONFIG`, password/salt files and `ledger.json` stay local. Never print a token or password in logs or output.
-- Run `scripts/check_sanitized.sh` and `pytest -q` before pushing. Digest content in examples/tests must be synthetic (`example.com` links, fictional names).
-- `main` is protected for everyone (including admins, linear history, squash-only): branch from `main` using `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`, use a Conventional Commit PR title, wait for all required checks and thread resolution, then squash-merge. Never push directly to `main` or force-push published history; releases are automated by Release Please (merging its standing `chore(main): release X.Y.Z` PR automatically tags `vX.Y.Z`, creates the GitHub Release, and invokes `release.yml` to attach verified assets).
-- `publish.py` deploys to a real site and `--rotate-password` / `--remove` change it: run them only when the task says so. The demo build (`--demo`) is always safe.
-- X/Twitter access is read-only. Do not post, like, follow or message.
-
-## Do / don't
-
-- Do read the relevant prompt in `prompts/` before changing pipeline behavior; they are the spec for the curation step.
-- Do use the helpers (`fetch/ledger.py find`, `fetch/cand.py`, `fetch/page.py`) instead of reading `ledger.json`, `candidates.jsonl` or whole pages into context.
-- Do keep one primary language per site directory; link separate companion sites via `LANG_ALT` (the bilingual demo builds `/en/` and `/zh-CN/` sharing one salt), or bundle an English companion into each `zh-CN` issue page via `--md-en` / sibling `<stem>.en.md`.
-- Don't edit generated output (`dist/`, `site/public`, `runs/`) by hand or commit it.
-- Demo builds (`publish.py --demo`) show the public demo password on the unlock page (`{{demo_hint}}` in `site/password_template.html`); the live pipeline never does. Keep it that way.
-- Don't change the encryption parameters or the password-page contract (`id="pw"`, `id="rm"`, `__ENCRYPT_CFG_JSON__`) without updating `verify_decrypt.mjs` and the tests.
+- Never commit secrets, tokens, passwords, salts, personal data, real private URLs, or handles (`site/CONFIG`, password/salt files, and `ledger.json` stay local; never log tokens/passwords). Examples and tests use synthetic data (`example.com`, fictional names).
+- `main` is protected (`enforce_admins`, squash-only linear history): branch with `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`, use a Conventional Commit PR title, wait for required checks, then squash-merge; never push to `main` or force-push published history.
+- Run `publish.py` live deploys, `--rotate-password`, or `--remove` only when explicitly requested (`--demo` is always safe). X/Twitter access is strictly read-only.
+- Read the relevant `prompts/` spec before changing pipeline behavior; use helpers (`ledger.py`, `cand.py`, `page.py`) instead of loading `ledger.json`, `candidates.jsonl`, or full web pages into context.
+- Keep one primary language per site directory (`LANG_ALT` for companion sites; `--md-en` / sibling `<stem>.en.md` for single-page bilingual issues); never hand-edit or commit `dist/`, `site/public`, or `runs/`.
+- Keep `{{demo_hint}}` in `site/password_template.html` demo-only, and never alter encryption parameters or password-page DOM contracts (`id="pw"`, `id="rm"`, `__ENCRYPT_CFG_JSON__`) without updating `verify_decrypt.mjs` and tests.
