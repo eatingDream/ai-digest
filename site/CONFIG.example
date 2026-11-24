@@ -13,3 +13,5 @@ SLUG=<random-unguessable-slug>
 LANG=en
 # Optional companion site in the other language (e.g. zh-CN:/zh-CN/ or https://zh.digest.example.com/<slug>/)
 LANG_ALT=
+# Optional: expose root-level /latest, /daily/latest, /weekly/latest 302 redirects (off by default so SLUG stays unguessable)
+# ROOT_LATEST=0

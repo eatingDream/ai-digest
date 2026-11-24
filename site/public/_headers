@@ -11,3 +11,19 @@
   Cache-Control: public, max-age=300, stale-while-revalidate=604800
 /<SITE_SLUG>/weekly/*
   Cache-Control: public, max-age=300, stale-while-revalidate=604800
+/<SITE_SLUG>/latest
+  Cache-Control: no-store
+/<SITE_SLUG>/latest/
+  Cache-Control: no-store
+/<SITE_SLUG>/daily/latest
+  ! Cache-Control
+  Cache-Control: no-store
+/<SITE_SLUG>/daily/latest/
+  ! Cache-Control
+  Cache-Control: no-store
+/<SITE_SLUG>/weekly/latest
+  ! Cache-Control
+  Cache-Control: no-store
+/<SITE_SLUG>/weekly/latest/
+  ! Cache-Control
+  Cache-Control: no-store

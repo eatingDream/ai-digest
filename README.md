@@ -102,6 +102,7 @@ Environment variables take precedence over `site/CONFIG`.
 | `DIGEST_SITE_SALT_FILE` | — | PBKDF2 salt file (auto-generated) | `~/.config/ai-digest/site-salt` |
 | `DIGEST_LANG` | `LANG` | Language of the digest and the site UI: `en` or `zh-CN` (`--lang` overrides) | `en` |
 | `DIGEST_LANG_ALT` | `LANG_ALT` | Optional companion site URL/path in the other language (e.g. `zh-CN:/zh-CN/`) | — |
+| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | Opt-in root `/latest`, `/daily/latest`, `/weekly/latest` static 302 redirects (`1`/`true`/`yes`/`on`; slug-scoped `/<slug>/...latest` aliases are always generated in `_redirects`) | `0` (off) |
 | `DIGEST_TZ` | — | IANA time zone that defines a "day" | `UTC` |
 | `DIGEST_ROOT` | — | Working directory for `runs/`, `html/`, `site/`, `ledger.json`, `logs/`, and `state/` | repo root |
 | `LEDGER_PATH` | — | Explicit path to `ledger.json` (auto-created on first `ledger.py add`) | `<DIGEST_ROOT>/ledger.json` |

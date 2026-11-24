@@ -84,7 +84,22 @@ def test_demo_build_chinese(tmp_path):
 
 def test_demo_default_builds_both_languages(tmp_path):
     out = _build_demo(tmp_path)  # no --lang, no $DIGEST_LANG -> English + Chinese in one tree
-    assert (out / "_redirects").read_text().strip() == "/ /en/ 302"
+    redir_lines = (out / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert redir_lines == [
+        "/ /en/ 302",
+        f"/en/daily/latest /en/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/en/daily/latest/ /en/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/en/weekly/latest /en/weekly/{publish.DEMO_WEEKLY_LABEL} 302",
+        f"/en/weekly/latest/ /en/weekly/{publish.DEMO_WEEKLY_LABEL} 302",
+        f"/en/latest /en/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/en/latest/ /en/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/zh-CN/daily/latest /zh-CN/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/zh-CN/daily/latest/ /zh-CN/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/zh-CN/weekly/latest /zh-CN/weekly/{publish.DEMO_WEEKLY_LABEL} 302",
+        f"/zh-CN/weekly/latest/ /zh-CN/weekly/{publish.DEMO_WEEKLY_LABEL} 302",
+        f"/zh-CN/latest /zh-CN/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/zh-CN/latest/ /zh-CN/daily/{publish.DEMO_DAILY_LABEL} 302",
+    ]
     assert not (out / "demo").exists()
     shells, plains, salts = {}, {}, set()
     for lg in ("en", "zh-CN"):
@@ -103,8 +118,12 @@ def test_demo_default_builds_both_languages(tmp_path):
         assert f'href="{href_zh}" hreflang="en"' in plains["zh-CN", rel]
     assert "Why it matters" in plains["en", "daily/2026-01-15.html"]
     assert "值得看" in plains["zh-CN", "daily/2026-01-15.html"]
-    headers = (out / "_headers").read_text()
+    headers = (out / "_headers").read_text(encoding="utf-8")
     assert "/en/daily/*" in headers and "/zh-CN/daily/*" in headers
+    assert "/en/daily/latest\n  ! Cache-Control\n  Cache-Control: no-store" in headers
+    assert "/zh-CN/weekly/latest\n  ! Cache-Control\n  Cache-Control: no-store" in headers
+    assert headers.index("/en/daily/*") < headers.index("/en/daily/latest")
+    assert headers.index("/zh-CN/weekly/*") < headers.index("/zh-CN/weekly/latest")
 
 
 def test_demo_lang_all_flag_and_env_single(tmp_path):
@@ -618,4 +637,283 @@ def test_privacy_scan_catches_leak_in_english_pane(tmp_path):
         raise AssertionError("expected SystemExit on privacy hit in EN pane")
     except SystemExit:
         pass
+
+
+def _make_issue(tmp_path: Path, kind: str, label: str) -> publish.Issue:
+    src = tmp_path / f"{kind}-{label}.html"
+    src.write_text(f"<!DOCTYPE html><html><head><title>{kind} {label}</title></head><body><main></main></body></html>", encoding="utf-8")
+    if kind == "daily":
+        start = end = publish.parse_daily_label(label)
+    else:
+        start, end = publish.parse_weekly_label(label)
+    return publish.Issue(kind=kind, label=label, source=src, start=start, end=end, title=f"{kind} {label}")
+
+
+def test_static_latest_redirects_update_and_keep_root_private_by_default(monkeypatch, tmp_path):
+    site = tmp_path / "site"
+    monkeypatch.setattr(publish, "SITE", site)
+    monkeypatch.setattr(publish, "PUBLIC", site / "public")
+    monkeypatch.setattr(publish, "PLAIN", site / "plain")
+    monkeypatch.setattr(publish, "SOURCES", site / "sources")
+    monkeypatch.setattr(publish, "CONFIG_PATH", site / "CONFIG")
+    monkeypatch.delenv("DIGEST_ROOT_LATEST", raising=False)
+    monkeypatch.delenv("SITE_SLUG", raising=False)
+
+    slug = "privateslug01"
+    (site / "CONFIG").parent.mkdir(parents=True, exist_ok=True)
+    (site / "CONFIG").write_text(f"SLUG={slug}\nLANG=en\n", encoding="utf-8")
+    cfg = publish.load_config()
+    assert cfg["ROOT_LATEST"] == "0"
+
+    # 1. Daily only -> daily/latest + latest point to that daily; no weekly/latest; no root rules.
+    d1 = _make_issue(tmp_path, "daily", "2026-01-14")
+    publish.write_static_root(slug=slug, issues=[d1])
+    lines = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        f"/{slug}/daily/latest /{slug}/daily/2026-01-14 302",
+        f"/{slug}/daily/latest/ /{slug}/daily/2026-01-14 302",
+        f"/{slug}/latest /{slug}/daily/2026-01-14 302",
+        f"/{slug}/latest/ /{slug}/daily/2026-01-14 302",
+    ]
+    assert not any(line.startswith(("/latest", "/daily/latest", "/weekly/latest")) for line in lines)
+
+    headers = (site / "public" / "_headers").read_text(encoding="utf-8")
+    assert headers.index(f"/{slug}/daily/*") < headers.index(f"/{slug}/daily/latest")
+    assert headers.index(f"/{slug}/weekly/*") < headers.index(f"/{slug}/weekly/latest")
+    assert f"/{slug}/latest\n  Cache-Control: no-store\n" in headers
+    assert f"/{slug}/daily/latest\n  ! Cache-Control\n  Cache-Control: no-store\n" in headers
+    assert f"/{slug}/weekly/latest\n  ! Cache-Control\n  Cache-Control: no-store\n" in headers
+    assert "\n/latest\n" not in headers and "\n/daily/latest\n" not in headers and "\n/weekly/latest\n" not in headers
+
+    # 2. Add a weekly + newer daily + newer weekly -> latest updates to newest of each kind.
+    w1 = _make_issue(tmp_path, "weekly", "2026-01-12_01-18")
+    d2 = _make_issue(tmp_path, "daily", "2026-01-15")
+    w2 = _make_issue(tmp_path, "weekly", "2026-01-19_01-25")
+    publish.write_static_root(slug=slug, issues=[d1, w1, d2, w2])
+    lines = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        f"/{slug}/daily/latest /{slug}/daily/2026-01-15 302",
+        f"/{slug}/daily/latest/ /{slug}/daily/2026-01-15 302",
+        f"/{slug}/weekly/latest /{slug}/weekly/2026-01-19_01-25 302",
+        f"/{slug}/weekly/latest/ /{slug}/weekly/2026-01-19_01-25 302",
+        f"/{slug}/latest /{slug}/daily/2026-01-15 302",
+        f"/{slug}/latest/ /{slug}/daily/2026-01-15 302",
+    ]
+
+    # 3. Weekly-only site -> /{slug}/latest falls back to latest_weekly.
+    publish.write_static_root(slug=slug, issues=[w1, w2])
+    lines = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        f"/{slug}/weekly/latest /{slug}/weekly/2026-01-19_01-25 302",
+        f"/{slug}/weekly/latest/ /{slug}/weekly/2026-01-19_01-25 302",
+        f"/{slug}/latest /{slug}/weekly/2026-01-19_01-25 302",
+        f"/{slug}/latest/ /{slug}/weekly/2026-01-19_01-25 302",
+    ]
+
+
+def test_root_latest_opt_in_via_config_and_env(monkeypatch, tmp_path):
+    site = tmp_path / "site"
+    monkeypatch.setattr(publish, "SITE", site)
+    monkeypatch.setattr(publish, "PUBLIC", site / "public")
+    monkeypatch.setattr(publish, "PLAIN", site / "plain")
+    monkeypatch.setattr(publish, "SOURCES", site / "sources")
+    monkeypatch.setattr(publish, "CONFIG_PATH", site / "CONFIG")
+    monkeypatch.delenv("SITE_SLUG", raising=False)
+    monkeypatch.delenv("DIGEST_ROOT_LATEST", raising=False)
+
+    slug = "rootoptinslug"
+    d1 = _make_issue(tmp_path, "daily", "2026-01-15")
+    w1 = _make_issue(tmp_path, "weekly", "2026-01-12_01-18")
+
+    # Truthy values in site/CONFIG (1, true, yes, on) + write_config round-trip.
+    for val in ("1", "true", "YES", "On"):
+        publish.write_config({"SLUG": slug, "LANG": "en", "ROOT_LATEST": val})
+        assert f"ROOT_LATEST={val}" in (site / "CONFIG").read_text(encoding="utf-8")
+        cfg = publish.load_config()
+        assert cfg["ROOT_LATEST"] == "1"
+
+    publish.write_static_root(slug=slug, issues=[d1, w1])
+    lines = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        f"/{slug}/daily/latest /{slug}/daily/2026-01-15 302",
+        f"/{slug}/daily/latest/ /{slug}/daily/2026-01-15 302",
+        f"/{slug}/weekly/latest /{slug}/weekly/2026-01-12_01-18 302",
+        f"/{slug}/weekly/latest/ /{slug}/weekly/2026-01-12_01-18 302",
+        f"/{slug}/latest /{slug}/daily/2026-01-15 302",
+        f"/{slug}/latest/ /{slug}/daily/2026-01-15 302",
+        f"/daily/latest /{slug}/daily/2026-01-15 302",
+        f"/daily/latest/ /{slug}/daily/2026-01-15 302",
+        f"/weekly/latest /{slug}/weekly/2026-01-12_01-18 302",
+        f"/weekly/latest/ /{slug}/weekly/2026-01-12_01-18 302",
+        f"/latest /{slug}/daily/2026-01-15 302",
+        f"/latest/ /{slug}/daily/2026-01-15 302",
+    ]
+    headers = (site / "public" / "_headers").read_text(encoding="utf-8")
+    assert "\n/latest\n  Cache-Control: no-store\n" in headers
+    assert "\n/daily/latest\n  Cache-Control: no-store\n" in headers
+    assert "\n/weekly/latest\n  Cache-Control: no-store\n" in headers
+
+    # Env DIGEST_ROOT_LATEST=0 overrides ROOT_LATEST=1 in CONFIG.
+    monkeypatch.setenv("DIGEST_ROOT_LATEST", "0")
+    assert publish.load_config()["ROOT_LATEST"] == "0"
+    publish.write_static_root(slug=slug, issues=[d1, w1])
+    lines_off = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert not any(line.startswith(("/latest", "/daily/latest", "/weekly/latest")) for line in lines_off)
+    assert "\n/latest\n" not in (site / "public" / "_headers").read_text(encoding="utf-8")
+
+    # Env DIGEST_ROOT_LATEST=1 enables root redirects even when CONFIG omits ROOT_LATEST.
+    publish.write_config({"SLUG": slug, "LANG": "en"})
+    monkeypatch.setenv("DIGEST_ROOT_LATEST", "1")
+    assert publish.load_config()["ROOT_LATEST"] == "1"
+    publish.write_static_root(slug=slug, issues=[d1])
+    lines_env = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert f"/daily/latest /{slug}/daily/2026-01-15 302" in lines_env
+    assert f"/latest /{slug}/daily/2026-01-15 302" in lines_env
+
+
+def test_latest_redirects_coexist_with_removed_paths_and_backward_compat(monkeypatch, tmp_path):
+    site = tmp_path / "site"
+    monkeypatch.setattr(publish, "SITE", site)
+    monkeypatch.setattr(publish, "PUBLIC", site / "public")
+    monkeypatch.setattr(publish, "PLAIN", site / "plain")
+    monkeypatch.setattr(publish, "SOURCES", site / "sources")
+    monkeypatch.setattr(publish, "CONFIG_PATH", site / "CONFIG")
+    monkeypatch.delenv("DIGEST_ROOT_LATEST", raising=False)
+    monkeypatch.delenv("SITE_SLUG", raising=False)
+
+    slug = "coexistslug01"
+    site.mkdir(parents=True, exist_ok=True)
+    # Include a duplicate removed path and a colliding daily/latest entry to test dedup.
+    (site / "removed-paths.txt").write_text(
+        "daily/2026-01-10\ndaily/2026-01-10\ndaily/latest\n",
+        encoding="utf-8",
+    )
+    # Backward compat: save a real source and call write_static_root(slug=...) with issues omitted and no CONFIG.
+    raw = tmp_path / "raw.html"
+    raw.write_text("<!DOCTYPE html><html><head><title>AI Daily · 1/15</title></head><body><main></main></body></html>", encoding="utf-8")
+    publish.save_source(raw, "daily", "2026-01-15")
+
+    publish.write_static_root(slug=slug)
+    lines = (site / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        f"/{slug}/daily/latest /{slug}/daily/2026-01-15 302",
+        f"/{slug}/daily/latest/ /{slug}/daily/2026-01-15 302",
+        f"/{slug}/latest /{slug}/daily/2026-01-15 302",
+        f"/{slug}/latest/ /{slug}/daily/2026-01-15 302",
+        f"/{slug}/daily/2026-01-10 /{slug}/ 302",
+        f"/{slug}/daily/2026-01-10.html /{slug}/ 302",
+        f"/{slug}/daily/latest.html /{slug}/ 302",
+    ]
+    # Privacy scan accepts _redirects cleanly.
+    publish.privacy_scan(publish.iter_unencrypted_public())
+
+    # Empty sources + no removed-paths unlinks stale _redirects.
+    (site / "removed-paths.txt").unlink()
+    publish.write_static_root(slug=slug, issues=[])
+    assert not (site / "public" / "_redirects").exists()
+
+
+def test_demo_single_lang_latest_redirects_and_ignores_host_root_latest(monkeypatch, tmp_path):
+    monkeypatch.setenv("DIGEST_ROOT_LATEST", "1")
+    out = _build_demo(tmp_path, "--lang", "en")
+    lines = (out / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        "/ /demo/ 302",
+        f"/demo/daily/latest /demo/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/demo/daily/latest/ /demo/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/demo/weekly/latest /demo/weekly/{publish.DEMO_WEEKLY_LABEL} 302",
+        f"/demo/weekly/latest/ /demo/weekly/{publish.DEMO_WEEKLY_LABEL} 302",
+        f"/demo/latest /demo/daily/{publish.DEMO_DAILY_LABEL} 302",
+        f"/demo/latest/ /demo/daily/{publish.DEMO_DAILY_LABEL} 302",
+    ]
+    assert not any(line.startswith(("/latest", "/daily/latest", "/weekly/latest")) for line in lines)
+
+
+def test_deploy_via_pages_api_uploads_redirects_when_present(monkeypatch, tmp_path):
+    pub = tmp_path / "public"
+    pub.mkdir()
+    (pub / "_headers").write_text("/*\n  X-Frame-Options: DENY\n", encoding="utf-8")
+    (pub / "_redirects").write_text("/slug1234/latest /slug1234/daily/2026-01-15 302\n", encoding="utf-8")
+    (pub / "robots.txt").write_text("User-agent: *\nDisallow: /\n", encoding="utf-8")
+    monkeypatch.setattr(publish, "PUBLIC", pub)
+
+    captured_forms: list[bytes] = []
+
+    def fake_cf_request(token, method, path, body=None, form=None, form_content_type=None):
+        if path.endswith("/upload-token"):
+            return {"result": {"jwt": "synthetic-jwt"}}
+        if path.endswith("/check-missing"):
+            return {"result": []}
+        if path.endswith("/upsert-hashes"):
+            return {"success": True}
+        if path.endswith("/deployments"):
+            assert form is not None
+            captured_forms.append(form)
+            return {"success": True, "result": {"url": "https://example.pages.dev"}}
+        raise AssertionError(f"unexpected cf_request path: {path}")
+
+    monkeypatch.setattr(publish, "cf_request", fake_cf_request)
+    cfg = {"ACCOUNT_ID": "acc123", "PROJECT": "proj123", "SLUG": "slug1234"}
+
+    # With _redirects present -> multipart payload includes both _headers and _redirects.
+    res = publish._deploy_via_pages_api(cfg, "tok", "test deploy")
+    assert res["via"] == "pages-api"
+    payload = captured_forms[-1].decode("utf-8")
+    assert 'name="_headers"; filename="_headers"' in payload
+    assert 'name="_redirects"; filename="_redirects"' in payload
+    assert "/slug1234/latest /slug1234/daily/2026-01-15 302" in payload
+
+    # Without _redirects -> multipart payload omits _redirects cleanly.
+    (pub / "_redirects").unlink()
+    publish._deploy_via_pages_api(cfg, "tok", "test deploy 2")
+    payload2 = captured_forms[-1].decode("utf-8")
+    assert 'name="_headers"; filename="_headers"' in payload2
+    assert 'name="_redirects"' not in payload2
+
+
+def test_incremental_cli_updates_latest_redirects_and_root_latest(tmp_path):
+    work = tmp_path / "work"
+    pw_file = tmp_path / "site-password"
+    salt_file = tmp_path / "site-salt"
+    pw_file.write_text("synthetic-test-pass-5555\n", encoding="utf-8")
+    pw_file.chmod(0o600)
+
+    (work / "site").mkdir(parents=True)
+    (work / "site" / "CONFIG").write_text("SLUG=clilatest01\nLANG=en\n", encoding="utf-8")
+
+    env = dict(
+        os.environ,
+        DIGEST_ROOT=str(work),
+        DIGEST_SITE_PASSWORD_FILE=str(pw_file),
+        DIGEST_SITE_SALT_FILE=str(salt_file),
+        DIGEST_TZ="UTC",
+    )
+    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST"):
+        env.pop(k, None)
+
+    def run_pub(*args, extra_env=None):
+        e = dict(env, **(extra_env or {}))
+        return subprocess.run(
+            [sys.executable, str(ROOT / "publish.py"), *args],
+            env=e, capture_output=True, text=True, cwd=str(ROOT),
+        )
+
+    r1 = run_pub("--issue", "daily/2026-01-14", "--md", "examples/sample-digest.en.md", "--prepare-only")
+    assert r1.returncode == 0, r1.stdout + r1.stderr
+    r_lines1 = (work / "site" / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert "/clilatest01/daily/latest /clilatest01/daily/2026-01-14 302" in r_lines1
+    assert "/clilatest01/latest /clilatest01/daily/2026-01-14 302" in r_lines1
+    assert not any(line.startswith("/latest") or line.startswith("/daily/latest") for line in r_lines1)
+
+    r2 = run_pub(
+        "--issue", "daily/2026-01-15", "--md", "examples/sample-digest.en.md", "--prepare-only",
+        extra_env={"DIGEST_ROOT_LATEST": "1"},
+    )
+    assert r2.returncode == 0, r2.stdout + r2.stderr
+    r_lines2 = (work / "site" / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert "/clilatest01/daily/latest /clilatest01/daily/2026-01-15 302" in r_lines2
+    assert "/daily/latest /clilatest01/daily/2026-01-15 302" in r_lines2
+    assert "/latest /clilatest01/daily/2026-01-15 302" in r_lines2
+    headers2 = (work / "site" / "public" / "_headers").read_text(encoding="utf-8")
+    assert "\n/daily/latest\n  Cache-Control: no-store\n" in headers2
 
