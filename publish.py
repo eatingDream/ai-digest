@@ -214,20 +214,33 @@ NAV_CSS = """
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 16px;
-  padding: 12px 0;
+  gap: 4px 14px;
+  padding: 6px 0 8px;
   font-size: 12.5px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   color: var(--ink-4);
 }
-.issue-nav.top { border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.issue-nav.top { border-top: 1px solid var(--line-soft); }
 .issue-nav.bottom {
   border-top: 1px solid var(--line);
   margin-top: 28px;
   padding: 18px 0 0;
 }
+.issue-nav a, .issue-nav .lock {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  margin: 0 -4px;
+  border-radius: 999px;
+  transition: transform 240ms var(--spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+              background-color 140ms ease, color 140ms ease;
+}
 .issue-nav a { color: var(--accent-ink); text-decoration: none; }
-.issue-nav a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.issue-nav a:hover {
+  background: var(--accent-softer, rgba(23, 107, 117, 0.06));
+  transform: translateY(-1px);
+}
+.issue-nav a:active, .issue-nav .lock:active { transform: scale(0.94); transition-duration: 80ms; }
 .issue-nav .gone { color: var(--ink-4); opacity: 0.45; }
 .issue-nav .sep {
   width: 1px;
@@ -237,12 +250,13 @@ NAV_CSS = """
 }
 .issue-nav .week-link { margin-left: auto; }
 .issue-nav .lock {
-  border: 0; padding: 0; background: none; font: inherit; letter-spacing: inherit;
+  border: 0; background: none; font: inherit; letter-spacing: inherit;
   color: var(--ink-4); cursor: pointer;
 }
-.issue-nav .lock:hover { color: var(--accent-ink); }
+.issue-nav .lock:hover { color: var(--accent-ink); background: var(--well, rgba(128,128,128,.08)); }
 .issue-nav .lang-switch { color: var(--ink-4); }
 @media (max-width: 560px) {
+  .issue-nav { gap: 4px 10px; font-size: 12px; }
   .issue-nav .week-link { margin-left: 0; }
 }
 """.strip()
@@ -729,9 +743,10 @@ def nav_html(
     prev = same[idx - 1] if idx > 0 else None  # 上一期 = older
     nxt = same[idx + 1] if idx + 1 < len(same) else None  # 下一期 = newer
 
-    def link(href: str, text: str, extra: str = "") -> str:
+    def link(href: str, text: str, extra: str = "", nav: str = "") -> str:
         cls = f' class="{extra}"' if extra else ""
-        return f'<a href="{href}"{cls}>{text}</a>'
+        dn = f' data-nav="{nav}"' if nav else ""
+        return f'<a href="{href}"{cls}{dn}>{text}</a>'
 
     def gone(text: str) -> str:
         return f'<span class="gone">{text}</span>'
@@ -741,10 +756,10 @@ def nav_html(
     prev_href = f"{prefix}/{issue.kind}/{prev.label}" if (abs_links and prev) else (prev.label if prev else "")
     nxt_href = f"{prefix}/{issue.kind}/{nxt.label}" if (abs_links and nxt) else (nxt.label if nxt else "")
 
-    parts = [link(idx_href, tr("nav_index"))]
+    parts = [link(idx_href, tr("nav_index"), nav="index")]
     parts.append('<span class="sep" aria-hidden="true"></span>')
-    parts.append(link(prev_href, tr("nav_prev")) if prev else gone(tr("nav_prev")))
-    parts.append(link(nxt_href, tr("nav_next")) if nxt else gone(tr("nav_next")))
+    parts.append(link(prev_href, tr("nav_prev"), nav="prev") if prev else gone(tr("nav_prev")))
+    parts.append(link(nxt_href, tr("nav_next"), nav="next") if nxt else gone(tr("nav_next")))
 
     if issue.kind == "daily":
         weeklies = [
@@ -756,7 +771,7 @@ def nav_html(
         if weeklies:
             wk_href = f"{prefix}/weekly/{weeklies[0].label}" if abs_links else f"../weekly/{weeklies[0].label}"
             parts.append(
-                link(wk_href, tr("nav_week"), "week-link")
+                link(wk_href, tr("nav_week"), "week-link", nav="week")
             )
 
     if which == "top":
@@ -796,7 +811,8 @@ def _inject_nav_into_fragment(
     )
     if "</header>" not in fragment.lower():
         die(f"{issue.kind}/{issue.label}: no </header> to place top nav")
-    fragment = re.sub(r"</header>", lambda m: m.group(0) + "\n" + top, fragment, count=1, flags=re.I)
+    # Place top nav inside <header class="mast"> so it rides along with the sticky auto-hide TopBar.
+    fragment = re.sub(r"</header>", lambda m: top + "\n" + m.group(0), fragment, count=1, flags=re.I)
     # Place bottom nav after the end-of-issue marker, still inside the footer if present.
     end_m = re.search(r'<div class="end">[^<]*</div>', fragment)
     if end_m:
@@ -1196,12 +1212,39 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
             for tg in top_tags
         ]
         tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
+    latest_daily, latest_weekly, _ = _latest_issues(issues)
+    quick_bits: list[str] = []
+    if latest_daily:
+        quick_bits.append(
+            f'<a class="quick-pill" href="daily/latest"><span class="qp-dot" aria-hidden="true"></span>'
+            f'<span>{_esc(_t("latest_daily"))}</span><span class="qp-meta num">{_md(latest_daily.start)}</span></a>'
+        )
+    if latest_weekly:
+        quick_bits.append(
+            f'<a class="quick-pill" href="weekly/latest">'
+            f'<span>{_esc(_t("latest_weekly"))}</span><span class="qp-meta num">{_md(latest_weekly.start)}–{_md(latest_weekly.end)}</span></a>'
+        )
+    quick_bar = f'<div class="quick-bar">{"".join(quick_bits)}</div>' if quick_bits else ""
+    lbl_sys, lbl_light, lbl_dark = _t("theme_system"), _t("theme_light"), _t("theme_dark")
+    theme_labels_json = _esc(f'{{"system":"{lbl_sys}","light":"{lbl_light}","dark":"{lbl_dark}"}}')
+    theme_toggle_btn = (
+        f'<button type="button" class="ctrl-btn theme-btn theme-switch" data-theme-toggle data-mode="system"'
+        f' data-aria-base="{_esc(_t("appearance"))}" data-labels="{theme_labels_json}"'
+        f' aria-label="{_esc(_t("appearance"))}" title="{_esc(_t("theme_toggle_title"))}">'
+        '<span class="theme-ics" aria-hidden="true">'
+        '<svg class="ic-sys" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.8"/><path d="M8 2.2A5.8 5.8 0 0 1 8 13.8Z" fill="currentColor" stroke="none"/></svg>'
+        '<svg class="ic-sun" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.6v1.6M8 12.8v1.6M1.6 8h1.6M12.8 8h1.6M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1"/></svg>'
+        '<svg class="ic-moon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 9.8A5.5 5.5 0 0 1 6.2 2.8a5.6 5.6 0 1 0 7 7Z"/></svg>'
+        '</span>'
+        f'<span class="ctrl-lbl">{_esc(lbl_sys)}</span></button>'
+    )
     filter_bar = (
         f'<div class="filter-bar" id="archiveFilterBar" role="search" aria-label="{_esc(_t("archive_filter_label"))}"'
         f' data-total="{len(issues)}" data-tpl="{_esc(_t("filter_shown"))}">'
         '<div class="filter-row">'
         f'<input type="search" id="archiveFilterInput" class="filter-input" placeholder="{_esc(_t("archive_filter_placeholder"))}"'
         f' aria-label="{_esc(_t("archive_filter_label"))}" autocomplete="off" spellcheck="false">'
+        '<kbd class="filter-kbd" aria-hidden="true">/</kbd>'
         f'<span id="archiveFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
         f'<button type="button" id="archiveFilterClear" class="filter-clear" hidden>{_esc(_t("filter_clear"))}</button>'
         f"</div>{tag_chips}</div>"
@@ -1216,10 +1259,9 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
 <meta name="robots" content="noindex,nofollow">
 {META_MARK_END}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6">
-<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13191c">
+<meta name="theme-color" content="#faf9f6">
 <title>{_esc(_t("index_title"))}</title>
-<script>(function(){{try{{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}}})();</script>
+<script>(function(){{try{{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);var dk=t==='dark'||(t!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',dk?'#13191c':'#faf9f6');}}catch(e){{}}}})();</script>
 {perf_head}<style>
 :root {{
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -1242,6 +1284,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
   --accent-ink: #145f68;
   --well: #f3f3ef;
   --shadow-soft: 0 4px 12px rgba(28, 39, 51, 0.06);
+  --btn-glint: rgba(255, 255, 255, 0.55);
   color-scheme: light;
 }}
 @media (prefers-color-scheme: dark) {{
@@ -1260,6 +1303,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
     --accent: #12ccd8;
     --accent-ink: #2ce2e8;
     --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.35);
+    --btn-glint: rgba(255, 255, 255, 0.08);
     color-scheme: dark;
   }}
 }}
@@ -1278,6 +1322,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
   --accent: #12ccd8;
   --accent-ink: #2ce2e8;
   --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.35);
+  --btn-glint: rgba(255, 255, 255, 0.08);
   color-scheme: dark;
 }}
 * {{ box-sizing: border-box; }}
@@ -1313,13 +1358,6 @@ button {{ cursor: pointer; font-family: inherit; }}
 }}
 .mast-top .motto {{ display: none; letter-spacing: 0.3em; }}
 @media (min-width: 640px) {{ .mast-top .motto {{ display: inline; }} }}
-.theme-switch {{ display: inline-flex; align-items: center; gap: 2px; }}
-.theme-switch button {{
-  height: 26px; padding: 0 8px; border: 0; border-radius: 999px;
-  background: transparent; color: var(--ink-4); font-size: 12px;
-}}
-.theme-switch button[aria-pressed="true"],
-.theme-switch button:hover {{ color: var(--ink); background: var(--bg-sunk); }}
 .mast-row {{
   display: flex; align-items: stretch; justify-content: space-between;
   gap: 20px; padding: 24px 0;
@@ -1499,7 +1537,6 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 @media (max-width: 639px) {{
   .mast-bar {{ gap: 8px; }}
   .mast-bar .edition {{ display: none; }}
-  .mast-bar .theme-switch button {{ height: 24px; padding: 0 6px; font-size: 11.5px; }}
 }}
 .filter-bar {{
   margin: 18px 0 8px;
@@ -1511,45 +1548,59 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   flex-direction: column;
   gap: 8px;
 }}
-.filter-row {{ display: flex; align-items: center; gap: 8px; }}
+.filter-row {{ display: flex; align-items: center; gap: 8px; position: relative; }}
 .filter-input {{
   flex: 1 1 auto;
   min-width: 0;
-  height: 32px;
-  padding: 0 11px;
+  height: 34px;
+  padding: 0 34px 0 11px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--surface);
   color: var(--ink);
   font-family: inherit;
   font-size: 13.5px;
   outline: none;
+  transition: border-color 150ms ease, box-shadow 180ms ease;
 }}
 .filter-input::placeholder {{ color: var(--ink-4); }}
-.filter-input:focus {{ border-color: var(--accent); }}
+.filter-input:focus {{
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}}
+.filter-kbd {{
+  position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+  padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--bg-sunk); color: var(--ink-4); font-size: 11px; line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none;
+  transition: opacity 140ms ease;
+}}
+.filter-row:focus-within .filter-kbd, .filter-bar.is-active .filter-kbd {{ opacity: 0; }}
+@media (hover: none), (max-width: 639px) {{ .filter-kbd {{ display: none; }} }}
 .filter-count {{ flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 4px; }}
 .filter-clear {{
-  flex: 0 0 auto;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--ink-3);
-  font-size: 12px;
+  flex: 0 0 auto; height: 26px; padding: 0 10px; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--surface); color: var(--ink-3); font-size: 12px;
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), color 140ms ease, border-color 140ms ease;
 }}
-.filter-clear:hover {{ color: var(--ink); border-color: var(--accent); }}
+.filter-clear:hover {{ color: var(--ink); border-color: var(--accent); transform: translateY(-1px); }}
+.filter-clear:active {{ transform: scale(0.93); }}
 .filter-tags {{ display: flex; flex-wrap: wrap; gap: 5px; }}
-.filter-tag {{
-  height: 24px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--ink-3);
-  font-size: 11.5px;
+@media (max-width: 639px) {{
+  .filter-tags {{
+    flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;
+    mask-image: linear-gradient(90deg, #000 92%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, #000 92%, transparent);
+  }}
+  .filter-tags::-webkit-scrollbar {{ display: none; }}
 }}
-.filter-tag:hover {{ color: var(--accent-ink); border-color: var(--accent); }}
+.filter-tag {{
+  flex: 0 0 auto; height: 25px; padding: 0 10px; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--surface); color: var(--ink-3); font-size: 11.5px; white-space: nowrap;
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}}
+.filter-tag:hover {{ color: var(--accent-ink); border-color: var(--accent); transform: translateY(-1px); }}
+.filter-tag:active {{ transform: scale(0.93); }}
 .filter-tag[aria-pressed="true"] {{
   background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   border-color: var(--accent);
@@ -1557,7 +1608,87 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   font-weight: 600;
 }}
 .filter-empty {{ margin: 20px 0 0; color: var(--ink-4); font-size: 13.5px; text-align: center; }}
-@media print {{ .filter-bar, .filter-empty {{ display: none !important; }} }}
+
+/* Sticky auto-hide TopBar + physics-spring buttons + latest quick pills */
+@keyframes ctrlPop {{ 0% {{ transform: scale(0.92); }} 55% {{ transform: scale(1.045); }} 100% {{ transform: scale(1); }} }}
+.mast {{
+  position: sticky; top: 0; z-index: 30;
+  margin: 0 -12px; padding: 0 12px;
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  border-radius: 0 0 12px 12px;
+  border-bottom: 1px solid transparent;
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease, box-shadow 200ms ease, border-color 200ms ease;
+  will-change: transform;
+}}
+.mast.is-scrolled {{
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  border-bottom-color: var(--line);
+  box-shadow: 0 6px 24px rgba(20, 30, 36, 0.08);
+}}
+@media (prefers-color-scheme: dark) {{
+  :root:not([data-theme="light"]) .mast.is-scrolled {{
+    background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+  }}
+}}
+:root[data-theme="dark"] .mast.is-scrolled {{
+  background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+}}
+.mast.is-scrolled .mast-rule {{ opacity: 0; }}
+.mast.is-hidden {{ transform: translateY(calc(-100% - 8px)); pointer-events: none; }}
+.mast-rule {{ transition: opacity 160ms ease; }}
+.ctrl-btn {{
+  position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--well)); color: var(--ink-2);
+  font-size: 12px; font-weight: 560; white-space: nowrap; text-decoration: none; user-select: none;
+  box-shadow: inset 0 1px 0 var(--btn-glint), 0 1px 2px rgba(20, 30, 36, 0.05);
+  transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 200ms ease;
+}}
+.ctrl-btn::after {{
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(115deg, transparent 22%, rgba(255, 255, 255, 0.28) 50%, transparent 78%);
+  transform: translateX(-125%); transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1); pointer-events: none;
+}}
+.ctrl-btn:hover {{
+  color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface)); transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 var(--btn-glint), 0 4px 12px rgba(23, 107, 117, 0.12);
+}}
+.ctrl-btn:hover::after {{ transform: translateX(125%); }}
+.ctrl-btn:active {{ transform: translateY(0) scale(0.93); transition-duration: 90ms; }}
+.ctrl-btn.is-pop {{ animation: ctrlPop 340ms cubic-bezier(0.34, 1.56, 0.64, 1); }}
+.theme-ics {{ position: relative; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: var(--accent); }}
+.theme-ics svg {{ position: absolute; inset: 0; opacity: 0; transform: scale(0.4) rotate(-65deg); transition: transform 360ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 180ms ease; }}
+.theme-btn[data-mode="system"] .ic-sys, .theme-btn[data-mode="light"] .ic-sun, .theme-btn[data-mode="dark"] .ic-moon {{ opacity: 1; transform: scale(1) rotate(0deg); }}
+@media (max-width: 479px) {{
+  .ctrl-btn {{ height: 28px; padding: 0 9px; font-size: 11.5px; }}
+  .theme-btn .ctrl-lbl {{ display: none; }}
+  .theme-btn {{ width: 30px; padding: 0; }}
+}}
+.quick-bar {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px; }}
+.quick-pill {{
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 13px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink);
+  font-size: 12.5px; font-weight: 600; text-decoration: none;
+  box-shadow: 0 1px 2px rgba(20, 30, 36, 0.04);
+  transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 150ms ease, color 150ms ease, box-shadow 180ms ease;
+}}
+.quick-pill:hover {{
+  border-color: var(--accent); color: var(--accent-ink); transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(23, 107, 117, 0.1);
+}}
+.quick-pill:active {{ transform: scale(0.95); transition-duration: 80ms; }}
+.qp-dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }}
+.qp-meta {{ font-size: 11.5px; font-weight: 500; color: var(--ink-4); }}
+.issue-list li {{ content-visibility: auto; contain-intrinsic-size: auto 56px; }}
+@media (prefers-reduced-motion: reduce) {{
+  *, *::before, *::after {{ transition: none !important; animation: none !important; }}
+}}
+@media print {{ .mast {{ position: static; margin: 0; padding: 0; background: none; backdrop-filter: none; box-shadow: none; transform: none !important; }} .ctrl-btn, .theme-switch, .lang-switch, .quick-bar, .filter-bar, .filter-empty {{ display: none !important; }} .issue-list li {{ content-visibility: visible; }} }}
 </style>
 </head>
 <body>
@@ -1568,17 +1699,14 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 <span class="mast-chip"><span class="mark-kicker">{_esc(_t("index_chip"))}</span><span class="mark-figure num">{len(issues)}</span><span class="mark-kicker">{_esc(i18n.issue_unit(LANG, len(issues)))}</span></span>
 <span class="mast-meta"><span class="num">{_esc(today_line)}</span><span>{_esc(_t("index_meta", d=len(dailies), w=len(weeklies)))}</span><span class="motto">{_esc(_t("motto"))}</span></span>
 <span class="mast-tools">
-{lang_switch_link("", "lang-link")}
-<span class="theme-switch" role="group" aria-label="{_esc(_t("appearance"))}">
-<button type="button" data-theme="system">{_esc(_t("theme_system"))}</button>
-<button type="button" data-theme="light">{_esc(_t("theme_light"))}</button>
-<button type="button" data-theme="dark">{_esc(_t("theme_dark"))}</button>
-<button type="button" class="lock" data-lock title="{_esc(_t("lock_title"))}">{_esc(_t("lock"))}</button>
-</span>
+{lang_switch_link("", "ctrl-btn lang-link")}
+{theme_toggle_btn}
+<button type="button" class="ctrl-btn lock" data-lock title="{_esc(_t("lock_title"))}">{_esc(_t("lock"))}</button>
 </span>
 </div>
 <hr class="mast-rule">
 </header>
+{quick_bar}
 {filter_bar}
 <section class="archive-sec">
 <div class="kicker"><span class="bar"></span>{_esc(_t("index_daily"))}<span class="cnt num">{_esc(i18n.count_issues(LANG, len(dailies)))}</span></div>
@@ -1594,20 +1722,62 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 <script>
 (function(){{
   const KEY='digest-theme';
+  const MODES=['system','light','dark'];
   const root=document.documentElement;
-  const btns=[...document.querySelectorAll('.theme-switch [data-theme]')];
-  function apply(v){{
-    if(v==='light'||v==='dark') root.setAttribute('data-theme', v);
-    else root.removeAttribute('data-theme');
-    btns.forEach(b=>b.setAttribute('aria-pressed', String(b.getAttribute('data-theme')===v)));
+  const tbtn=document.querySelector('[data-theme-toggle]');
+  const meta=document.querySelector('meta[name="theme-color"]');
+  const mq=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null;
+  let curTheme='system';
+  function pop(el){{if(!el)return;el.classList.remove('is-pop');void el.offsetWidth;el.classList.add('is-pop');}}
+  function paintMeta(){{
+    const isDark=root.getAttribute('data-theme')==='dark'||(!root.getAttribute('data-theme')&&Boolean(mq&&mq.matches));
+    if(meta)meta.setAttribute('content',isDark?'#13191c':'#faf9f6');
   }}
-  let saved='system';try{{saved=localStorage.getItem(KEY)||'system';}}catch(e){{}}
-  apply(saved);
-  btns.forEach(b=>b.addEventListener('click',()=>{{
-    const v=b.getAttribute('data-theme');
-    try{{localStorage.setItem(KEY,v);}}catch(e){{}}
-    apply(v);
-  }}));
+  function apply(v,anim){{
+    curTheme=MODES.includes(v)?v:'system';
+    if(curTheme==='light'||curTheme==='dark') root.setAttribute('data-theme', curTheme);
+    else root.removeAttribute('data-theme');
+    if(tbtn){{
+      tbtn.dataset.mode=curTheme;
+      let lbls={{}};try{{lbls=JSON.parse(tbtn.dataset.labels||'{{}}');}}catch(e){{}}
+      const txt=lbls[curTheme]||curTheme;
+      const sp=tbtn.querySelector('.ctrl-lbl');
+      if(sp)sp.textContent=txt;
+      tbtn.setAttribute('aria-label',(tbtn.dataset.ariaBase||'Appearance')+': '+txt);
+      if(anim)pop(tbtn);
+    }}
+    paintMeta();
+  }}
+  try{{curTheme=localStorage.getItem(KEY)||'system';}}catch(e){{}}
+  apply(curTheme,false);
+  try{{if(mq&&mq.addEventListener)mq.addEventListener('change',paintMeta);}}catch(e){{}}
+  function cycleTheme(){{
+    const nxt=MODES[(MODES.indexOf(curTheme)+1)%MODES.length];
+    try{{localStorage.setItem(KEY,nxt);}}catch(e){{}}
+    apply(nxt,true);
+  }}
+  if(tbtn)tbtn.addEventListener('click',cycleTheme);
+
+  const mast=document.querySelector('header.mast');
+  if(mast){{
+    let lastY=scrollY,sRaf=0,stopTimer=0,pin=false;
+    mast.addEventListener('pointerenter',()=>{{pin=true;mast.classList.remove('is-hidden');}});
+    mast.addEventListener('pointerleave',()=>{{pin=false;}});
+    mast.addEventListener('focusin',()=>{{pin=true;mast.classList.remove('is-hidden');}});
+    mast.addEventListener('focusout',()=>{{pin=false;}});
+    function setHide(h){{mast.classList.toggle('is-hidden',Boolean(h&&!pin&&scrollY>56));}}
+    function onFrame(){{
+      sRaf=0;
+      const y=scrollY,dy=y-lastY;lastY=y;
+      mast.classList.toggle('is-scrolled',y>20);
+      if(y<=48)setHide(false);else if(Math.abs(dy)>3)setHide(true);
+      clearTimeout(stopTimer);
+      stopTimer=setTimeout(()=>setHide(false),220);
+    }}
+    addEventListener('scroll',()=>{{if(!sRaf)sRaf=requestAnimationFrame(onFrame);}},{{passive:true}});
+    addEventListener('pointermove',e=>{{if(e.clientY<=14)setHide(false);}},{{passive:true}});
+  }}
+
   const bar=document.getElementById('archiveFilterBar');
   if(bar){{
     const inp=document.getElementById('archiveFilterInput');
@@ -1615,44 +1785,48 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
     const cnt=document.getElementById('archiveFilterCount');
     const emp=document.getElementById('archiveFilterEmpty');
     const tbtns=[...bar.querySelectorAll('.filter-tag')];
-    const items=[...document.querySelectorAll('li.archive-item')];
-    const grps=[...document.querySelectorAll('details.grp')];
-    const secs=[...document.querySelectorAll('section.archive-sec')];
-    const initOpen=new Map(grps.map(g=>[g,g.open]));
+    const items=[...document.querySelectorAll('li.archive-item')].map(el=>({{
+      el:el,hay:el.dataset.search||'',tgs:(el.dataset.tags||'').split('|').filter(Boolean)
+    }}));
+    const grpGroups=[...document.querySelectorAll('details.grp')].map(g=>({{
+      g:g,initOpen:g.open,list:[...g.querySelectorAll('li.archive-item')]
+    }}));
+    const secGroups=[...document.querySelectorAll('section.archive-sec')].map(s=>({{
+      s:s,gs:[...s.querySelectorAll('details.grp')]
+    }}));
     const tpl=bar.dataset.tpl||'{{shown}} / {{total}}';
-    let curTag='';
+    let curTag='',fRaf=0;
     function runFilter(){{
+      fRaf=0;
       const q=(inp.value||'').trim().toLowerCase();
       const toks=q?q.split(/\\s+/):[];
       const active=Boolean(toks.length||curTag);
       let shown=0;
-      for(const li of items){{
-        const hay=li.dataset.search||'';
-        const tags=(li.dataset.tags||'').split('|').filter(Boolean);
-        const ok=(!curTag||tags.includes(curTag))&&toks.every(k=>hay.includes(k));
-        li.hidden=!ok;
+      for(let i=0;i<items.length;i++){{
+        const it=items[i];
+        const ok=(!curTag||it.tgs.includes(curTag))&&toks.every(k=>it.hay.includes(k));
+        it.el.hidden=!ok;
         if(ok)shown++;
       }}
-      for(const g of grps){{
-        const has=[...g.querySelectorAll('li.archive-item')].some(li=>!li.hidden);
-        if(active){{
-          g.hidden=!has;
-          if(has)g.open=true;
-        }}else{{
-          g.hidden=false;
-          g.open=Boolean(initOpen.get(g));
-        }}
+      for(let i=0;i<grpGroups.length;i++){{
+        const gg=grpGroups[i];
+        let has=false;
+        for(let j=0;j<gg.list.length;j++){{if(!gg.list[j].hidden){{has=true;break;}}}}
+        if(active){{gg.g.hidden=!has;if(has)gg.g.open=true;}}
+        else{{gg.g.hidden=false;gg.g.open=gg.initOpen;}}
       }}
-      for(const s of secs){{
-        const gs=[...s.querySelectorAll('details.grp')];
-        if(gs.length) s.hidden=active&&gs.every(g=>g.hidden);
+      for(let i=0;i<secGroups.length;i++){{
+        const sg=secGroups[i];
+        if(sg.gs.length)sg.s.hidden=active&&sg.gs.every(g=>g.hidden);
       }}
+      bar.classList.toggle('is-active',active);
       clr.hidden=!active;
       cnt.hidden=!active;
       if(active)cnt.textContent=tpl.replace('{{shown}}',String(shown)).replace('{{total}}',String(items.length));
       if(emp)emp.hidden=!(active&&shown===0);
     }}
-    inp.addEventListener('input',runFilter);
+    function sched(){{if(!fRaf)fRaf=requestAnimationFrame(runFilter);}}
+    inp.addEventListener('input',sched);
     inp.addEventListener('keydown',e=>{{if(e.key==='Escape'){{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();}}}});
     clr.addEventListener('click',()=>{{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();inp.focus();}});
     tbtns.forEach(b=>b.addEventListener('click',()=>{{
@@ -1661,12 +1835,13 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
       tbtns.forEach(x=>x.setAttribute('aria-pressed',(x.dataset.tag||'')===curTag?'true':'false'));
       runFilter();
     }}));
-    addEventListener('keydown',e=>{{
-      if(e.key==='/'&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){{
-        e.preventDefault();inp.focus();
-      }}
-    }});
   }}
+  addEventListener('keydown',e=>{{
+    if(e.metaKey||e.ctrlKey||e.altKey)return;
+    if(/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||''))return;
+    if(e.key==='/'){{const inp=document.getElementById('archiveFilterInput');if(inp){{e.preventDefault();inp.focus();}}}}
+    else if(e.key==='t'||e.key==='T'){{e.preventDefault();cycleTheme();if(mast)mast.classList.remove('is-hidden');}}
+  }});
   if(location.hash.length>1){{
     let id=location.hash.slice(1);try{{id=decodeURIComponent(id);}}catch(e){{}}
     const el=document.getElementById(id);
