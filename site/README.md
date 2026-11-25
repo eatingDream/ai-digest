@@ -8,13 +8,13 @@
 
 站点专用项 / Site-specific notes:
 - `LANG_ALT` (`DIGEST_LANG_ALT`)：可选互链另一语言伴生站点（如 `zh-CN:/zh-CN/`） / optional companion language site link.
-- `ROOT_LATEST` (`DIGEST_ROOT_LATEST`，默认 `0`)：设为 `1`/`true`/`yes`/`on` 才在根路径额外生成 `/latest`、`/daily/latest`、`/weekly/latest` 静态 302 跳转（默认关闭以防暴露 `SLUG`）；`/<slug>/{daily,weekly,}/latest` 始终自动写入 `_redirects`。
+- `ROOT_LATEST` (`DIGEST_ROOT_LATEST`，默认 `0`)：设为 `1`/`true`/`yes`/`on` 才在根路径额外生成 `/latest`、`/daily/latest`、`/weekly/latest` 加密静态页（HTTP 200、URL 停留在 `latest`，且未解锁前不暴露 `SLUG`）；`/<slug>/{daily,weekly,}/latest` 始终自动生成。
 - `site/privacy-patterns.txt` (`DIGEST_PRIVACY_PATTERNS_FILE`，已 gitignore)：发布前明文隐私扫描的额外自定义正则（覆盖双语全部内容）。
 
 ## 页面加密与路由 / Encryption & Routing
 
 - 每期与目录页发布时先 gzip 再用 AES-256-GCM 加密（`"v":2,"z":"gzip"`），密钥来自 PBKDF2-HMAC-SHA256（共享随机盐，600,000 次迭代），浏览器端用 Web Crypto + `DecompressionStream` 解锁（首次约 1–2 秒，需开启 JS）。
-- 站内链接无扩展名；`robots.txt` 为 `Disallow: /`；`_headers` 设置 `noindex`、`nosniff`、`no-referrer` 与缓存策略（`latest` 跳转路径为 `no-store`）。
+- 站内链接无扩展名；`robots.txt` 为 `Disallow: /`；`_headers` 设置 `noindex`、`nosniff`、`no-referrer` 与缓存策略（`latest` 静态页路径为 `no-store`，刷新即可加载最新一期且 URL 保持在 `latest`）。
 - 「记住此设备」默认勾选，仅存派生密钥（非密码）于 `localStorage`（不勾选存 `sessionStorage`）；「锁定」清除两者。客户端加密可提高离线破解成本，但仍依赖强密码与私密 `SLUG`。
 
 ## 发布、演示与轮换 / Publish, Demo & Rotate

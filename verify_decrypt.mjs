@@ -187,6 +187,8 @@ async function main() {
   const slug = loadSlug();
   const pairs = [];
 
+  const ROOT_LATEST_RELS = ["latest.html", "daily/latest.html", "weekly/latest.html"];
+
   if (opts.local) {
     const pub = `${PUBLIC_ROOT}/${slug}`;
     const plain = `${PLAIN_ROOT}/${slug}`;
@@ -201,18 +203,36 @@ async function main() {
         plainPath: `${plain}/${rel}`,
       });
     }
+    for (const rel of ROOT_LATEST_RELS) {
+      const f = `${PUBLIC_ROOT}/${rel}`;
+      if (existsSync(f)) {
+        pairs.push({
+          name: `local /${rel}`,
+          enc: readFileSync(f, "utf8"),
+          plainPath: `${PLAIN_ROOT}/${rel}`,
+        });
+      }
+    }
   }
 
   if (opts.urlBase) {
     const plain = `${PLAIN_ROOT}/${slug}`;
     if (!existsSync(plain)) throw new Error(`plaintext directory not found: ${plain}`);
+    const base = opts.urlBase.replace(/\/$/, "");
     const files = walkHtmlSync(plain);
     for (const f of files) {
       const rel = f.slice(plain.length + 1);
       // Extensionless, exactly as the site links them (no 308 hop).
       const urlPath = rel === "index.html" ? `${slug}/` : `${slug}/${rel.replace(/\.html$/, "")}`;
-      const url = `${opts.urlBase.replace(/\/$/, "")}/${urlPath}`;
+      const url = `${base}/${urlPath}`;
       pairs.push({ name: `GET ${url}`, url, plainPath: f });
+    }
+    for (const rel of ROOT_LATEST_RELS) {
+      const f = `${PLAIN_ROOT}/${rel}`;
+      if (existsSync(f)) {
+        const url = `${base}/${rel.replace(/\.html$/, "")}`;
+        pairs.push({ name: `GET ${url}`, url, plainPath: f });
+      }
     }
   }
 
