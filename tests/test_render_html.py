@@ -148,3 +148,26 @@ def test_render_bilingual_item_count_mismatch_warns(tmp_path, capsys):
     en_md.write_text("**AI Daily · 1/15**\n\n## 🧠 Models\n\n### 1. One\n`A · 1/15`\n\n**In brief:** One.\n", encoding="utf-8")
     rh.render_file(zh_md, out, "zh-CN", en_md_path=en_md)
     assert "WARNING: English has 1 items vs Chinese 2" in capsys.readouterr().err and out.is_file()
+
+
+def test_security_sanitization_and_ai_digest_brand():
+    # URL scheme & protocol-relative backslash hardening
+    for bad in ("javascript:alert(1)", "java\tscript:alert(1)", "vbscript:msgbox(1)", "data:text/html,<svg/>", "//evil.example/x", "/\\evil.example/x", "\\\\evil.example/x", "http://", "https://example.com/\x00foo", "https://example.com/\r\nfoo", "https://example.com/&#x0a;foo"):
+        assert not rh._is_safe_url(bad), f"expected unsafe: {bad!r}"
+    for good in ("https://example.com/a?b=1", "http://example.com/", "#item-1", "/zh/daily/2026-01-15"):
+        assert rh._is_safe_url(good), f"expected safe: {good!r}"
+
+    md = (
+        "**AI精选日报 · 1/15**\n\n## 🧠 模型\n\n"
+        "### 1. 注入防御\n`示例 · 1/15`\n\n"
+        '**一句话：** <leak@private.example> ![svg](data:image/svg+xml,<svg/>) ![ext](https://evil.example/a.png) '
+        '[title-bypass](https://example.com/x "target=_blank") [bs](/\\evil.example/y) <img src=x onerror=alert(1)>\n'
+    )
+    out = rh.render_html(rh.parse_digest(md, "zh-CN"), "zh-CN")
+    assert "<title>AI Digest</title>" in out
+    assert '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,' in out
+    assert '<meta name="digest-title" content="AI精选日报 · 1/15">' in out
+    assert '<a class="np-link" href="./" data-brand-home><span class="ai">AI</span> Digest</a>' in out
+    assert "<img" not in out and "&#64;" not in out and "mailto:" not in out
+    assert 'href="https://example.com/x" title="target=_blank" target="_blank" rel="noopener noreferrer"' in out
+    assert "/\\evil.example" not in out and "&lt;img src=x onerror=alert(1)&gt;" in out
