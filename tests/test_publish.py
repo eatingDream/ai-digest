@@ -416,8 +416,9 @@ def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
     raw_style = f"<style>{render_html._load_css()}</style>"
     min_css = publish.minify_css(raw_style)
     assert len(min_css) < len(raw_style) and publish.minify_css(min_css) == min_css
-    for tok in ("@keyframes", "cubic-bezier(", "color-mix(", "backdrop-filter:", "content-visibility:", "calc("):
+    for tok in ("@keyframes", "cubic-bezier(", "color-mix(", "backdrop-filter:", "contain:", "calc("):
         assert tok in min_css and tok in plain15
+    assert "content-visibility: auto" not in plain15
 
     # Every inline <script> across issue, index, and unlock shell must parse cleanly
     for label, html_doc in (("issue", plain15), ("index", plain_idx), ("shell", shell15)):
