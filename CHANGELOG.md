@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.5.2](https://github.com/eatingDream/ai-digest/compare/v0.5.1...v0.5.2) (2026-11-25)
+
+
+### Bug Fixes
+
+* **ui:** fix TOC fast-scroll tracking and flicker with live binary search ([#26](https://github.com/eatingDream/ai-digest/issues/26)) ([ebb8919](https://github.com/eatingDream/ai-digest/commit/ebb89193ae1d4690519011e142f76fd34af2cd71))
+
 ## [0.5.1](https://github.com/eatingDream/ai-digest/compare/v0.5.0...v0.5.1) (2026-11-25)
 
 
