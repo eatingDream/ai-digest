@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.8.0](https://github.com/eatingDream/ai-digest/compare/v0.7.0...v0.8.0) (2026-11-25)
+
+
+### Features
+
+* collapsible TopBar search, atomic deduplicated tags, refreshed README, and safe X recall guide ([#33](https://github.com/eatingDream/ai-digest/issues/33)) ([89e898c](https://github.com/eatingDream/ai-digest/commit/89e898c60b7532aa6f9d22474a31e2110609a725))
+
 ## [0.7.0](https://github.com/eatingDream/ai-digest/compare/v0.6.0...v0.7.0) (2026-11-25)
 
 
