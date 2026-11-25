@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.5.0](https://github.com/eatingDream/ai-digest/compare/v0.4.1...v0.5.0) (2026-11-25)
+
+
+### Features
+
+* **ui:** add sticky auto-hide topbar, spring toggle buttons, and reader perf upgrades ([#22](https://github.com/eatingDream/ai-digest/issues/22)) ([d269f64](https://github.com/eatingDream/ai-digest/commit/d269f64ad45f4a546baa1e12bcccb69d0467cd36))
+
 ## [0.4.1](https://github.com/eatingDream/ai-digest/compare/v0.4.0...v0.4.1) (2026-11-25)
 
 
