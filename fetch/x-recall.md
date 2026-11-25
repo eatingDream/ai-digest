@@ -1,8 +1,26 @@
 # X recall list (optional, capability-gated, read-only)
 
 **Capability & placeholder gate**
-- **Optional by runner capability**: if read-only X search tools (`search_posts_all`, `get_users_posts`, `search_news`, `get_news`) are **not** available in the agent environment (for example, standard Claude Code, Cursor, or Codex without an X connector/MCP), **skip this file cleanly without failing** and rely on the ~153 open web/RSS/arXiv/HF/GitHub/HN/Reddit feeds from `fetch/fetch.py`.
+- **Optional by runner capability**: if read-only X search tools (`search_posts_all`, `get_users_posts`, `search_news`, `get_news`) are **not** available in the agent environment (for example, standard Claude Code, Cursor, or Codex without an X connector/MCP), **skip the connector protocol cleanly without failing** — either curate directly from the ~155 open feeds in `fetch/fetch.py` or use one of the safe Grok-Bot-free alternatives below.
 - **Skip unreplaced watch-account placeholders**: queries **B2** and **C1** below contain `<account_1>` / `<zh_account_1>` templates for the reader's personal circle. Before calling X search, check whether those placeholders have been replaced with real handles — if `<account_1>` or `<zh_account_1>` is still present, **skip that query** (record `B2=skipped(placeholder)` / `C1=skipped(placeholder)`) and never send literal `<...>` strings to the X API.
+
+## Without a Grok Bot: Safe Ways to Recall X Sources (Free & Paid)
+
+You do **not** need a Grok Bot (or any personal X login/cookies) to run AI Digest or capture X-originated AI news safely. Choose the path that fits your budget:
+
+| Option | Cost | Account / Ban Risk | How to wire into AI Digest |
+|---|---|---|---|
+| **1. Open-feeds-only mode (built-in default)** | **Free** | **None** | Do nothing — `fetch/fetch.py` already pulls ~155 RSS/Atom/arXiv/HF/GitHub/lab-blog/HN/Reddit/YouTube sources and captures almost all primary launches. |
+| **2. Read-only web search grounding** (`site:x.com/<handle>`) | **Free tier** (Gemini Search Grounding, Brave Search, Tavily, Exa, Perplexity) | **None** | Have your agent run 3–5 read-only web queries covering the lab handles in Section A + your date window, save verified leads to `runs/<P>/x-leads.md`, and always follow through to the primary blog/paper/repo URL. |
+| **3. Open cross-posted feeds & self-hosted RSS bridges** | **Free** | **None** | Add researchers' official Bluesky feeds (`https://bsky.app/profile/<handle>/rss`), Mastodon, Substack, or self-hosted [RSSHub](https://docs.rsshub.app/) public read-only routes directly to `fetch/sources.toml` with conservative polling intervals. |
+| **4. xAI Grok API (`x_search` live X tool)** *(recommended paid)* | **Paid** (pay-as-you-go API, typically pennies/day) | **None** (official API, zero X cookies) | Call xAI's Responses API (`https://api.x.ai/v1/responses`) with the built-in `x_search` tool (`allowed_x_handles`, `from_date`, `to_date`) using groups A–C below, then write `URL + one-sentence lead` lines to `runs/<P>/x-leads.md`. Store `XAI_API_KEY` in env or a `chmod 600` file outside the repo. |
+| **5. Official X API v2 (Pay-Per-Use / Basic)** | **Paid** | **None** (official Bearer Token) | Call `GET /2/tweets/search/recent` with the exact queries in Sections A–D (`start_time`, `end_time`, `tweet.fields=created_at`, `expansions=author_id`, `user.fields=username`), save JSON to disk, and run `python3 fetch/xparse.py ...` verbatim. Store `X_BEARER_TOKEN` in env / `chmod 600` file. *(Note: X's official **Free** API tier does **not** include timeline or search reads.)* |
+| **6. Third-party read-only X / search APIs & MCPs** | **Paid** (usage-based) | **Low** (no personal X account needed) | Use a read-only search/X provider (e.g., Exa, Tavily, Perplexity Sonar, TwitterAPI.io, or Apify) via API or MCP, normalize leads into `runs/<P>/x-leads.md`, and still trace every item to a primary source. |
+
+**Safety red lines (never cross):**
+- **Never feed personal main-account cookies (`auth_token` / `ct0`)** into headless browsers, Playwright scripts, or unofficial GraphQL scrapers — this risks permanent X account suspension and session hijacking.
+- **Strictly read-only**: never automate posting, likes, bookmarks, follows, or DMs.
+- **Keep keys & private circles out of the repo**: store API keys in environment variables or `chmod 600` files outside the repo; never commit credentials to `site/CONFIG` or leak private watch-circle lists into published digests.
 
 **Call protocol (token-saving, when X search tools are available)**
 1. Run every `search_posts_all` / `search_news` through the agent's read-only X search tool and have the result **written to disk (`write_to_file`, or saved to a file via shell if the connector lacks `write_to_file`), never left in the context** (previously every call dumped 6–20 KB of JSON into the context; 7–9 calls came to 100 KB+). Parameters: `max_results` 50 (groups A/B/C; the old default of 25 was truncated on A2, B1 and C1, leaving recall gaps), `start_time`/`end_time` = the window, `post.fields=["created_at"]`, `expansions=["author_id"]`, `user.fields=["username"]`; for groups B and C add `-is:reply` at the end of the query.

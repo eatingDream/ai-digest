@@ -27,7 +27,7 @@ python3 fetch/fetch.py --start 2026-11-14T09:00 --end 2026-11-15T09:00 --out /tm
 
 ## Sources & Windows
 
-- **Registry**: edit only [`sources.toml`](sources.toml) (`id`, `type`, `url`, `channel`, `kind`, `filter`) to add or disable feeds. Channels cover `lab` (official AI labs), `model` (HF org models & trending, filtering derivatives), `paper` (arXiv 12 categories, HF Daily, Nature ML, Science), `repo` (GitHub trending, org repos, new-repo search), `tooling` (core stable releases & engineering blogs), `research_blog` / `newsletter`, `podcast` (incl. YouTube), `chips_infra`, `news`, `news_zh`, `policy`, and `community` (HN, Reddit, Lobsters). Optional read-only X recall lives in [`x-recall.md`](x-recall.md) (cleanly skipped without X tools or when `<account_1>` placeholders are unreplaced).
+- **Registry**: edit only [`sources.toml`](sources.toml) (`id`, `type`, `url`, `channel`, `kind`, `filter`) to add or disable feeds. Channels cover `lab` (official AI labs), `model` (HF org models & trending, filtering derivatives), `paper` (arXiv 12 categories, HF Daily, Nature ML, Science), `repo` (GitHub trending, org repos, new-repo search), `tooling` (core stable releases & engineering blogs), `research_blog` / `newsletter`, `podcast` (incl. YouTube), `chips_infra`, `news`, `news_zh`, `policy`, and `community` (HN, Reddit, Lobsters). Optional read-only X recall lives in [`x-recall.md`](x-recall.md) — including both **free** (open-feeds-only, read-only web search grounding, Bluesky/RSS bridges) and **paid** (xAI `x_search` API, X API v2 Bearer token, third-party read-only search APIs) paths without a Grok Bot.
 - **Windows & arXiv**: half-open `[start, end)` in `DIGEST_TZ`. arXiv batch `D` announces at 20:00 US Eastern on `D-1` (Sun–Thu; no weekend batches); missing weekday batches trigger an automatic retry + warning (see [`troubleshoot-arxiv.md`](troubleshoot-arxiv.md)). HF Daily fetches completed UTC boards via `state.json` and merges with arXiv by ID (`also_in` includes `hf_daily`).
 
 ## Helper CLIs
@@ -73,7 +73,7 @@ python3 fetch/fetch.py --start 2026-11-14T09:00 --end 2026-11-15T09:00 --out /tm
 
 ## 信源与窗口
 
-- **注册表**：增删信源只改 [`sources.toml`](sources.toml)（`id` / `type` / `url` / `channel` / `kind` / `filter`）。覆盖 13 个频道：`lab`（AI 实验室官方）、`model`（HF 机构与 trending，过滤衍生物）、`paper`（arXiv 12 分类、HF Daily、Nature ML、Science）、`repo`（GitHub 趋势/机构/新仓搜索）、`tooling`（核心仓库正式 Release 与工程博客）、`research_blog` / `newsletter`、`podcast`（含 YouTube）、`chips_infra`、`news`、`news_zh`、`policy` 及 `community`（HN、Reddit、Lobsters）。可选 X 只读检索见 [`x-recall.zh-CN.md`](x-recall.zh-CN.md)（无 X 工具或 `<account_1>` 占位符未替换时自动跳过）。
+- **注册表**：增删信源只改 [`sources.toml`](sources.toml)（`id` / `type` / `url` / `channel` / `kind` / `filter`）。覆盖 13 个频道：`lab`（AI 实验室官方）、`model`（HF 机构与 trending，过滤衍生物）、`paper`（arXiv 12 分类、HF Daily、Nature ML、Science）、`repo`（GitHub 趋势/机构/新仓搜索）、`tooling`（核心仓库正式 Release 与工程博客）、`research_blog` / `newsletter`、`podcast`（含 YouTube）、`chips_infra`、`news`、`news_zh`、`policy` 及 `community`（HN、Reddit、Lobsters）。可选 X 只读检索见 [`x-recall.zh-CN.md`](x-recall.zh-CN.md)——附无 Grok Bot 时的安全免费途径（纯公开源、只读网页检索、Bluesky/RSS 桥接）与付费途径（xAI `x_search` 官方 API、X API v2 只读 Bearer Token、第三方只读搜索 API）。
 - **时间与 arXiv**：按 `DIGEST_TZ` 划定左闭右开 `[start, end)` 自然日窗口（日报=昨天，周报=上周一 00:00 → 本周一 00:00）。arXiv 批次 `D` 于 `D-1` 美东 20:00 公开（周日至周四晚，周末无新批次）；工作日缺批次会自动重试并告警（见 [`troubleshoot-arxiv.zh-CN.md`](troubleshoot-arxiv.zh-CN.md)）。HF Daily 依 `state.json` 增量拉取完整 UTC 日榜并按 arXiv ID 合并（`also_in` 含 `hf_daily`）。
 
 ## 辅助小工具
