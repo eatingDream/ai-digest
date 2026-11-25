@@ -171,3 +171,29 @@ def test_security_sanitization_and_ai_digest_brand():
     assert "<img" not in out and "&#64;" not in out and "mailto:" not in out
     assert 'href="https://example.com/x" title="target=_blank" target="_blank" rel="noopener noreferrer"' in out
     assert "/\\evil.example" not in out and "&lt;img src=x onerror=alert(1)&gt;" in out
+
+
+def test_atomic_tag_splitting_and_collapsible_topbar_search():
+    assert rh._split_meta("DeepSeek · 11/24 · 开源权重 / 推理 / Agent / 推理") == (
+        "DeepSeek",
+        "11.24",
+        ["开源权重", "推理", "Agent"],
+    )
+    md = (
+        "**AI精选日报 · 1/15**\n\n## 🧠 模型\n\n"
+        "### 1. 模型甲\n`机构甲 · 1/15 · 前沿发布 / 开源权重 / Agent`\n\n**一句话：** 一。\n\n"
+        "### 2. 模型乙\n`机构乙 · 1/15 · 推理 / Agent`\n\n**一句话：** 二。\n\n"
+        "### 3. 模型丙\n`机构丙 · 1/15 · 安全 / Agent`\n\n**一句话：** 三。\n"
+    )
+    out = rh.render_html(rh.parse_digest(md, "zh-CN"), "zh-CN")
+    # Collapsible search bar lives inside <header class="mast"> (hidden by default) with TopBar search trigger
+    hdr = re.search(r'<header class="mast"[^>]*>.*?</header>', out, re.S).group(0)
+    assert 'data-search-toggle' in hdr and 'id="digestFilterBar"' in hdr and 'hidden>' in hdr
+    assert 'id="digestFilterBar"' not in out.split("</header>", 1)[1]
+    # Atomic deduplicated tags sorted by frequency descending (Agent=3 first), zero composite '/' tags
+    chips = re.findall(r'class="filter-tag" data-tag="([^"]+)"', hdr)
+    assert chips[0] == "Agent" and set(chips) == {"Agent", "前沿发布", "开源权重", "推理", "安全"}
+    assert all("/" not in c for c in chips)
+    # Accent highlight works on atomic tag split from composite meta
+    assert '<span class="badge badge-accent" data-tag="前沿发布">前沿发布</span>' in out
+    assert 'data-tags="前沿发布|开源权重|Agent"' in out

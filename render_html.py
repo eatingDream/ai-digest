@@ -1247,23 +1247,63 @@ article.story:hover .copy-link,
 .toc-side-toggle:hover { transform: translateY(-1px); border-color: var(--accent); color: var(--accent-ink); }
 .toc-side-toggle:active { transform: scale(0.94); transition-duration: 80ms; }
 
-/* Client-side keyword + tag filter bar */
+/* TopBar search trigger + collapsible filter drawer (0px body bloat when closed) */
+.search-btn .search-kbd {
+  margin-left: 1px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-sunk);
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.search-btn.is-open,
+.search-btn.has-filter {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.search-btn.is-open .search-kbd,
+.search-btn.has-filter .search-kbd { display: none; }
+.search-badge {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+@media (hover: none), (max-width: 639px) {
+  .search-btn .search-kbd,
+  .search-btn .ctrl-lbl { display: none; }
+}
 .filter-bar {
-  margin: 14px 0 18px;
-  padding: 10px 12px;
-  background: var(--well);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-  border-radius: 12px;
+  margin: 0;
+  padding: 9px 0 11px;
+  border-top: 1px solid var(--line-soft);
+  background: transparent;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
-.filter-row { display: flex; align-items: center; gap: 8px; position: relative; }
+.filter-bar[hidden] { display: none !important; }
+.filter-bar > .filter-row,
+.filter-bar > .filter-tags {
+  width: min(var(--paper-max), calc(100% - 2 * max(var(--gutter), 5vw)));
+  margin-inline: auto;
+}
+@media (max-width: 639px) {
+  .filter-bar { padding: 8px 0 10px; }
+}
+.filter-row { display: flex; align-items: center; gap: 7px; position: relative; }
 .filter-input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 34px;
-  padding: 0 34px 0 11px;
+  height: 33px;
+  padding: 0 11px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--surface);
@@ -1278,27 +1318,9 @@ article.story:hover .copy-link,
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
-.filter-kbd {
-  position: absolute;
-  right: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--bg-sunk);
-  color: var(--ink-4);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.4;
-  pointer-events: none;
-  transition: opacity 140ms ease;
-}
-.filter-row:focus-within .filter-kbd,
-.filter-bar.is-active .filter-kbd { opacity: 0; }
-@media (hover: none), (max-width: 639px) { .filter-kbd { display: none; } }
-.filter-count { flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 4px; }
-.filter-clear {
+.filter-count { flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 3px; white-space: nowrap; }
+.filter-clear,
+.filter-close {
   flex: 0 0 auto;
   height: 26px;
   padding: 0 10px;
@@ -1309,21 +1331,32 @@ article.story:hover .copy-link,
   font-size: 12px;
   transition: transform 240ms var(--spring), color 140ms ease, border-color 140ms ease;
 }
-.filter-clear:hover { color: var(--ink); border-color: var(--accent); transform: translateY(-1px); }
-.filter-clear:active { transform: scale(0.93); }
-.filter-tags { display: flex; flex-wrap: wrap; gap: 5px; }
-@media (max-width: 639px) {
-  .filter-tags {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding-bottom: 2px;
-    mask-image: linear-gradient(90deg, #000 92%, transparent);
-    -webkit-mask-image: linear-gradient(90deg, #000 92%, transparent);
-  }
-  .filter-tags::-webkit-scrollbar { display: none; }
+.filter-close {
+  width: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
 }
+.filter-clear:hover,
+.filter-close:hover { color: var(--ink); border-color: var(--accent); transform: translateY(-1px); }
+.filter-clear:active,
+.filter-close:active { transform: scale(0.93); }
+.filter-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 1px 18px 2px 0;
+  mask-image: linear-gradient(90deg, #000 94%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 94%, transparent);
+}
+.filter-tags::-webkit-scrollbar { display: none; }
 .filter-tag {
   flex: 0 0 auto;
   height: 25px;
@@ -1334,8 +1367,12 @@ article.story:hover .copy-link,
   color: var(--ink-3);
   font-size: 11.5px;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   transition: transform 240ms var(--spring), color 140ms ease, border-color 140ms ease, background-color 140ms ease;
 }
+.filter-tag .ft-cnt { font-size: 10.5px; opacity: 0.6; }
 .filter-tag:hover { color: var(--accent-ink); border-color: var(--accent); transform: translateY(-1px); }
 .filter-tag:active { transform: scale(0.93); }
 .filter-tag[aria-pressed="true"] {
@@ -1344,6 +1381,7 @@ article.story:hover .copy-link,
   color: var(--accent);
   font-weight: 600;
 }
+.filter-tag[aria-pressed="true"] .ft-cnt { opacity: 0.85; }
 .story-meta .badge[data-tag] {
   cursor: pointer;
   transition: transform 220ms var(--spring), border-color 140ms ease, color 140ms ease;
@@ -1814,16 +1852,34 @@ def _year_from_path(src: Path) -> int | None:
     return int(m.group(1)) if m else None
 
 
+_TAG_SPLIT_RE = re.compile(r"\s*[/／、｜|]\s*")
+
+
+def _split_tags(raw: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for seg in _TAG_SPLIT_RE.split(raw or ""):
+        t = seg.strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def _split_meta(meta: str) -> tuple[str, str, list[str]]:
     parts = [p.strip() for p in re.split(r"\s*·\s*", meta or "") if p.strip()]
     source = parts[0] if parts else ""
     when = ""
     tags: list[str] = []
+    seen: set[str] = set()
     for p in parts[1:]:
         if re.match(r"^\d{1,2}/\d{1,2}", p):
             when = re.sub(r"(\d{1,2})/(\d{1,2})", r"\1.\2", p)
         else:
-            tags.append(p)
+            for t in _split_tags(p):
+                if t not in seen:
+                    seen.add(t)
+                    tags.append(t)
     return source, when, tags
 
 
@@ -2365,12 +2421,16 @@ _FOOTER_SCRIPT = """<script>
       top.addEventListener('click',()=>{tocLockUntil=0;scrollTo({top:0,behavior:'smooth'});});
     }
 
-    /* Pre-indexed filter (0 repeated querySelectorAll on keystroke) */
+    /* Pre-indexed collapsible TopBar filter (0 repeated querySelectorAll on keystroke) */
     const stories=[...scope.querySelectorAll('article.story')];
     const fbar=scope.querySelector('.filter-bar');
+    const stgl=mast?mast.querySelector('[data-search-toggle]'):null;
+    const sbadge=stgl?stgl.querySelector('[data-search-badge]'):null;
+    let searchOpen=Boolean(fbar&&!fbar.hidden);
     if(fbar){
       const finp=fbar.querySelector('.filter-input');
       const fclr=fbar.querySelector('.filter-clear');
+      const fcls=fbar.querySelector('.filter-close');
       const fcnt=fbar.querySelector('.filter-count');
       const femp=scope.querySelector('.filter-empty');
       const ftbtns=[...fbar.querySelectorAll('.filter-tag')];
@@ -2393,6 +2453,17 @@ _FOOTER_SCRIPT = """<script>
       });
       const tpl=fbar.dataset.tpl||'{shown} / {total}';
       let curTag='',filterRaf=0;
+      function setSearchOpen(open,focusInput){
+        searchOpen=Boolean(open);
+        fbar.hidden=!searchOpen;
+        if(stgl){
+          stgl.setAttribute('aria-expanded',searchOpen?'true':'false');
+          stgl.classList.toggle('is-open',searchOpen);
+        }
+        if(searchOpen)setBarHidden(false);
+        syncMastH();
+        if(searchOpen&&focusInput&&finp){finp.focus();finp.select();}
+      }
       function syncTags(){
         ftbtns.forEach(b=>b.setAttribute('aria-pressed',(b.dataset.tag||'')===curTag?'true':'false'));
       }
@@ -2424,6 +2495,8 @@ _FOOTER_SCRIPT = """<script>
         fclr.hidden=!active;
         fcnt.hidden=!active;
         if(active)fcnt.textContent=tpl.replace('{shown}',String(shown)).replace('{total}',String(stories.length));
+        if(stgl)stgl.classList.toggle('has-filter',active);
+        if(sbadge){sbadge.hidden=!active;if(active)sbadge.textContent=shown+'/'+stories.length;}
         if(femp)femp.hidden=!(active&&shown===0);
         tocLockUntil=0;
         rebuildTargets();
@@ -2431,8 +2504,9 @@ _FOOTER_SCRIPT = """<script>
       }
       function schedFilter(){if(!filterRaf)filterRaf=requestAnimationFrame(runFilter);}
       function resetFilter(){finp.value='';curTag='';syncTags();runFilter();}
+      if(stgl)stgl.addEventListener('click',()=>{pop(stgl);setSearchOpen(!searchOpen,!searchOpen);});
+      if(fcls)fcls.addEventListener('click',()=>{setSearchOpen(false,false);if(stgl)stgl.focus();});
       finp.addEventListener('input',schedFilter);
-      finp.addEventListener('keydown',e=>{if(e.key==='Escape')resetFilter();});
       fclr.addEventListener('click',()=>{resetFilter();finp.focus();});
       ftbtns.forEach(b=>b.addEventListener('click',()=>{
         const tg=b.dataset.tag||'';
@@ -2445,6 +2519,7 @@ _FOOTER_SCRIPT = """<script>
           const tg=badge.dataset.tag||'';
           curTag=(curTag===tg)?'':tg;
           syncTags();runFilter();
+          if(curTag&&!searchOpen)setSearchOpen(true,false);
           return;
         }
         const anc=e.target.closest('a[href^="#"]');
@@ -2456,8 +2531,15 @@ _FOOTER_SCRIPT = """<script>
         }
       },true);
       addEventListener('keydown',e=>{
-        if(e.key==='/'&&isVisible(scope)&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){
-          e.preventDefault();finp.focus();
+        if(!isVisible(scope))return;
+        if(e.key==='Escape'&&searchOpen){
+          e.preventDefault();
+          if(finp.value||curTag)resetFilter();
+          else{setSearchOpen(false,false);if(stgl)stgl.focus();}
+          return;
+        }
+        if(e.key==='/'&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'')){
+          e.preventDefault();setSearchOpen(true,true);
         }
       });
     }
@@ -2493,7 +2575,7 @@ _FOOTER_SCRIPT = """<script>
     return {
       scope:scope,mast:mast,stories:stories,
       syncChrome:syncChrome,syncMastH:syncMastH,rebuildTargets:rebuildTargets,reset:reset,close:close,
-      pinned:()=>mastHover||mastFocus||document.body.classList.contains('toc-open')
+      pinned:()=>mastHover||mastFocus||searchOpen||document.body.classList.contains('toc-open')
     };
   });
 
@@ -2684,6 +2766,23 @@ def _lang_toggle_html(lang: str) -> str:
     )
 
 
+def _search_toggle_html(lang: str, target_id: str) -> str:
+    lbl = html.escape(i18n.t(lang, "search_btn"))
+    title = html.escape(i18n.t(lang, "search_toggle_title"), quote=True)
+    tid = html.escape(target_id, quote=True)
+    return (
+        f'<button type="button" class="ctrl-btn search-btn" data-search-toggle aria-expanded="false"'
+        f' aria-controls="{tid}" aria-label="{lbl}" title="{title}">'
+        '<span class="ctrl-ic" aria-hidden="true">'
+        '<svg viewBox="0 0 16 16" width="13.5" height="13.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">'
+        '<circle cx="7.2" cy="7.2" r="4.6"/><path d="M10.7 10.7 14 14"/></svg></span>'
+        f'<span class="ctrl-lbl">{lbl}</span>'
+        '<span class="search-badge num" data-search-badge hidden></span>'
+        '<kbd class="search-kbd" aria-hidden="true">/</kbd>'
+        "</button>"
+    )
+
+
 def _render_pane_body(
     digest: Digest,
     lang: str,
@@ -2702,32 +2801,39 @@ def _render_pane_body(
         full_title = f"{digest.title} · {digest.period}"
     front_left = render_themes(digest, lang, id_prefix=id_prefix)
     sidebar = render_sidebar(digest, lang, id_prefix=id_prefix)
-    issue_tags_list: list[str] = []
-    seen_tags: set[str] = set()
+    tag_counts: dict[str, int] = {}
+    tag_order: dict[str, int] = {}
     for it in digest.items:
         for tg in _split_meta(it.meta)[2]:
-            if tg and tg not in seen_tags:
-                seen_tags.add(tg)
-                issue_tags_list.append(tg)
+            if tg:
+                tag_counts[tg] = tag_counts.get(tg, 0) + 1
+                tag_order.setdefault(tg, len(tag_order))
+    issue_tags_list = sorted(tag_counts, key=lambda tg: (-tag_counts[tg], tag_order[tg]))
     tag_chips = ""
     if issue_tags_list:
         chips = [
             f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{html.escape(i18n.t(lang, "filter_all"))}</button>'
         ] + [
-            f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">{html.escape(tg)}</button>'
+            f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">'
+            f'{html.escape(tg)}'
+            f'{f"<span class=\"ft-cnt num\">{tag_counts[tg]}</span>" if tag_counts[tg] > 1 else ""}'
+            "</button>"
             for tg in issue_tags_list
         ]
         tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
-    filter_bar_html = (
-        f'<div class="filter-bar" id="{id_prefix}digestFilterBar" role="search" aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}"'
-        f' data-total="{len(digest.items)}" data-tpl="{html.escape(i18n.t(lang, "filter_shown"), quote=True)}">'
+    filter_id = f"{id_prefix}digestFilterBar"
+    filter_drawer_html = (
+        f'<div class="filter-bar filter-drawer" id="{filter_id}" role="search" aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}"'
+        f' data-total="{len(digest.items)}" data-tpl="{html.escape(i18n.t(lang, "filter_shown"), quote=True)}" hidden>'
         '<div class="filter-row">'
         f'<input type="search" id="{id_prefix}digestFilterInput" class="filter-input" placeholder="{html.escape(i18n.t(lang, "filter_placeholder"), quote=True)}"'
         f' aria-label="{html.escape(i18n.t(lang, "filter_label"), quote=True)}" autocomplete="off" spellcheck="false">'
-        '<kbd class="filter-kbd" aria-hidden="true">/</kbd>'
         f'<span id="{id_prefix}digestFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
         f'<button type="button" id="{id_prefix}digestFilterClear" class="filter-clear" hidden>{html.escape(i18n.t(lang, "filter_clear"))}</button>'
+        f'<button type="button" class="filter-close" aria-label="{html.escape(i18n.t(lang, "search_close"), quote=True)}" title="{html.escape(i18n.t(lang, "search_close"), quote=True)}">×</button>'
         f"</div>{tag_chips}</div>"
+    )
+    filter_empty_html = (
         f'<p id="{id_prefix}digestFilterEmpty" class="filter-empty" hidden>{html.escape(i18n.t(lang, "filter_empty"))}</p>'
     )
     parts = [
@@ -2739,6 +2845,7 @@ def _render_pane_body(
         f'<span class="mast-meta"><span class="num">{html.escape(info["line"])}</span><span class="num">{html.escape(i18n.count_items(lang, len(digest.items)))} · {html.escape(read_str)}</span><span class="motto">{html.escape(info["motto"])}</span></span>',
         '<span class="mast-tools">',
         f'<span class="edition">{html.escape(info["edition"])}</span>',
+        _search_toggle_html(lang, filter_id),
     ]
     if lang_switch:
         parts.append(_lang_toggle_html(lang))
@@ -2746,6 +2853,8 @@ def _render_pane_body(
         _theme_toggle_html(lang),
         "</span>",
         "</div>",
+        "<!-- digest-nav-slot -->",
+        filter_drawer_html,
         '<div class="read-prog" aria-hidden="true"><span class="read-prog-fill"></span></div>',
         "</header>",
         '<article class="paper">',
@@ -2762,7 +2871,7 @@ def _render_pane_body(
         if front_left:
             parts.append(f'<div class="front-lead">{front_left}</div>')
         parts.append("</section>")
-    parts.append(filter_bar_html)
+    parts.append(filter_empty_html)
     parts.append(f'<main id="{id_prefix}content">')
     for i, sec in enumerate(digest.sections, 1):
         sid = id_prefix + _section_id(sec.title)

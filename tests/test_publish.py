@@ -246,7 +246,8 @@ def test_bilingual_incremental_rerender_lang_alt_and_nav_idempotency(monkeypatch
     zh_p, en_p = once.split('<div class="lang-pane lang-en"', 1)
     assert "返回目录" in zh_p and "Back to index" not in zh_p and "Back to index" in en_p and "返回目录" not in en_p
     assert publish.strip_injections(once) == raw and len(publish.issue_headlines(issue)) == 10
-    assert "开放权重 / 推理" in publish.issue_tags(issue) and "Open weights / Reasoning" not in publish.issue_tags(issue)
+    tags = publish.issue_tags(issue)
+    assert "开放权重" in tags and "推理" in tags and "开放权重 / 推理" not in tags and "Open weights" not in tags
 
     work, _, _, run_pub = _pub_setup(tmp_path, password="synthetic-test-pass-7777")
     rd = lambda rel: (work / "site" / rel).read_text(encoding="utf-8")
@@ -268,7 +269,10 @@ def test_bilingual_incremental_rerender_lang_alt_and_nav_idempotency(monkeypatch
     assert 'href="/bislug1234/en/daily/2026-01-15" hreflang="en"' in plain_zh15
     assert 'href="/bislug1234/zh/daily/2026-01-15" hreflang="zh-CN"' in plain_en15
     assert "10 条" in plain_idx and "20 条" not in plain_idx
-    assert 'id="archiveFilterBar"' in plain_idx and 'href="https://digest.example.com/enslug1234/" hreflang="en"' in plain_idx
+    idx_hdr = re.search(r'<header class="mast"[^>]*>.*?</header>', plain_idx, re.S).group(0)
+    assert 'data-search-toggle' in idx_hdr and 'id="archiveFilterBar"' in idx_hdr and 'hidden>' in idx_hdr
+    assert 'id="archiveFilterBar"' not in plain_idx.split("</header>", 1)[1]
+    assert 'href="https://digest.example.com/enslug1234/" hreflang="en"' in plain_idx
     assert all('href="https://digest.example.com/enslug1234/daily/2026-01-15" hreflang="en"' in s for s in (plain15, shell15))
 
     assert run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--lang", "en", "--prepare-only").returncode == 0
