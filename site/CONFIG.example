@@ -1,17 +1,21 @@
 # AI digest site config. No secrets here (password/salt/token live outside the repo).
-# Recommended: `python3 publish.py --init` creates site/CONFIG with a random 22-char SLUG.
+# Recommended: `python3 publish.py --init` creates site/CONFIG (public root-mounted, ENCRYPT=0).
+# For an opt-in password-protected private site: `python3 publish.py --init --encrypt`
+# (or set ENCRYPT=1 and a random >= 8 char SLUG).
 # If copying this file (`cp site/CONFIG.example site/CONFIG`), replace every <...> placeholder
 # before running publish.py (leave ACCOUNT_ID empty when only running --prepare-only).
-# Do not change SLUG once published (must be >= 8 chars, [A-Za-z0-9._~-]).
 PLATFORM=pages
 PROJECT=ai-digest
 ACCOUNT_ID=<CF_ACCOUNT_ID>
 ZONE_ID=
 DOMAIN=digest.example.com
-SLUG=<random-unguessable-slug>
-# Site language: en | zh-CN (env DIGEST_LANG or --lang overrides)
+# Optional URL path prefix (leave empty for root-mounted /zh/, /en/, /latest; >= 8 chars if set)
+SLUG=
+# Client-side password encryption: 0 (default, public) | 1 (opt-in AES-256-GCM password prompt)
+ENCRYPT=0
+# Site language: en | zh-CN (env DIGEST_LANG or --lang overrides; zh-CN with *.en.md auto-emits /zh/ and /en/)
 LANG=en
 # Optional companion site in the other language (e.g. zh-CN:/zh-CN/ or https://zh.digest.example.com/<slug>/)
 LANG_ALT=
-# Optional: expose root-level /latest, /daily/latest, /weekly/latest encrypted static pages (HTTP 200, URL stays on latest; off by default)
+# Optional when SLUG is set: expose root-level /latest, /zh/latest, /en/latest static pages (HTTP 200)
 # ROOT_LATEST=0

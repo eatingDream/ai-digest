@@ -35,7 +35,7 @@ def _pub_setup(tmp_path, password="synthetic-test-pass-0001", **extra):
     pw_file.write_text(password + "\n", encoding="utf-8")
     pw_file.chmod(0o600)
     env = dict(os.environ, DIGEST_ROOT=str(work), DIGEST_SITE_PASSWORD_FILE=str(pw_file), DIGEST_SITE_SALT_FILE=str(salt_file), DIGEST_TZ="UTC", **extra)
-    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST"):
+    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST", "DIGEST_ENCRYPT"):
         if k not in extra:
             env.pop(k, None)
     run_pub = lambda *a, extra_env=None: subprocess.run(
@@ -49,18 +49,26 @@ def test_config_init_overrides_and_validation(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(publish, "CONFIG_PATH", cfg_path)
     monkeypatch.setattr(publish, "CLI_LANG", None)
     clear = lambda *ks: [monkeypatch.delenv(k, raising=False) for k in ks]
-    clear("DIGEST_LANG", "SITE_SLUG", "SITE_DOMAIN", "CF_PAGES_PROJECT", "CF_ACCOUNT_ID", "CF_PROJECT", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST")
+    clear("DIGEST_LANG", "SITE_SLUG", "SITE_DOMAIN", "CF_PAGES_PROJECT", "CF_ACCOUNT_ID", "CF_PROJECT", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST", "DIGEST_ENCRYPT")
 
+    # Default --init creates public root-mounted config (SLUG='', ENCRYPT=0)
     monkeypatch.setenv("DIGEST_ROOT_LATEST", "1")
-    assert publish.init_config_if_needed()["ROOT_LATEST"] == "1" and cfg_path.is_file()
-    cfg_path.write_text("SLUG=abc12345\n", encoding="utf-8")
-    assert publish.load_config()["LANG"] == "en"
-    cfg_path.write_text("SLUG=abc12345\nLANG=zh-CN\n", encoding="utf-8")
-    assert publish.load_config()["LANG"] == "zh-CN"
-    for k, v in (("DIGEST_LANG", "en"), ("SITE_SLUG", "env12345"), ("SITE_DOMAIN", "d.example.org"), ("CF_PAGES_PROJECT", "proj")):
+    init_cfg = publish.init_config_if_needed()
+    assert init_cfg["ROOT_LATEST"] == "1" and init_cfg["SLUG"] == "" and init_cfg["ENCRYPT"] == "0" and cfg_path.is_file()
+    cfg_path.unlink()
+    enc_cfg = publish.init_config_if_needed(encrypt=True)
+    assert enc_cfg["ENCRYPT"] == "1" and len(enc_cfg["SLUG"]) == 22
+
+    cfg_path.write_text("SLUG=\n", encoding="utf-8")
+    assert publish.load_config()["SLUG"] == "" and publish.load_config()["ENCRYPT"] == "0" and publish.load_config()["LANG"] == "en"
+    cfg_path.write_text("SLUG=abc12345\nLANG=zh-CN\nENCRYPT=1\n", encoding="utf-8")
+    assert publish.load_config()["LANG"] == "zh-CN" and publish.load_config()["ENCRYPT"] == "1"
+    for k, v in (("DIGEST_LANG", "en"), ("SITE_SLUG", "env12345"), ("SITE_DOMAIN", "d.example.org"), ("CF_PAGES_PROJECT", "proj"), ("DIGEST_ENCRYPT", "0")):
         monkeypatch.setenv(k, v)
-    assert (cfg := publish.load_config())["LANG"] == "en" and cfg["SLUG"] == "env12345" and cfg["DOMAIN"] == "d.example.org" and cfg["PROJECT"] == "proj"
-    clear("DIGEST_LANG", "SITE_SLUG", "SITE_DOMAIN", "CF_PAGES_PROJECT")
+    assert (cfg := publish.load_config())["LANG"] == "en" and cfg["SLUG"] == "env12345" and cfg["DOMAIN"] == "d.example.org" and cfg["PROJECT"] == "proj" and cfg["ENCRYPT"] == "0"
+    monkeypatch.setenv("SITE_SLUG", "")
+    assert publish.load_config()["SLUG"] == ""
+    clear("DIGEST_LANG", "SITE_SLUG", "SITE_DOMAIN", "CF_PAGES_PROJECT", "DIGEST_ENCRYPT")
     publish.set_lang(None, None)
 
     for txt in ((ROOT / "site/CONFIG.example").read_text(encoding="utf-8"), "SLUG=<random-slug>\n", "SLUG={{secret}}\n",
@@ -152,7 +160,7 @@ def test_demo_default_bilingual_build_and_globals_restore(monkeypatch, tmp_path)
         assert f'href="{href_zh}" hreflang="en"' in shells["zh-CN", rel] and f'href="{href_zh}" hreflang="en"' in plains["zh-CN", rel]
 
 
-def test_demo_single_lang_cli_and_missing_password(monkeypatch, tmp_path):
+def test_demo_single_lang_cli_and_public_default(monkeypatch, tmp_path):
     d, w, out = publish.DEMO_DAILY_LABEL, publish.DEMO_WEEKLY_LABEL, tmp_path / "dist"
     env = dict(os.environ, DIGEST_DEMO_PASSWORD="demo-password-123", SITE_SLUG="demo", DIGEST_ROOT_LATEST="1")
     env.pop("DIGEST_LANG", None)
@@ -168,13 +176,24 @@ def test_demo_single_lang_cli_and_missing_password(monkeypatch, tmp_path):
     assert "hreflang" not in sh_idx and "hreflang" not in pl_idx and "本周周报" in pl_idx
     assert '<html lang="zh-CN">' in sh_day and "记住此设备" in sh_day and "返回目录" in pl_day and "Orion-3 Mini" in pl_day
     assert 'href="/demo/"' in pl_latest and f'href="/demo/weekly/{w}"' in pl_latest and "Orion-3 Mini" in pl_latest
+
+    # Unset DIGEST_DEMO_PASSWORD builds a public (unencrypted) demo site with no lock button
     monkeypatch.delenv("DIGEST_DEMO_PASSWORD", raising=False)
+    monkeypatch.delenv("DIGEST_LANG", raising=False)
+    pub_out = tmp_path / "pubdemo"
+    assert publish.main(["--demo", "--out", str(pub_out)]) == 0
+    en_day = (pub_out / "en" / "daily" / f"{d}.html").read_text(encoding="utf-8")
+    zh_idx = (pub_out / "zh-CN" / "index.html").read_text(encoding="utf-8")
+    assert publish.PROMPT_MARK not in en_day and 'class="lock"' not in en_day and "digest-key:" not in en_day and "Orion-3 Mini" in en_day
+    assert f'href="/zh-CN/daily/{d}" hreflang="zh-CN"' in en_day and 'href="/en/" hreflang="en"' in zh_idx
+    # Short non-empty DIGEST_DEMO_PASSWORD still rejected
+    monkeypatch.setenv("DIGEST_DEMO_PASSWORD", "ab")
     with pytest.raises(SystemExit):
-        publish.main(["--demo", "--out", str(tmp_path / "nopw")])
+        publish.main(["--demo", "--out", str(tmp_path / "shortpw")])
 
 
 def test_incremental_publish_cache_verify_and_latest_cli(tmp_path):
-    work, pw_file, env, run_pub = _pub_setup(tmp_path, SITE_SLUG="testslug", SITE_DOMAIN="digest.example.com")
+    work, pw_file, env, run_pub = _pub_setup(tmp_path, SITE_SLUG="testslug", SITE_DOMAIN="digest.example.com", DIGEST_ENCRYPT="1")
     r1 = run_pub("--issue", "daily/2026-01-14", "--md", "examples/sample-digest.en.md", "--lang", "en", "--prepare-only")
     assert r1.returncode == 0 and "deploy: skipped (--prepare-only)" in r1.stdout and (work / "site" / "enc-cache.json").is_file()
     pub = work / "site" / "public"
@@ -232,7 +251,7 @@ def test_bilingual_incremental_rerender_lang_alt_and_nav_idempotency(monkeypatch
     work, _, _, run_pub = _pub_setup(tmp_path, password="synthetic-test-pass-7777")
     rd = lambda rel: (work / "site" / rel).read_text(encoding="utf-8")
     (work / "site").mkdir(parents=True)
-    (work / "site" / "CONFIG").write_text("SLUG=bislug1234\nLANG=zh-CN\nLANG_ALT=en:https://digest.example.com/enslug1234/\n", encoding="utf-8")
+    (work / "site" / "CONFIG").write_text("SLUG=bislug1234\nENCRYPT=1\nLANG=zh-CN\nLANG_ALT=en:https://digest.example.com/enslug1234/\n", encoding="utf-8")
     for dst, src in (("digest-2026-01-15.md", "sample-digest.zh-CN.md"), ("digest-2026-01-15.en.md", "sample-digest.en.md"),
                      ("digest-2026-01-14.md", "sample-digest.zh-CN.md"), ("digest-2026-01-15-draft.md", "sample-digest.zh-CN.md"), ("digest-2026-01-16.en.md", "sample-digest.en.md")):
         shutil.copy(ROOT / "examples" / src, work / dst)
@@ -240,20 +259,29 @@ def test_bilingual_incremental_rerender_lang_alt_and_nav_idempotency(monkeypatch
     r1 = run_pub("--issue", "daily/2026-01-15", "--md", "digest-2026-01-15.md", "--prepare-only")
     assert r1.returncode == 0 and "published: daily/2026-01-15 (10 items) + English (digest-2026-01-15.en.md)" in r1.stdout
     plain15, plain_idx = rd("plain/bislug1234/daily/2026-01-15.html"), rd("plain/bislug1234/index.html")
+    plain_zh15, plain_en15 = rd("plain/bislug1234/zh/daily/2026-01-15.html"), rd("plain/bislug1234/en/daily/2026-01-15.html")
     shell15, dec15 = _decrypt(work / "site/public/bislug1234/daily/2026-01-15.html", "synthetic-test-pass-7777")
-    ids = re.findall(r'\bid="([^"]+)"', plain15)
-    assert dec15 == plain15 and len(ids) == len(set(ids)) and 'id="en-digestFilterBar"' in plain15 and "10 条" in plain_idx and "20 条" not in plain_idx
+    shell_en15, dec_en15 = _decrypt(work / "site/public/bislug1234/en/daily/2026-01-15.html", "synthetic-test-pass-7777")
+    assert dec15 == plain15 and dec_en15 == plain_en15
+    assert '<div class="lang-pane' not in plain_zh15 and '<div class="lang-pane' not in plain_en15
+    assert '<html lang="en">' in shell_en15 and "Password" in shell_en15 and '<html lang="zh-CN">' in shell15
+    assert 'href="/bislug1234/en/daily/2026-01-15" hreflang="en"' in plain_zh15
+    assert 'href="/bislug1234/zh/daily/2026-01-15" hreflang="zh-CN"' in plain_en15
+    assert "10 条" in plain_idx and "20 条" not in plain_idx
     assert 'id="archiveFilterBar"' in plain_idx and 'href="https://digest.example.com/enslug1234/" hreflang="en"' in plain_idx
     assert all('href="https://digest.example.com/enslug1234/daily/2026-01-15" hreflang="en"' in s for s in (plain15, shell15))
 
     assert run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--lang", "en", "--prepare-only").returncode == 0
     assert '<div class="lang-pane' not in rd("plain/bislug1234/daily/2026-01-14.html") and run_pub("--rerender-all", "--prepare-only").returncode == 0
     assert sorted(p.name for p in (work / "site/sources/daily").glob("*.html")) == ["2026-01-14.html", "2026-01-15.html"]
+    assert sorted(p.name for p in (work / "site/sources/en/daily").glob("*.html")) == ["2026-01-15.html"]
     assert '<html lang="zh-CN">' in (p14 := rd("plain/bislug1234/daily/2026-01-14.html")) and "值得看" in p14 and "Why it matters" not in p14
-    assert rd("plain/bislug1234/daily/2026-01-15.html").count(publish.NAV_TOP_START) == 2
+    assert 'href="/bislug1234/en/" hreflang="en"' in rd("plain/bislug1234/zh/daily/2026-01-14.html")
+    assert rd("plain/bislug1234/en/daily/2026-01-15.html").count(publish.NAV_TOP_START) == 1
 
     shutil.copy(ROOT / "examples/sample-digest.en.md", custom_en := work / "alt-en.md")
     assert "+ English (alt-en.md)" in run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--md-en", str(custom_en), "--prepare-only").stdout
+    assert sorted(p.name for p in (work / "site/sources/en/daily").glob("*.html")) == ["2026-01-14.html", "2026-01-15.html"]
     r_bad = run_pub("--issue", "daily/2026-01-14", "--md-en", str(custom_en), "--prepare-only")
     assert r_bad.returncode != 0 and "--md-en requires" in r_bad.stderr
 
@@ -377,20 +405,21 @@ def test_deploy_via_pages_api_uploads_redirects_and_excludes_control_files(monke
 
 
 def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
-    import subprocess
-
     work, _, _, run_pub = _pub_setup(tmp_path, password="synthetic-test-pass-7777")
     (work / "site").mkdir(parents=True)
-    (work / "site" / "CONFIG").write_text("SLUG=uxslug1234\nLANG=zh-CN\n", encoding="utf-8")
+    (work / "site" / "CONFIG").write_text("SLUG=uxslug1234\nENCRYPT=1\nLANG=zh-CN\n", encoding="utf-8")
     shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-14.md")
     shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15.md")
     shutil.copy(ROOT / "examples" / "sample-digest.en.md", work / "digest-2026-01-15.en.md")
     assert run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--prepare-only").returncode == 0
     assert run_pub("--issue", "daily/2026-01-15", "--md", "digest-2026-01-15.md", "--prepare-only").returncode == 0
 
-    plain15 = (work / "site/plain/uxslug1234/daily/2026-01-15.html").read_text(encoding="utf-8")
-    plain_idx = (work / "site/plain/uxslug1234/index.html").read_text(encoding="utf-8")
-    shell15 = (work / "site/public/uxslug1234/daily/2026-01-15.html").read_text(encoding="utf-8")
+    plain15 = (work / "site/plain/uxslug1234/zh/daily/2026-01-15.html").read_text(encoding="utf-8")
+    plain_en15 = (work / "site/plain/uxslug1234/en/daily/2026-01-15.html").read_text(encoding="utf-8")
+    plain_idx = (work / "site/plain/uxslug1234/zh/index.html").read_text(encoding="utf-8")
+    plain_en_idx = (work / "site/plain/uxslug1234/en/index.html").read_text(encoding="utf-8")
+    shell15 = (work / "site/public/uxslug1234/zh/daily/2026-01-15.html").read_text(encoding="utf-8")
+    shell_en15 = (work / "site/public/uxslug1234/en/daily/2026-01-15.html").read_text(encoding="utf-8")
 
     # Full-bleed sticky <header class="mast"> sits outside/before <article class="paper"> with semantic data-nav
     assert plain15.index('<header class="mast">') < plain15.index('<article class="paper">')
@@ -399,17 +428,24 @@ def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
     m_hdr = re.search(r'<header class="mast"[^>]*>.*?</header>', plain15, re.S)
     assert m_hdr and 'class="issue-nav top"' in m_hdr.group(0)
     assert 'data-nav="index"' in m_hdr.group(0) and 'data-nav="prev"' in m_hdr.group(0)
-    assert 'data-lang-toggle' in plain15 and 'data-theme-toggle' in plain15 and 'data-copy-anchor' in plain15
+    assert 'class="ctrl-btn lang-btn' in m_hdr.group(0) and 'href="/uxslug1234/en/daily/2026-01-15"' in m_hdr.group(0)
+    assert 'data-theme-toggle' in plain15 and 'data-copy-anchor' in plain15 and 'data-lock' in plain15
+    assert 'href="/uxslug1234/zh/daily/2026-01-15"' in plain_en15 and 'href="/uxslug1234/zh/"' in plain_en_idx
+
+    # Warm charcoal & terracotta Light/Dark palette tokens across issue, index, and unlock shell
+    for tok in ("#faf8f4", "#141311", "#b85432", "#df7d56"):
+        assert tok in plain15 and tok in plain_idx and tok in shell15
 
     # Index shell uses single theme toggle, quick-jump latest pill, and content-visibility
     assert 'data-theme-toggle' in plain_idx and 'href="daily/latest"' in plain_idx
     assert 'content-visibility: auto' in plain_idx and 'backdrop-filter:' in plain_idx
 
-    # Unlock shell includes spring loading/error feedback hooks
+    # Unlock shell includes spring loading/error feedback hooks and per-path language localization
     assert "is-loading" in shell15 and "is-shake" in shell15 and 'class="spin"' in shell15
+    assert '<html lang="zh-CN">' in shell15 and '<html lang="en">' in shell_en15
 
-    # Single unified theme-color meta tag on both reader and index pages
-    assert plain15.count('<meta name="theme-color"') == 1 and plain_idx.count('<meta name="theme-color"') == 1
+    # Single unified theme-color meta tag on reader, index, and unlock shell
+    assert plain15.count('<meta name="theme-color"') == 1 and plain_idx.count('<meta name="theme-color"') == 1 and shell15.count('<meta name="theme-color"') == 1
 
     # CSS minifier shrinks raw stylesheet, is idempotent, and preserves modern motion/color rules
     import render_html
@@ -420,8 +456,8 @@ def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
         assert tok in min_css and tok in plain15
     assert "content-visibility: auto" not in plain15
 
-    # Every inline <script> across issue, index, and unlock shell must parse cleanly
-    for label, html_doc in (("issue", plain15), ("index", plain_idx), ("shell", shell15)):
+    # Every inline <script> across issue (zh & en), index (zh & en), and unlock shell must parse cleanly
+    for label, html_doc in (("issue_zh", plain15), ("issue_en", plain_en15), ("index_zh", plain_idx), ("index_en", plain_en_idx), ("shell", shell15)):
         scripts = re.findall(r"<script([^>]*)>(.*?)</script>", html_doc, re.S)
         assert scripts, f"no scripts in {label}"
         for i, (attrs, body) in enumerate(scripts):
@@ -432,4 +468,62 @@ def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
             js_file.write_text(body, encoding="utf-8")
             chk = subprocess.run(["node", "--check", str(js_file)], capture_output=True, text=True)
             assert chk.returncode == 0, f"JS syntax error in {label}[{i}]: {chk.stderr}"
+
+
+def test_public_root_mounted_default_and_symmetric_lang_paths(tmp_path):
+    work = tmp_path / "pubwork"
+    env = dict(os.environ, DIGEST_ROOT=str(work), DIGEST_TZ="UTC", SITE_DOMAIN="public.example.com")
+    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST", "DIGEST_ENCRYPT", "DIGEST_SITE_PASSWORD_FILE"):
+        env.pop(k, None)
+    run_pub = lambda *a: subprocess.run([sys.executable, str(ROOT / "publish.py"), *a], env=env, capture_output=True, text=True, cwd=ROOT)
+
+    # 1. Default --init produces root-mounted public CONFIG (no password file needed)
+    r_init = run_pub("--init", "--lang", "zh-CN")
+    assert r_init.returncode == 0 and "SLUG=\n" in r_init.stdout and "ENCRYPT=0\n" in r_init.stdout
+    # --rotate-password refused when ENCRYPT=0
+    r_rot = run_pub("--rotate-password", "--prepare-only")
+    assert r_rot.returncode != 0 and "ENCRYPT=1" in r_rot.stderr
+
+    # 2. Publish Chinese + companion English issues without any password file on disk
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-14.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.en.md", work / "digest-2026-01-15.en.md")
+    assert run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--prepare-only").returncode == 0
+    assert run_pub("--issue", "daily/2026-01-15", "--md", "digest-2026-01-15.md", "--prepare-only").returncode == 0
+
+    pub = work / "site" / "public"
+    assert (pub / "404.html").is_file() and (pub / "robots.txt").is_file() and not (work / "site" / "enc-cache.json").exists()
+    for rel in (
+        "index.html", "latest.html", "daily/latest.html", "daily/2026-01-15.html",
+        "zh/index.html", "zh/latest.html", "zh/daily/latest.html", "zh/daily/2026-01-15.html", "zh/daily/2026-01-14.html",
+        "en/index.html", "en/latest.html", "en/daily/latest.html", "en/daily/2026-01-15.html",
+    ):
+        text = (pub / rel).read_text(encoding="utf-8")
+        assert publish.PROMPT_MARK not in text and 'class="lock"' not in text and "digest-key:" not in text, f"unexpected lock/prompt in {rel}"
+
+    # Symmetric /zh/ and /en/ routing + legacy root backwards-compat
+    assert 'href="/en/daily/2026-01-15" hreflang="en"' in (pub / "zh/daily/2026-01-15.html").read_text(encoding="utf-8")
+    assert 'href="/zh/daily/2026-01-15" hreflang="zh-CN"' in (pub / "en/daily/2026-01-15.html").read_text(encoding="utf-8")
+    assert 'href="/en/" hreflang="en"' in (pub / "zh/daily/2026-01-14.html").read_text(encoding="utf-8")
+    assert 'href="/en/daily/latest" hreflang="en"' in (pub / "zh/daily/latest.html").read_text(encoding="utf-8")
+    assert 'href="/zh/daily/latest" hreflang="zh-CN"' in (pub / "en/daily/latest.html").read_text(encoding="utf-8")
+    assert 'href="/zh/"' in (pub / "zh/daily/latest.html").read_text(encoding="utf-8")
+    assert 'href="/en/"' in (pub / "en/daily/latest.html").read_text(encoding="utf-8")
+    assert 'href="/en/" hreflang="en"' in (pub / "index.html").read_text(encoding="utf-8")
+
+    # Cache-Control: no-store on all latest routes (root, /zh/, /en/)
+    hdrs = (pub / "_headers").read_text(encoding="utf-8")
+    for p in ("/latest", "/daily/latest", "/zh/latest", "/zh/daily/latest", "/en/latest", "/en/daily/latest"):
+        assert f"\n{p}\n" in hdrs and "Cache-Control: no-store" in hdrs
+
+    # verify_decrypt.mjs --local succeeds in public mode WITHOUT any password file
+    v_pub = subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env, capture_output=True, text=True, cwd=ROOT)
+    assert v_pub.returncode == 0 and "matched plaintext" in v_pub.stdout
+
+    # Removing an issue prunes both /zh/ and /en/ outputs, adds redirects, and keeps 404.html intact
+    assert run_pub("--remove", "daily/2026-01-15", "--prepare-only").returncode == 0
+    assert (pub / "404.html").is_file() and not (pub / "zh/daily/2026-01-15.html").exists() and not (pub / "en").exists()
+    redirs = (pub / "_redirects").read_text(encoding="utf-8")
+    assert "/daily/2026-01-15 / 302" in redirs
+    assert subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env, capture_output=True, text=True, cwd=ROOT).returncode == 0
 
