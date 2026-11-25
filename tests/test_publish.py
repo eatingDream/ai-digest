@@ -374,3 +374,58 @@ def test_deploy_via_pages_api_uploads_redirects_and_excludes_control_files(monke
     (pub / "_redirects").unlink()
     publish._deploy_via_pages_api(cfg, "tok", "deploy 2")
     assert 'name="_headers"; filename="_headers"' in (p2 := forms[-1].decode("utf-8")) and 'name="_redirects"' not in p2
+
+
+def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
+    import subprocess
+
+    work, _, _, run_pub = _pub_setup(tmp_path, password="synthetic-test-pass-7777")
+    (work / "site").mkdir(parents=True)
+    (work / "site" / "CONFIG").write_text("SLUG=uxslug1234\nLANG=zh-CN\n", encoding="utf-8")
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-14.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.en.md", work / "digest-2026-01-15.en.md")
+    assert run_pub("--issue", "daily/2026-01-14", "--md", "digest-2026-01-14.md", "--prepare-only").returncode == 0
+    assert run_pub("--issue", "daily/2026-01-15", "--md", "digest-2026-01-15.md", "--prepare-only").returncode == 0
+
+    plain15 = (work / "site/plain/uxslug1234/daily/2026-01-15.html").read_text(encoding="utf-8")
+    plain_idx = (work / "site/plain/uxslug1234/index.html").read_text(encoding="utf-8")
+    shell15 = (work / "site/public/uxslug1234/daily/2026-01-15.html").read_text(encoding="utf-8")
+
+    # Top issue nav rides inside sticky <header class="mast"> with semantic data-nav links
+    m_hdr = re.search(r'<header class="mast"[^>]*>.*?</header>', plain15, re.S)
+    assert m_hdr and 'class="issue-nav top"' in m_hdr.group(0)
+    assert 'data-nav="index"' in m_hdr.group(0) and 'data-nav="prev"' in m_hdr.group(0)
+    assert 'data-lang-toggle' in plain15 and 'data-theme-toggle' in plain15 and 'data-copy-anchor' in plain15
+
+    # Index shell uses single theme toggle, quick-jump latest pill, and content-visibility
+    assert 'data-theme-toggle' in plain_idx and 'href="daily/latest"' in plain_idx
+    assert 'content-visibility: auto' in plain_idx and 'backdrop-filter:' in plain_idx
+
+    # Unlock shell includes spring loading/error feedback hooks
+    assert "is-loading" in shell15 and "is-shake" in shell15 and 'class="spin"' in shell15
+
+    # Single unified theme-color meta tag on both reader and index pages
+    assert plain15.count('<meta name="theme-color"') == 1 and plain_idx.count('<meta name="theme-color"') == 1
+
+    # CSS minifier shrinks raw stylesheet, is idempotent, and preserves modern motion/color rules
+    import render_html
+    raw_style = f"<style>{render_html._load_css()}</style>"
+    min_css = publish.minify_css(raw_style)
+    assert len(min_css) < len(raw_style) and publish.minify_css(min_css) == min_css
+    for tok in ("@keyframes", "cubic-bezier(", "color-mix(", "backdrop-filter:", "content-visibility:", "calc("):
+        assert tok in min_css and tok in plain15
+
+    # Every inline <script> across issue, index, and unlock shell must parse cleanly
+    for label, html_doc in (("issue", plain15), ("index", plain_idx), ("shell", shell15)):
+        scripts = re.findall(r"<script([^>]*)>(.*?)</script>", html_doc, re.S)
+        assert scripts, f"no scripts in {label}"
+        for i, (attrs, body) in enumerate(scripts):
+            if "speculationrules" in attrs or "application/json" in attrs:
+                json.loads(body)
+                continue
+            js_file = tmp_path / f"{label}_{i}.js"
+            js_file.write_text(body, encoding="utf-8")
+            chk = subprocess.run(["node", "--check", str(js_file)], capture_output=True, text=True)
+            assert chk.returncode == 0, f"JS syntax error in {label}[{i}]: {chk.stderr}"
+
