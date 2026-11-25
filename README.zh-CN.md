@@ -25,7 +25,7 @@
 
 1. **广覆盖召回与初筛（`fetch/`）** — 并行抓取约 155 个公开只读信源（`fetch/sources.toml`，零密钥），去重并用 `fetch/ledger.py` 记录已推（★）/ 看过未推（☆）历史，只有出现实质新进展才会复推；产出 `triage.md`、`triage-papers.md` 和 `candidates.jsonl`（可选按能力启用 X 只读检索 `fetch/x-recall.zh-CN.md`）。
 2. **内容优先的 LLM 精选（`prompts/<语言>/`）** — 与平台无关的日报/周报提示词（含轻量论文初筛）按 `filter-notes.zh-CN.md` 核验一手出处，写成七个固定版面（模型、论文、工具与项目、行业与产品、算力与基础设施、安全与政策、观点与长文）——只看内容分量，不看热度数字。
-3. **单文件 HTML 阅读器（`render_html.py`）** — 生成自包含 HTML，带完整标题侧栏目录、纯前端关键词与标签筛选、`#锚点` 定位、暖纸 / 暖炭黑深浅色主题及中英双语支持（`DIGEST_LANG=en|zh-CN`、对称 `/zh/` 与 `/en/` 路径、独立 `--md-en` 单页双语，或 `LANG_ALT` 互链伴生站）。
+3. **单文件 HTML 阅读器（`render_html.py`）** — 生成自包含 HTML，配备暖纸 / 暖炭黑陶土深浅色主题、全宽自动显隐顶栏（下滑隐藏、上滑或停顿 3 秒浮现）、单键弹性语言与主题切换、流畅跟滚的完整标题侧栏目录、锚点直链复制、纯前端关键词与标签筛选及中英双语支持（`DIGEST_LANG=en|zh-CN`、对称 `/zh/` 与 `/en/` 路径、独立 `--md-en` 单页双语，或 `LANG_ALT` 互链伴生站）。
 4. **静态站点发布（`publish.py`）** — 默认发布免密码的根路径公开静态站点（`ENCRYPT=0`、`SLUG=`），存在 `*.en.md` 时自动生成对称 `/zh/` 与 `/en/` 路径树，直接生成 `/{daily,weekly,}/latest` 静态页（HTTP 200、URL 停留在 `latest`、`no-store`），发布前执行隐私扫描，增量部署到 Cloudflare Pages，并用 `verify_decrypt.mjs` 逐页校验。如需加密访问，可用 `--init --encrypt` 或 `ENCRYPT=1` 开启客户端 AES-256-GCM 加密与私密随机路径。
 
 ## 快速开始

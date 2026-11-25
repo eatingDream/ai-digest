@@ -21,7 +21,7 @@ node --check verify_decrypt.mjs
 scripts/check_sanitized.sh         # 必须输出 "clean"
 ```
 
-无需密钥预览演示站：`DIGEST_DEMO_PASSWORD=demo python3 publish.py --demo --out dist/`。
+无需密钥预览演示站：`python3 publish.py --demo --out dist/`（如需预览加密模式可加 `DIGEST_DEMO_PASSWORD=demo`）。
 
 ## PR 要求
 
