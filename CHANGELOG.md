@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.4.1](https://github.com/eatingDream/ai-digest/compare/v0.4.0...v0.4.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **publish:** serve latest routes as static encrypted pages without 302 redirect ([#20](https://github.com/eatingDream/ai-digest/issues/20)) ([106f039](https://github.com/eatingDream/ai-digest/commit/106f039888bbc9e57e75ec6e070b477ba8e99708))
+
 ## [0.4.0](https://github.com/eatingDream/ai-digest/compare/v0.3.0...v0.4.0) (2026-11-24)
 
 
