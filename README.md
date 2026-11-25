@@ -2,7 +2,7 @@
 
 # AI DIGEST
 
-**An agent-driven pipeline that turns ~150 sources into a daily and weekly AI digest — rendered to a single-file HTML and published as an encrypted static site.**
+**An agent-driven pipeline that turns ~150 sources into a daily and weekly AI digest — rendered to a single-file HTML and published as a static site (with optional client-side encryption).**
 
 [![CI](https://github.com/eatingDream/ai-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/eatingDream/ai-digest/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -11,7 +11,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-[Live demo](https://ai-digest-demo.pages.dev) — password `demo` · [English](https://ai-digest-demo.pages.dev/en/) · [简体中文](https://ai-digest-demo.pages.dev/zh-CN/)
+[Live demo](https://ai-digest-demo.pages.dev) · [English](https://ai-digest-demo.pages.dev/en/) · [简体中文](https://ai-digest-demo.pages.dev/zh-CN/)
 
 <img src="docs/screenshot.en.png" alt="Rendered sample issue (synthetic data)" width="860">
 
@@ -25,8 +25,8 @@ English | [简体中文](README.zh-CN.md)
 
 1. **Wide recall & triage (`fetch/`)** — pulls ~155 read-only open sources in parallel (`fetch/sources.toml`, no API keys), deduplicates, tracks pushed (★) / seen (☆) history in `fetch/ledger.py` so items repeat only on substantive new developments, and writes `triage.md`, `triage-papers.md`, and `candidates.jsonl` (plus optional capability-gated X/Twitter search via `fetch/x-recall.md`).
 2. **Content-first LLM curation (`prompts/<lang>/`)** — platform-agnostic daily/weekly prompts (with a lightweight papers prefilter) verify primary sources against `filter-notes.md` and write seven sections (`Models`, `Papers`, `Tools & Projects`, `Industry & Products`, `Compute & Infrastructure`, `Safety & Policy`, `Opinion & Essays`) — selected by substance, never popularity counts.
-3. **Single-file HTML reader (`render_html.py`)** — emits self-contained HTML with a full-title sidebar TOC, instant client-side keyword/tag filtering, `#fragment` deep links after decryption, light/dark themes, and bilingual support (`DIGEST_LANG=en|zh-CN`, `--md-en` single-page toggle, or `LANG_ALT` companion links).
-4. **Encrypted static hosting (`publish.py`)** — encrypts every page client-side (AES-256-GCM, PBKDF2-SHA256, 600k iterations, gzip), serves static encrypted `/<slug>/{daily,weekly,}/latest` pages directly (HTTP 200, URL stays on `latest`, `no-store`), runs a pre-publish privacy scan, deploys incrementally to Cloudflare Pages, and decrypt-verifies each page via `verify_decrypt.mjs`.
+3. **Single-file HTML reader (`render_html.py`)** — emits self-contained HTML with a full-title sidebar TOC, instant client-side keyword/tag filtering, `#fragment` deep links, warm paper/charcoal light & dark themes, and bilingual support (`DIGEST_LANG=en|zh-CN`, symmetric `/zh/` & `/en/` site paths, standalone `--md-en`, or `LANG_ALT` companion links).
+4. **Static hosting (`publish.py`)** — publishes a clean, root-mounted public static site by default (`ENCRYPT=0`, `SLUG=`), generates symmetric `/zh/` & `/en/` trees whenever `*.en.md` companions exist, serves static `/{daily,weekly,}/latest` pages directly (HTTP 200, URL stays on `latest`, `no-store`), runs a pre-publish privacy scan, deploys incrementally to Cloudflare Pages, and verifies every page via `verify_decrypt.mjs`. Optional client-side AES-256-GCM encryption + private random `SLUG` can be enabled with `--init --encrypt` or `ENCRYPT=1`.
 
 ## Quick start
 
@@ -40,8 +40,8 @@ pip install -r requirements-dev.txt          # requests, lxml, markdown, cryptog
 python3 render_html.py examples/sample-digest.en.md /tmp/sample.html      # add --lang zh-CN for Chinese
 python3 render_html.py examples/sample-digest.zh-CN.md /tmp/bilingual.html --md-en examples/sample-digest.en.md
 
-# 2. Build the encrypted demo site (no deploy, no secrets; decrypt-verified during build)
-DIGEST_DEMO_PASSWORD='demo' python3 publish.py --demo --out dist/         # dist/en/ + dist/zh-CN/ (--lang for single)
+# 2. Build the public demo site (no deploy, no secrets; set DIGEST_DEMO_PASSWORD='demo' for encrypted mode)
+python3 publish.py --demo --out dist/                    # dist/en/ + dist/zh-CN/ (--lang for single)
 
 # 3. Run the tests
 pytest -q
@@ -50,21 +50,22 @@ pytest -q
 ### Run your own digest
 
 ```bash
-# 1. Configure site (generates site/CONFIG with a random 22-char SLUG; set LANG=en or zh-CN)
+# 1. Configure site (public root-mounted by default; pass --encrypt for private SLUG + password)
 python3 publish.py --init                                # or: cp site/CONFIG.example site/CONFIG
-install -m 600 /dev/stdin ~/.config/ai-digest/site-password   # paste 16+ char password, then Ctrl-D
 export CLOUDFLARE_API_TOKEN=...                          # scope: Account · Cloudflare Pages · Edit
+# Optional password mode (only when ENCRYPT=1):
+# install -m 600 /dev/stdin ~/.config/ai-digest/site-password
 
 # 2. Fetch candidates (set DIGEST_TZ first; GITHUB_TOKEN/GH_TOKEN optional for higher API limits)
 python3 fetch/fetch.py --daily                           # weekly: --weekly
 
 # 3. Curate with an agent: run prompts/en/daily.md (or weekly.md; prompts/zh-CN/ for Chinese) → digest-<P>.md
 
-# 4. Publish (auto-discovers sibling <stem>.en.md on zh-CN sites or pass --md-en; builds static latest pages)
+# 4. Publish (auto-discovers sibling <stem>.en.md on zh-CN sites to generate /zh/ & /en/ trees + static latest pages)
 python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 ```
 
-See [fetch/README.md](fetch/README.md) for fetch options, channels, and helper CLIs, and [site/README.md](site/README.md) for encryption details, `latest` routes, `--rebuild`, `--rerender-all`, `--rotate-password`, and `--remove`.
+See [fetch/README.md](fetch/README.md) for fetch options, channels, and helper CLIs, and [site/README.md](site/README.md) for optional encryption, `/zh/` & `/en/` routing, `latest` pages, `--rebuild`, `--rerender-all`, `--rotate-password`, and `--remove`.
 
 ## Use with AI agents
 
@@ -77,22 +78,23 @@ Environment variables take precedence over `site/CONFIG`.
 | Variable | `CONFIG` key | Description | Default |
 |---|---|---|---|
 | `SITE_DOMAIN` | `DOMAIN` | Site domain | `digest.example.com` |
-| `SITE_SLUG` | `SLUG` | Unguessable path prefix (`>= 8` URL-safe chars; never change after publishing) | random (`--init`) |
+| `SITE_SLUG` | `SLUG` | Optional path prefix (empty = root-mounted `/`; non-empty requires `>= 8` URL-safe chars) | empty (`--init --encrypt` generates random) |
+| `DIGEST_ENCRYPT` | `ENCRYPT` | Opt-in client-side AES-256-GCM password encryption (`1`/`true`/`yes`/`on`) | `0` (public) |
 | `CF_ACCOUNT_ID` | `ACCOUNT_ID` | Cloudflare account ID | — |
 | `CF_ZONE_ID` | `ZONE_ID` | Zone of the domain (optional) | — |
 | `CF_PAGES_PROJECT` | `PROJECT` | Cloudflare Pages project name | `ai-digest` |
 | `CLOUDFLARE_API_TOKEN` / `_FILE` | — | Deploy token (Pages · Edit only) | — |
-| `DIGEST_SITE_PASSWORD_FILE` | — | Site password file (mode 600) | `~/.config/ai-digest/site-password` |
-| `DIGEST_SITE_SALT_FILE` | — | PBKDF2 salt file (auto-generated) | `~/.config/ai-digest/site-salt` |
+| `DIGEST_SITE_PASSWORD_FILE` | — | Site password file (mode 600; used only when `ENCRYPT=1`) | `~/.config/ai-digest/site-password` |
+| `DIGEST_SITE_SALT_FILE` | — | PBKDF2 salt file (auto-generated when `ENCRYPT=1`) | `~/.config/ai-digest/site-salt` |
 | `DIGEST_LANG` | `LANG` | Digest & site UI language: `en` or `zh-CN` (`--lang` overrides) | `en` |
 | `DIGEST_LANG_ALT` | `LANG_ALT` | Optional companion site URL/path in the other language (e.g. `zh-CN:/zh-CN/`) | — |
-| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | Opt-in root `/latest`, `/daily/latest`, `/weekly/latest` encrypted static pages (HTTP 200, URL stays on `latest`; `1`/`true`/`yes`/`on`; slug-scoped `/<slug>/...latest` pages are always generated) | `0` (off) |
+| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | When `SLUG` is set, opt-in root `/latest`, `/daily/latest`, `/weekly/latest` (and `/zh/...`, `/en/...`) static pages (`1`/`true`/`yes`/`on`) | `0` (off) |
 | `DIGEST_TZ` | — | IANA time zone defining a natural calendar day | `UTC` |
 | `DIGEST_ROOT` | — | Working directory for `runs/`, `html/`, `site/`, `ledger.json`, `logs/`, `state/` | repo root |
 | `LEDGER_PATH` | — | Explicit path to `ledger.json` (auto-created on first `ledger.py add`) | `<DIGEST_ROOT>/ledger.json` |
 | `DIGEST_PREFERENCES_FILE` | — | Topic ranking weights JSON (see `fetch/preferences.example.json`) | `fetch/preferences.json` |
 | `DIGEST_PRIVACY_PATTERNS_FILE` | — | Extra regexes checked before publishing | `site/privacy-patterns.txt` |
-| `DIGEST_DEMO_PASSWORD` | — | Password for `publish.py --demo` | — |
+| `DIGEST_DEMO_PASSWORD` | — | Optional password for `publish.py --demo` (unset = public demo) | — |
 | `GITHUB_TOKEN` / `GH_TOKEN` | — | Optional, raises GitHub API limits during fetch | — |
 
 Sources live in `fetch/sources.toml`; selection rules live in `filter-notes.md`.
