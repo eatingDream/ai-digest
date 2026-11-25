@@ -122,9 +122,12 @@ def test_render_bilingual_daily_and_weekly_zero_duplicate_ids(tmp_path):
         assert len(digest.items) == expected_items
         ids = re.findall(r'\bid="([^"]+)"', html)
         assert ids and len(ids) == len(set(ids)), f"duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
-        assert '<html lang="zh-CN">' in html and "localStorage.getItem('digest-lang')" in html and html.count('class="theme-switch lang-switch"') == 2
+        assert '<html lang="zh-CN">' in html and "localStorage.getItem('digest-lang')" in html
+        assert html.count('class="ctrl-btn lang-btn lang-switch"') == 2 and html.count("data-lang-toggle") == 3
+        assert 'data-lang="zh">' not in html.split("<header", 1)[1].split("</header>", 1)[0]
+        assert html.count("data-theme-toggle") == 3 and 'class="read-prog"' in html and 'class="copy-link"' in html and "content-visibility: auto" in html
         assert '<div class="lang-pane lang-zh" data-lang="zh">' in html and '<div class="lang-pane lang-en" data-lang="en" lang="en" data-title="' in html
-        assert 'aria-label="语言">' in html and 'aria-label="Language">' in html and 'aria-controls="en-tocSide"' in html
+        assert 'aria-label="语言"' in html and 'aria-label="Language"' in html and 'aria-controls="en-tocSide"' in html
         assert all(f'id="{eid}"' in html for eid in ("content", "en-content", "tocSide", "en-tocSide", "sec-models", "en-sec-models",
                                                      "item-1", "en-item-1", "digestFilterBar", "en-digestFilterBar", "digestFilterInput", "en-digestFilterInput"))
         if kind_idx == 1:
