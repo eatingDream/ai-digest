@@ -29,7 +29,7 @@ CI (`.github/workflows/ci.yml`) also runs gitleaks over full history. Required c
 | `prompts/<en\|zh-CN>/{papers,daily,weekly}.md` | Self-contained agent prompts; each starts with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and reader-preference profile template (`.zh-CN.md` twins) |
 | `render_html.py` | Markdown → single-file HTML (embedded CSS, full-title sidebar TOC, optional `--md-en` single-page bilingual toggle; parses EN & ZH labels) |
-| `publish.py` | Dual-pane localized nav, index, static `_redirects` (`/<slug>/{daily,weekly,}/latest` + opt-in `ROOT_LATEST`), privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
+| `publish.py` | Dual-pane localized nav, index, static encrypted `latest` pages (`/<slug>/{daily,weekly,}/latest` + opt-in `ROOT_LATEST`, HTTP 200), privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
 | `i18n.py` | All UI strings, date formats, fetch labels, and bilingual Markdown vocabulary (`en`, `zh-CN`) |
 | `site/` | Password page template, `CONFIG.example`, site docs (`site/CONFIG` is local and gitignored) |
 | `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`) for tests, demo, and docs |

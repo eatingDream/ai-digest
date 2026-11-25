@@ -21,7 +21,11 @@ def _decrypt(page_path, password="demo-password-123"):
 
 def _make_issue(tmp_path: Path, kind: str, label: str) -> publish.Issue:
     src = tmp_path / f"{kind}-{label}.html"
-    src.write_text(f"<!DOCTYPE html><html><head><title>{kind} {label}</title></head><body><main></main></body></html>", encoding="utf-8")
+    src.write_text(
+        f'<!DOCTYPE html><html><head><meta charset="utf-8"><title>{kind} {label}</title></head>'
+        f"<body><header></header><main><h1>{kind} {label}</h1></main></body></html>",
+        encoding="utf-8",
+    )
     start, end = (publish.parse_daily_label(label),) * 2 if kind == "daily" else publish.parse_weekly_label(label)
     return publish.Issue(kind=kind, label=label, source=src, start=start, end=end, title=f"{kind} {label}")
 
@@ -119,23 +123,31 @@ def test_demo_default_bilingual_build_and_globals_restore(monkeypatch, tmp_path)
     before = snap()
     assert publish.main(["--demo", "--out", str(out)]) == 0 and snap() == before
     redirs = (out / "_redirects").read_text(encoding="utf-8").splitlines()
-    assert redirs[0] == "/ /en/ 302" and len(redirs) == 13 and not any(l.startswith(("/latest", "/daily/latest", "/weekly/latest")) for l in redirs)
-    for lg in ("en", "zh-CN"):
-        assert f"/{lg}/daily/latest /{lg}/daily/{d} 302" in redirs and f"/{lg}/weekly/latest /{lg}/weekly/{w} 302" in redirs and f"/{lg}/latest /{lg}/daily/{d} 302" in redirs
+    assert redirs == ["/ /en/ 302"]
+    for rel in ("latest.html", "daily/latest.html", "weekly/latest.html"):
+        assert not (out / rel).exists()
     assert not (out / "demo").exists() and (out / "robots.txt").exists()
     headers = (out / "_headers").read_text(encoding="utf-8")
     assert headers.index("/en/daily/*") < headers.index("/en/daily/latest") and "/en/daily/latest\n  ! Cache-Control\n  Cache-Control: no-store" in headers
 
     shells, plains, salts = {}, {}, set()
     for lg in ("en", "zh-CN"):
-        for rel in ("index.html", f"daily/{d}.html", f"weekly/{w}.html"):
+        for rel in ("index.html", f"daily/{d}.html", f"weekly/{w}.html", "latest.html", "daily/latest.html", "weekly/latest.html"):
             shells[lg, rel], plains[lg, rel] = _decrypt(out / lg / rel)
             salts.add(re.search(r'"salt":"([^"]+)"', shells[lg, rel]).group(1))
     assert len(salts) == 1 and "Orion-3 Mini" not in shells["en", f"daily/{d}.html"]
     assert "Demo site · password: <code>demo-password-123</code>" in shells["en", "index.html"] and "演示站 · 密码：<code>demo-password-123</code>" in shells["zh-CN", "index.html"]
     assert "Daily · by week" in plains["en", "index.html"] and "Why it matters" in plains["en", f"daily/{d}.html"]
     assert "日报 · 按周" in plains["zh-CN", "index.html"] and "值得看" in plains["zh-CN", f"daily/{d}.html"]
-    for rel, href_en, href_zh in (("index.html", "/zh-CN/", "/en/"), (f"daily/{d}.html", f"/zh-CN/daily/{d}", f"/en/daily/{d}")):
+    assert 'href="/en/"' in plains["en", "latest.html"] and f'href="/en/weekly/{w}"' in plains["en", "daily/latest.html"]
+    assert 'href="/zh-CN/"' in plains["zh-CN", "latest.html"] and 'href="/zh-CN/"' in plains["zh-CN", "weekly/latest.html"]
+    for rel, href_en, href_zh in (
+        ("index.html", "/zh-CN/", "/en/"),
+        (f"daily/{d}.html", f"/zh-CN/daily/{d}", f"/en/daily/{d}"),
+        ("latest.html", "/zh-CN/latest", "/en/latest"),
+        ("daily/latest.html", "/zh-CN/daily/latest", "/en/daily/latest"),
+        ("weekly/latest.html", "/zh-CN/weekly/latest", "/en/weekly/latest"),
+    ):
         assert f'href="{href_en}" hreflang="zh-CN"' in shells["en", rel] and f'href="{href_en}" hreflang="zh-CN"' in plains["en", rel]
         assert f'href="{href_zh}" hreflang="en"' in shells["zh-CN", rel] and f'href="{href_zh}" hreflang="en"' in plains["zh-CN", rel]
 
@@ -147,12 +159,15 @@ def test_demo_single_lang_cli_and_missing_password(monkeypatch, tmp_path):
     assert subprocess.run([sys.executable, str(ROOT / "publish.py"), "--demo", "--lang", "zh-CN", "--out", str(out)],
                           env=env, capture_output=True, text=True, cwd=ROOT).returncode == 0
     redirs = (out / "_redirects").read_text(encoding="utf-8").splitlines()
-    assert redirs[0] == "/ /demo/ 302" and len(redirs) == 7 and f"/demo/daily/latest /demo/daily/{d} 302" in redirs and f"/demo/weekly/latest /demo/weekly/{w} 302" in redirs
-    assert not any(l.startswith(("/latest", "/daily/latest")) for l in redirs) and not (out / "zh-CN").exists() and (out / "robots.txt").exists()
+    assert redirs == ["/ /demo/ 302"]
+    assert (out / "demo" / "latest.html").is_file() and (out / "demo" / "daily" / "latest.html").is_file() and (out / "demo" / "weekly" / "latest.html").is_file()
+    assert not (out / "latest.html").exists() and not (out / "daily" / "latest.html").exists() and not (out / "zh-CN").exists() and (out / "robots.txt").exists()
     sh_idx, pl_idx = _decrypt(out / "demo" / "index.html")
     sh_day, pl_day = _decrypt(out / "demo" / "daily" / f"{d}.html")
+    _, pl_latest = _decrypt(out / "demo" / "latest.html")
     assert "hreflang" not in sh_idx and "hreflang" not in pl_idx and "本周周报" in pl_idx
     assert '<html lang="zh-CN">' in sh_day and "记住此设备" in sh_day and "返回目录" in pl_day and "Orion-3 Mini" in pl_day
+    assert 'href="/demo/"' in pl_latest and f'href="/demo/weekly/{w}"' in pl_latest and "Orion-3 Mini" in pl_latest
     monkeypatch.delenv("DIGEST_DEMO_PASSWORD", raising=False)
     with pytest.raises(SystemExit):
         publish.main(["--demo", "--out", str(tmp_path / "nopw")])
@@ -162,26 +177,31 @@ def test_incremental_publish_cache_verify_and_latest_cli(tmp_path):
     work, pw_file, env, run_pub = _pub_setup(tmp_path, SITE_SLUG="testslug", SITE_DOMAIN="digest.example.com")
     r1 = run_pub("--issue", "daily/2026-01-14", "--md", "examples/sample-digest.en.md", "--lang", "en", "--prepare-only")
     assert r1.returncode == 0 and "deploy: skipped (--prepare-only)" in r1.stdout and (work / "site" / "enc-cache.json").is_file()
-    r_lines1 = (work / "site" / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
-    assert "/testslug/daily/latest /testslug/daily/2026-01-14 302" in r_lines1 and not any(l.startswith(("/latest", "/daily/latest")) for l in r_lines1)
+    pub = work / "site" / "public"
+    assert not (pub / "_redirects").exists()
+    assert (pub / "testslug" / "daily" / "latest.html").is_file() and (pub / "testslug" / "latest.html").is_file()
+    assert not (pub / "latest.html").exists() and not (pub / "daily" / "latest.html").exists()
 
     r2 = run_pub("--issue", "daily/2026-01-14", "--md", "examples/sample-digest.en.md", "--lang", "en", "--prepare-only")
     assert r2.returncode == 0 and "changed pages: none" in r2.stdout
     v1 = subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env, capture_output=True, text=True, cwd=ROOT)
-    assert v1.returncode == 0 and "all 2 page(s) decrypted and matched plaintext" in v1.stdout
+    assert v1.returncode == 0 and "all 4 page(s) decrypted and matched plaintext" in v1.stdout
 
     pw_file.write_text("synthetic-test-pass-0002\n", encoding="utf-8")
     r3 = run_pub("--issue", "daily/2026-01-14", "--lang", "en", "--prepare-only")
     assert r3.returncode == 0 and "changed pages: none" not in r3.stdout
-    assert _decrypt(work / "site" / "public" / "testslug" / "daily" / "2026-01-14.html", "synthetic-test-pass-0002")[1] == (
+    assert _decrypt(pub / "testslug" / "daily" / "2026-01-14.html", "synthetic-test-pass-0002")[1] == (
         work / "site" / "plain" / "testslug" / "daily" / "2026-01-14.html").read_text(encoding="utf-8")
 
     r4 = run_pub("--issue", "daily/2026-01-15", "--md", "examples/sample-digest.en.md", "--lang", "zh-CN", "--prepare-only", extra_env={"DIGEST_ROOT_LATEST": "1"})
     assert r4.returncode == 0 and "changed pages: none" not in r4.stdout
-    assert '<html lang="zh-CN">' in (work / "site" / "public" / "testslug" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
-    r_lines2 = (work / "site" / "public" / "_redirects").read_text(encoding="utf-8").splitlines()
-    assert "/testslug/daily/latest /testslug/daily/2026-01-15 302" in r_lines2 and "/daily/latest /testslug/daily/2026-01-15 302" in r_lines2
-    headers = (work / "site" / "public" / "_headers").read_text(encoding="utf-8")
+    assert '<html lang="zh-CN">' in (pub / "testslug" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+    assert not (pub / "_redirects").exists()
+    sh_root, pl_root = _decrypt(pub / "daily" / "latest.html", "synthetic-test-pass-0002")
+    assert "testslug" not in sh_root and 'href="/testslug/"' in pl_root and 'href="/testslug/daily/2026-01-14"' in pl_root
+    v2 = subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env, capture_output=True, text=True, cwd=ROOT)
+    assert v2.returncode == 0 and "all 7 page(s) decrypted and matched plaintext" in v2.stdout
+    headers = (pub / "_headers").read_text(encoding="utf-8")
     assert all(h in headers for h in ("X-Frame-Options: DENY", "frame-ancestors 'none'", "connect-src 'self'", "prefetch-src 'self'", "\n/daily/latest\n  Cache-Control: no-store\n"))
 
 
@@ -238,62 +258,102 @@ def test_bilingual_incremental_rerender_lang_alt_and_nav_idempotency(monkeypatch
     assert r_bad.returncode != 0 and "--md-en requires" in r_bad.stderr
 
 
-def test_static_latest_redirects_root_opt_in_and_removed_paths(monkeypatch, tmp_path):
+def test_static_latest_pages_root_opt_in_and_removed_paths(monkeypatch, tmp_path):
     site, slug = tmp_path / "site", "privateslug01"
-    for attr, path in (("SITE", site), ("PUBLIC", site / "public"), ("PLAIN", site / "plain"), ("SOURCES", site / "sources"), ("CONFIG_PATH", site / "CONFIG")):
+    for attr, path in (("SITE", site), ("PUBLIC", site / "public"), ("PLAIN", site / "plain"), ("SOURCES", site / "sources"), ("CONFIG_PATH", site / "CONFIG"), ("ENC_CACHE_PATH", site / "enc-cache.json")):
         monkeypatch.setattr(publish, attr, path)
-    for k in ("DIGEST_ROOT_LATEST", "SITE_SLUG"):
+    pw_file, salt_file = tmp_path / "pw", tmp_path / "salt"
+    pw_file.write_text("synthetic-test-pass-latest\n", encoding="utf-8")
+    monkeypatch.setenv("DIGEST_SITE_PASSWORD_FILE", str(pw_file))
+    monkeypatch.setenv("DIGEST_SITE_SALT_FILE", str(salt_file))
+    for k in ("DIGEST_ROOT_LATEST", "SITE_SLUG", "DIGEST_LANG_ALT"):
         monkeypatch.delenv(k, raising=False)
     site.mkdir(parents=True)
-    (site / "CONFIG").write_text(f"SLUG={slug}\nLANG=en\n", encoding="utf-8")
+    (site / "CONFIG").write_text(f"SLUG={slug}\nLANG=en\nLANG_ALT=zh-CN:https://zh.example.com/altsecret01/\n", encoding="utf-8")
     assert publish.load_config()["ROOT_LATEST"] == "0"
-    redir = lambda: (site / "public/_redirects").read_text(encoding="utf-8").splitlines()
     hdrs = lambda: (site / "public/_headers").read_text(encoding="utf-8")
     d1, d2 = _make_issue(tmp_path, "daily", "2026-01-14"), _make_issue(tmp_path, "daily", "2026-01-15")
     w1, w2 = _make_issue(tmp_path, "weekly", "2026-01-12_01-18"), _make_issue(tmp_path, "weekly", "2026-01-19_01-25")
 
-    wsr = lambda *iss: publish.write_static_root(slug=slug, issues=list(iss))
-    wsr(d1)
-    assert redir() == [f"/{slug}/daily/latest /{slug}/daily/2026-01-14 302", f"/{slug}/daily/latest/ /{slug}/daily/2026-01-14 302",
-                       f"/{slug}/latest /{slug}/daily/2026-01-14 302", f"/{slug}/latest/ /{slug}/daily/2026-01-14 302"]
-    assert hdrs().index(f"/{slug}/daily/*") < hdrs().index(f"/{slug}/daily/latest") and f"/{slug}/daily/latest\n  ! Cache-Control\n  Cache-Control: no-store\n" in hdrs() and "\n/latest\n" not in hdrs()
-    wsr(d1, w1, d2, w2)
-    assert f"/{slug}/daily/latest /{slug}/daily/2026-01-15 302" in redir() and f"/{slug}/weekly/latest /{slug}/weekly/2026-01-19_01-25 302" in redir()
-    wsr(w1, w2)
-    assert f"/{slug}/latest /{slug}/weekly/2026-01-19_01-25 302" in redir()
+    def build_and_encrypt():
+        cfg = publish.load_config()
+        publish.rebuild_all(cfg)
+        publish.privacy_scan(publish.iter_plain_files() + publish.iter_unencrypted_public())
+        publish.encrypt_all_pages(cfg)
+        publish.assert_public_is_encrypted(cfg)
+        return cfg
 
+    publish.save_source(d1.source, "daily", "2026-01-14")
+    build_and_encrypt()
+    assert not (site / "public/_redirects").exists()
+    assert (site / "public" / slug / "daily/latest.html").is_file() and (site / "public" / slug / "latest.html").is_file()
+    assert not (site / "public" / slug / "weekly/latest.html").exists() and not (site / "public/latest.html").exists()
+    assert hdrs().index(f"/{slug}/daily/*") < hdrs().index(f"/{slug}/daily/latest") and f"/{slug}/daily/latest\n  ! Cache-Control\n  Cache-Control: no-store\n" in hdrs() and "\n/latest\n" not in hdrs()
+    _, pl_d1 = _decrypt(site / "public" / slug / "daily/latest.html", "synthetic-test-pass-latest")
+    assert "2026-01-14" in pl_d1 and f'href="/{slug}/"' in pl_d1 and 'href="https://zh.example.com/altsecret01/daily/latest"' in pl_d1
+
+    publish.save_source(d2.source, "daily", "2026-01-15")
+    publish.save_source(w1.source, "weekly", "2026-01-12_01-18")
+    publish.save_source(w2.source, "weekly", "2026-01-19_01-25")
+    build_and_encrypt()
+    _, pl_d2 = _decrypt(site / "public" / slug / "daily/latest.html", "synthetic-test-pass-latest")
+    _, pl_w2 = _decrypt(site / "public" / slug / "weekly/latest.html", "synthetic-test-pass-latest")
+    _, pl_any = _decrypt(site / "public" / slug / "latest.html", "synthetic-test-pass-latest")
+    assert "2026-01-15" in pl_d2 and f'href="/{slug}/daily/2026-01-14"' in pl_d2 and f'href="/{slug}/weekly/2026-01-12_01-18"' in pl_d2
+    assert "2026-01-19_01-25" in pl_w2 and f'href="/{slug}/weekly/2026-01-12_01-18"' in pl_w2 and "2026-01-15" in pl_any
+
+    # Weekly-only fallback: /<slug>/latest serves latest weekly when no dailies exist
+    for p in (site / "sources/daily").glob("*.html"):
+        p.unlink()
+    build_and_encrypt()
+    assert not (site / "public" / slug / "daily/latest.html").exists()
+    assert "2026-01-19_01-25" in _decrypt(site / "public" / slug / "latest.html", "synthetic-test-pass-latest")[1]
+
+    # Opt-in ROOT_LATEST creates root encrypted latest pages without leaking SLUG or LANG_ALT in shells
+    publish.save_source(d2.source, "daily", "2026-01-15")
     for val in ("1", "true", "YES", "On"):
-        publish.write_config({"SLUG": slug, "LANG": "en", "ROOT_LATEST": val})
+        publish.write_config({"SLUG": slug, "LANG": "en", "LANG_ALT": "zh-CN:https://zh.example.com/altsecret01/", "ROOT_LATEST": val})
         assert publish.load_config()["ROOT_LATEST"] == "1"
-    wsr(d2, w1)
-    assert f"/daily/latest /{slug}/daily/2026-01-15 302" in redir() and f"/weekly/latest /{slug}/weekly/2026-01-12_01-18 302" in redir() and "\n/latest\n  Cache-Control: no-store\n" in hdrs()
+    build_and_encrypt()
+    assert "\n/latest\n  Cache-Control: no-store\n" in hdrs()
+    for rel, needle in (("latest.html", "2026-01-15"), ("daily/latest.html", "2026-01-15"), ("weekly/latest.html", "2026-01-19_01-25")):
+        sh, pl = _decrypt(site / "public" / rel, "synthetic-test-pass-latest")
+        assert slug not in sh and "altsecret01" not in sh and needle in pl and f'href="/{slug}/"' in pl
+
+    # Turning DIGEST_ROOT_LATEST back to 0 prunes root latest files cleanly
     monkeypatch.setenv("DIGEST_ROOT_LATEST", "0")
-    wsr(d2, w1)
-    assert not any(l.startswith(("/latest", "/daily/latest", "/weekly/latest")) for l in redir())
+    build_and_encrypt()
+    for rel in ("latest.html", "daily/latest.html", "weekly/latest.html"):
+        assert not (site / "public" / rel).exists() and not (site / "plain" / rel).exists()
+
+    # Env override DIGEST_ROOT_LATEST=1 works even when CONFIG omits ROOT_LATEST
     publish.write_config({"SLUG": slug, "LANG": "en"})
     monkeypatch.setenv("DIGEST_ROOT_LATEST", "1")
-    wsr(d2)
-    assert f"/latest /{slug}/daily/2026-01-15 302" in redir()
+    build_and_encrypt()
+    assert (site / "public/latest.html").is_file() and (site / "public/daily/latest.html").is_file()
 
+    # removed-paths.txt skips active latest aliases (cannot hijack static latest pages)
     monkeypatch.delenv("DIGEST_ROOT_LATEST")
     (site / "CONFIG").unlink()
-    (site / "removed-paths.txt").write_text("daily/2026-01-10\ndaily/2026-01-10\ndaily/latest\n", encoding="utf-8")
-    publish.save_source(d2.source, "daily", "2026-01-15")
+    (site / "removed-paths.txt").write_text("daily/2026-01-10\ndaily/2026-01-10\ndaily/latest\ndaily/latest.html\n", encoding="utf-8")
     publish.write_static_root(slug=slug)
-    assert redir() == [f"/{slug}/daily/latest /{slug}/daily/2026-01-15 302", f"/{slug}/daily/latest/ /{slug}/daily/2026-01-15 302",
-                       f"/{slug}/latest /{slug}/daily/2026-01-15 302", f"/{slug}/latest/ /{slug}/daily/2026-01-15 302",
-                       f"/{slug}/daily/2026-01-10 /{slug}/ 302", f"/{slug}/daily/2026-01-10.html /{slug}/ 302", f"/{slug}/daily/latest.html /{slug}/ 302"]
+    assert (site / "public/_redirects").read_text(encoding="utf-8").splitlines() == [
+        f"/{slug}/daily/2026-01-10 /{slug}/ 302",
+        f"/{slug}/daily/2026-01-10.html /{slug}/ 302",
+    ]
     publish.privacy_scan(publish.iter_unencrypted_public())
     (site / "removed-paths.txt").unlink()
-    wsr()
+    publish.write_static_root(slug=slug, issues=[])
     assert not (site / "public/_redirects").exists()
 
 
 def test_deploy_via_pages_api_uploads_redirects_and_excludes_control_files(monkeypatch, tmp_path):
     (pub := tmp_path / "public").mkdir()
     (pub / "_headers").write_text("/*\n  X-Frame-Options: DENY\n", encoding="utf-8")
-    (pub / "_redirects").write_text("/slug1234/latest /slug1234/daily/2026-01-15 302\n", encoding="utf-8")
+    (pub / "_redirects").write_text("/slug1234/daily/2026-01-10 /slug1234/ 302\n", encoding="utf-8")
     (pub / "robots.txt").write_text("User-agent: *\nDisallow: /\n", encoding="utf-8")
+    (pub / "slug1234").mkdir()
+    (pub / "slug1234" / "latest.html").write_text("enc-latest", encoding="utf-8")
     monkeypatch.setattr(publish, "PUBLIC", pub)
     forms: list[bytes] = []
 
@@ -308,9 +368,9 @@ def test_deploy_via_pages_api_uploads_redirects_and_excludes_control_files(monke
     cfg = {"ACCOUNT_ID": "acc123", "PROJECT": "proj123", "SLUG": "slug1234"}
     assert publish._deploy_via_pages_api(cfg, "tok", "deploy 1")["via"] == "pages-api"
     payload = forms[-1].decode("utf-8")
-    assert 'name="_headers"; filename="_headers"' in payload and 'name="_redirects"; filename="_redirects"' in payload and "/slug1234/latest /slug1234/daily/2026-01-15 302" in payload
+    assert 'name="_headers"; filename="_headers"' in payload and 'name="_redirects"; filename="_redirects"' in payload and "/slug1234/daily/2026-01-10 /slug1234/ 302" in payload
     manifest = json.loads(re.search(r'name="manifest"[^\r\n]*\r\n(?:[^\r\n]+\r\n)*\r\n(\{[^\r\n]+\})', payload).group(1))
-    assert "/robots.txt" in manifest and "/_headers" not in manifest and "/_redirects" not in manifest
+    assert "/robots.txt" in manifest and "/slug1234/latest.html" in manifest and "/_headers" not in manifest and "/_redirects" not in manifest
     (pub / "_redirects").unlink()
     publish._deploy_via_pages_api(cfg, "tok", "deploy 2")
     assert 'name="_headers"; filename="_headers"' in (p2 := forms[-1].decode("utf-8")) and 'name="_redirects"' not in p2
