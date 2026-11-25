@@ -1022,8 +1022,12 @@ def _inject_nav_into_fragment(
     )
     if "</header>" not in fragment.lower():
         die(f"{issue.kind}/{issue.label}: no </header> to place top nav")
-    # Place top nav inside <header class="mast"> so it rides along with the sticky auto-hide TopBar.
-    fragment = re.sub(r"</header>", lambda m: top + "\n" + m.group(0), fragment, count=1, flags=re.I)
+    # Place top nav inside <header class="mast"> right above any collapsible search drawer.
+    # Keep the slot marker intact so strip_injections() and repeated inject_nav() stay idempotent.
+    if "<!-- digest-nav-slot -->" in fragment:
+        fragment = fragment.replace("<!-- digest-nav-slot -->", f"<!-- digest-nav-slot -->\n{top}", 1)
+    else:
+        fragment = re.sub(r"</header>", lambda m: top + "\n" + m.group(0), fragment, count=1, flags=re.I)
     # Place bottom nav after the end-of-issue marker, still inside the footer if present.
     end_m = re.search(r'<div class="end">[^<]*</div>', fragment)
     if end_m:
@@ -1363,8 +1367,11 @@ def issue_headlines(issue: Issue) -> list[str]:
     return out
 
 
+_TAG_SPLIT_RE = re.compile(r"\s*[/／、｜|]\s*")
+
+
 def issue_tags(issue: Issue) -> list[str]:
-    """Distinct topic tags of an issue, extracted from its rendered story badges."""
+    """Distinct atomic topic tags of an issue, extracted from its rendered story badges."""
     try:
         html = _primary_pane_html(issue.source.read_text(encoding="utf-8"))
     except OSError:
@@ -1374,10 +1381,12 @@ def issue_tags(issue: Issue) -> list[str]:
     for cls, raw in re.findall(r'<span class="(badge[^"]*)"[^>]*>(.*?)</span>', html, flags=re.S):
         if "badge-hot" in cls:
             continue
-        t = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
-        if t and t not in seen:
-            seen.add(t)
-            out.append(t)
+        txt = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        for seg in _TAG_SPLIT_RE.split(txt):
+            t = seg.strip()
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
     return out
 
 
@@ -1420,7 +1429,7 @@ def index_html(
         tags_by_key[k] = ts
         for tg in ts:
             tag_counts[tg] = tag_counts.get(tg, 0) + 1
-    top_tags = [t for t, _n in sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:12]]
+    top_tags = [t for t, _n in sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:16]]
 
     def lead_spans(i: Issue) -> str:
         heads = heads_by_key.get((i.kind, i.label), [])
@@ -1512,10 +1521,13 @@ def index_html(
     if top_tags:
         chips = [
             f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{_esc(tr("filter_all"))}</button>'
-        ] + [
-            f'<button type="button" class="filter-tag" data-tag="{_esc(tg)}" aria-pressed="false">{_esc(tg)}</button>'
-            for tg in top_tags
         ]
+        for tg in top_tags:
+            cnt_html = f'<span class="ft-cnt num">{tag_counts[tg]}</span>' if tag_counts[tg] > 1 else ""
+            chips.append(
+                f'<button type="button" class="filter-tag" data-tag="{_esc(tg)}" aria-pressed="false">'
+                f"{_esc(tg)}{cnt_html}</button>"
+            )
         tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
     latest_daily, latest_weekly, _ = _latest_issues(issues)
     quick_bits: list[str] = []
@@ -1530,6 +1542,18 @@ def index_html(
             f'<span>{_esc(tr("latest_weekly"))}</span><span class="qp-meta num">{_md(latest_weekly.start)}–{_md(latest_weekly.end)}</span></a>'
         )
     quick_bar = f'<div class="quick-bar">{"".join(quick_bits)}</div>' if quick_bits else ""
+    search_toggle_btn = (
+        f'<button type="button" class="ctrl-btn search-btn" data-search-toggle aria-expanded="false"'
+        f' aria-controls="archiveFilterBar" aria-label="{_esc(tr("search_btn"))}" title="{_esc(tr("search_toggle_title"))}">'
+        '<span class="ctrl-ic" aria-hidden="true">'
+        '<svg viewBox="0 0 16 16" width="13.5" height="13.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">'
+        '<circle cx="7.2" cy="7.2" r="4.6"/><path d="M10.7 10.7 14 14"/></svg></span>'
+        f'<span class="ctrl-lbl">{_esc(tr("search_btn"))}</span>'
+        '<span class="search-badge num" data-search-badge hidden></span>'
+        '<kbd class="search-kbd" aria-hidden="true">/</kbd>'
+        "</button>"
+        if issues else ""
+    )
     lang_btn = (
         lang_pill_html(lang_href, lang_code)
         if (lang_href and lang_code)
@@ -1554,16 +1578,19 @@ def index_html(
         '</span>'
         f'<span class="ctrl-lbl">{_esc(lbl_sys)}</span></button>'
     )
-    filter_bar = (
-        f'<div class="filter-bar" id="archiveFilterBar" role="search" aria-label="{_esc(tr("archive_filter_label"))}"'
-        f' data-total="{len(issues)}" data-tpl="{_esc(tr("filter_shown"))}">'
+    filter_drawer = (
+        f'<div class="filter-bar filter-drawer" id="archiveFilterBar" role="search" aria-label="{_esc(tr("archive_filter_label"))}"'
+        f' data-total="{len(issues)}" data-tpl="{_esc(tr("filter_shown"))}" hidden>'
         '<div class="filter-row">'
         f'<input type="search" id="archiveFilterInput" class="filter-input" placeholder="{_esc(tr("archive_filter_placeholder"))}"'
         f' aria-label="{_esc(tr("archive_filter_label"))}" autocomplete="off" spellcheck="false">'
-        '<kbd class="filter-kbd" aria-hidden="true">/</kbd>'
         f'<span id="archiveFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
         f'<button type="button" id="archiveFilterClear" class="filter-clear" hidden>{_esc(tr("filter_clear"))}</button>'
+        f'<button type="button" class="filter-close" aria-label="{_esc(tr("search_close"))}" title="{_esc(tr("search_close"))}">×</button>'
         f"</div>{tag_chips}</div>"
+        if issues else ""
+    )
+    filter_empty = (
         f'<p id="archiveFilterEmpty" class="filter-empty" hidden>{_esc(tr("archive_filter_empty"))}</p>'
         if issues else ""
     )
@@ -1864,29 +1891,40 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   .mast-bar {{ gap: 8px; }}
   .mast-bar .edition {{ display: none; }}
 }}
-.filter-bar {{
-  margin: 18px 0 8px;
-  padding: 10px 12px;
-  background: var(--well);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.search-btn .search-kbd {{
+  margin-left: 1px; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg-sunk); color: var(--ink-4); font-size: 10px; line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }}
-.filter-row {{ display: flex; align-items: center; gap: 8px; position: relative; }}
+.search-btn.is-open, .search-btn.has-filter {{
+  border-color: var(--accent); color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}}
+.search-btn.is-open .search-kbd, .search-btn.has-filter .search-kbd {{ display: none; }}
+.search-badge {{
+  padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 600; line-height: 1.55;
+}}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) .search-badge {{ color: #161310; }} }}
+:root[data-theme="dark"] .search-badge {{ color: #161310; }}
+@media (hover: none), (max-width: 639px) {{ .search-btn .search-kbd, .search-btn .ctrl-lbl {{ display: none; }} }}
+.filter-bar {{
+  margin: 0; padding: 9px 0 11px;
+  border-top: 1px solid var(--line-soft);
+  background: transparent;
+  display: flex; flex-direction: column; gap: 7px;
+}}
+.filter-bar[hidden] {{ display: none !important; }}
+.filter-bar > .filter-row, .filter-bar > .filter-tags {{
+  width: min(var(--paper-max), calc(100% - 2 * max(var(--gutter), 5vw)));
+  margin-inline: auto;
+}}
+@media (max-width: 639px) {{ .filter-bar {{ padding: 8px 0 10px; }} }}
+.filter-row {{ display: flex; align-items: center; gap: 7px; position: relative; }}
 .filter-input {{
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 34px;
-  padding: 0 34px 0 11px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 13.5px;
-  outline: none;
+  flex: 1 1 auto; min-width: 0; height: 33px; padding: 0 11px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink);
+  font-family: inherit; font-size: 13.5px; outline: none;
   transition: border-color 150ms ease, box-shadow 180ms ease;
 }}
 .filter-input::placeholder {{ color: var(--ink-4); }}
@@ -1894,37 +1932,29 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }}
-.filter-kbd {{
-  position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
-  padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px;
-  background: var(--bg-sunk); color: var(--ink-4); font-size: 11px; line-height: 1.4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none;
-  transition: opacity 140ms ease;
-}}
-.filter-row:focus-within .filter-kbd, .filter-bar.is-active .filter-kbd {{ opacity: 0; }}
-@media (hover: none), (max-width: 639px) {{ .filter-kbd {{ display: none; }} }}
-.filter-count {{ flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 4px; }}
-.filter-clear {{
+.filter-count {{ flex: 0 0 auto; font-size: 12px; color: var(--ink-4); padding: 0 3px; white-space: nowrap; }}
+.filter-clear, .filter-close {{
   flex: 0 0 auto; height: 26px; padding: 0 10px; border: 1px solid var(--line);
   border-radius: 999px; background: var(--surface); color: var(--ink-3); font-size: 12px;
   transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), color 140ms ease, border-color 140ms ease;
 }}
-.filter-clear:hover {{ color: var(--ink); border-color: var(--accent); transform: translateY(-1px); }}
-.filter-clear:active {{ transform: scale(0.93); }}
-.filter-tags {{ display: flex; flex-wrap: wrap; gap: 5px; }}
-@media (max-width: 639px) {{
-  .filter-tags {{
-    flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;
-    mask-image: linear-gradient(90deg, #000 92%, transparent);
-    -webkit-mask-image: linear-gradient(90deg, #000 92%, transparent);
-  }}
-  .filter-tags::-webkit-scrollbar {{ display: none; }}
+.filter-close {{ width: 26px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; }}
+.filter-clear:hover, .filter-close:hover {{ color: var(--ink); border-color: var(--accent); transform: translateY(-1px); }}
+.filter-clear:active, .filter-close:active {{ transform: scale(0.93); }}
+.filter-tags {{
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 5px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding: 1px 18px 2px 0;
+  mask-image: linear-gradient(90deg, #000 94%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 94%, transparent);
 }}
+.filter-tags::-webkit-scrollbar {{ display: none; }}
 .filter-tag {{
   flex: 0 0 auto; height: 25px; padding: 0 10px; border: 1px solid var(--line);
   border-radius: 999px; background: var(--surface); color: var(--ink-3); font-size: 11.5px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 4px;
   transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), color 140ms ease, border-color 140ms ease, background-color 140ms ease;
 }}
+.filter-tag .ft-cnt {{ font-size: 10.5px; opacity: 0.6; }}
 .filter-tag:hover {{ color: var(--accent-ink); border-color: var(--accent); transform: translateY(-1px); }}
 .filter-tag:active {{ transform: scale(0.93); }}
 .filter-tag[aria-pressed="true"] {{
@@ -1933,6 +1963,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   color: var(--accent-ink);
   font-weight: 600;
 }}
+.filter-tag[aria-pressed="true"] .ft-cnt {{ opacity: 0.85; }}
 .filter-empty {{ margin: 20px 0 0; color: var(--ink-4); font-size: 13.5px; text-align: center; }}
 
 /* Sticky auto-hide TopBar + physics-spring buttons + latest quick pills */
@@ -2035,15 +2066,17 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 <span class="mast-chip"><span class="mark-kicker">{_esc(tr("index_chip"))}</span><span class="mark-figure num">{len(issues)}</span><span class="mark-kicker">{_esc(i18n.issue_unit(lg, len(issues)))}</span></span>
 <span class="mast-meta"><span class="num">{_esc(today_line)}</span><span>{_esc(tr("index_meta", d=len(dailies), w=len(weeklies)))}</span><span class="motto">{_esc(tr("motto"))}</span></span>
 <span class="mast-tools">
+{search_toggle_btn}
 {lang_btn}
 {theme_toggle_btn}
 {lock_btn}
 </span>
 </div>
+{filter_drawer}
 </header>
 <article class="paper">
 {quick_bar}
-{filter_bar}
+{filter_empty}
 <section class="archive-sec">
 <div class="kicker"><span class="bar"></span>{_esc(tr("index_daily"))}<span class="cnt num">{_esc(i18n.count_issues(lg, len(dailies)))}</span></div>
 {daily_ol}
@@ -2095,11 +2128,14 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   if(tbtn)tbtn.addEventListener('click',cycleTheme);
 
   const mast=document.querySelector('header.mast');
-  let showMast=function(){{}};
+  const bar=document.getElementById('archiveFilterBar');
+  const stgl=document.querySelector('[data-search-toggle]');
+  const sbadge=stgl?stgl.querySelector('[data-search-badge]'):null;
+  let showMast=function(){{}},searchOpen=Boolean(bar&&!bar.hidden);
   if(mast){{
     let lastY=Math.max(0,scrollY),sRaf=0,stopTimer=0,accDown=0,accUp=0,mastHover=false,mastFocus=false,barHidden=false;
     function setHide(h){{
-      const nh=Boolean(h&&!(mastHover||mastFocus)&&scrollY>64);
+      const nh=Boolean(h&&!(mastHover||mastFocus||searchOpen)&&scrollY>64);
       barHidden=nh;
       mast.classList.toggle('is-hidden',nh);
       if(!nh){{clearTimeout(stopTimer);stopTimer=0;}}
@@ -2134,10 +2170,11 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
     addEventListener('pointermove',e=>{{if(e.clientY<=12)setHide(false);}},{{passive:true}});
   }}
 
-  const bar=document.getElementById('archiveFilterBar');
+  let openSearch=function(){{}};
   if(bar){{
     const inp=document.getElementById('archiveFilterInput');
     const clr=document.getElementById('archiveFilterClear');
+    const cls=bar.querySelector('.filter-close');
     const cnt=document.getElementById('archiveFilterCount');
     const emp=document.getElementById('archiveFilterEmpty');
     const tbtns=[...bar.querySelectorAll('.filter-tag')];
@@ -2152,6 +2189,18 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
     }}));
     const tpl=bar.dataset.tpl||'{{shown}} / {{total}}';
     let curTag='',fRaf=0;
+    function setSearchOpen(open,focusInput){{
+      searchOpen=Boolean(open);
+      bar.hidden=!searchOpen;
+      if(stgl){{
+        stgl.setAttribute('aria-expanded',searchOpen?'true':'false');
+        stgl.classList.toggle('is-open',searchOpen);
+      }}
+      if(searchOpen)showMast();
+      if(searchOpen&&focusInput&&inp){{inp.focus();inp.select();}}
+    }}
+    openSearch=()=>setSearchOpen(true,true);
+    function resetFilter(){{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();}}
     function runFilter(){{
       fRaf=0;
       const q=(inp.value||'').trim().toLowerCase();
@@ -2179,23 +2228,33 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
       clr.hidden=!active;
       cnt.hidden=!active;
       if(active)cnt.textContent=tpl.replace('{{shown}}',String(shown)).replace('{{total}}',String(items.length));
+      if(stgl)stgl.classList.toggle('has-filter',active);
+      if(sbadge){{sbadge.hidden=!active;if(active)sbadge.textContent=shown+'/'+items.length;}}
       if(emp)emp.hidden=!(active&&shown===0);
     }}
     function sched(){{if(!fRaf)fRaf=requestAnimationFrame(runFilter);}}
+    if(stgl)stgl.addEventListener('click',()=>{{pop(stgl);setSearchOpen(!searchOpen,!searchOpen);}});
+    if(cls)cls.addEventListener('click',()=>{{setSearchOpen(false,false);if(stgl)stgl.focus();}});
     inp.addEventListener('input',sched);
-    inp.addEventListener('keydown',e=>{{if(e.key==='Escape'){{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();}}}});
-    clr.addEventListener('click',()=>{{inp.value='';curTag='';tbtns.forEach(b=>b.setAttribute('aria-pressed',b.dataset.tag===''?'true':'false'));runFilter();inp.focus();}});
+    clr.addEventListener('click',()=>{{resetFilter();inp.focus();}});
     tbtns.forEach(b=>b.addEventListener('click',()=>{{
       const tg=b.dataset.tag||'';
       curTag=(tg&&curTag===tg)?'':tg;
       tbtns.forEach(x=>x.setAttribute('aria-pressed',(x.dataset.tag||'')===curTag?'true':'false'));
       runFilter();
     }}));
+    addEventListener('keydown',e=>{{
+      if(e.key==='Escape'&&searchOpen){{
+        e.preventDefault();
+        if(inp.value||curTag)resetFilter();
+        else{{setSearchOpen(false,false);if(stgl)stgl.focus();}}
+      }}
+    }});
   }}
   addEventListener('keydown',e=>{{
     if(e.metaKey||e.ctrlKey||e.altKey)return;
     if(/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||''))return;
-    if(e.key==='/'){{const inp=document.getElementById('archiveFilterInput');if(inp){{e.preventDefault();inp.focus();}}}}
+    if(e.key==='/'){{if(bar){{e.preventDefault();openSearch();}}}}
     else if(e.key==='t'||e.key==='T'){{e.preventDefault();cycleTheme();showMast();}}
     else if(e.key==='l'||e.key==='L'){{const a=document.querySelector('a.lang-btn[href]');if(a&&a.href){{e.preventDefault();location.href=a.href;}}}}
   }});
