@@ -4,7 +4,7 @@ Guidance for AI coding agents (Cursor, Claude Code, Codex, …) working in this 
 
 ## What this is
 
-`ai-digest` turns ~155 open sources into daily and weekly AI digests: a script fetches and triages candidates, an LLM agent curates Markdown, `render_html.py` renders single-file HTML, and `publish.py` encrypts every page client-side and deploys to Cloudflare Pages (`DIGEST_LANG` / `--lang`: `en` default, `zh-CN`). Python 3.11+ (`requests`, `lxml`, `markdown`, `cryptography`); Node is only used for `verify_decrypt.mjs` and `npx wrangler`.
+`ai-digest` turns ~155 open sources into daily and weekly AI digests: a script fetches and triages candidates, an LLM agent curates Markdown, `render_html.py` renders single-file HTML, and `publish.py` publishes a root-mounted public static site by default (`ENCRYPT=0`, `SLUG=`, symmetric `/zh/` & `/en/` paths; optional client-side AES-256-GCM encryption via `--init --encrypt` or `ENCRYPT=1`) to Cloudflare Pages (`DIGEST_LANG` / `--lang`: `en` default, `zh-CN`). Python 3.11+ (`requests`, `lxml`, `markdown`, `cryptography`); Node is only used for `verify_decrypt.mjs` and `npx wrangler`.
 
 ## Setup, test, lint (run before every PR)
 
@@ -17,7 +17,7 @@ node --check verify_decrypt.mjs
 scripts/check_sanitized.sh                           # forbidden-pattern guard (must print "clean")
 ```
 
-CI (`.github/workflows/ci.yml`) also runs gitleaks over full history. Required checks on `main`: `Python (compile + pytest)`, `Node (syntax check)`, `Secret scan (gitleaks) + sanitization guard`. Local demo build (no secrets/network): `DIGEST_DEMO_PASSWORD=demo python3 publish.py --demo --out dist/` → `/en/` and `/zh-CN/` (`--lang en` for single `/demo/`).
+CI (`.github/workflows/ci.yml`) also runs gitleaks over full history. Required checks on `main`: `Python (compile + pytest)`, `Node (syntax check)`, `Secret scan (gitleaks) + sanitization guard`. Local demo build (no secrets/network): `python3 publish.py --demo --out dist/` → public `/en/` and `/zh-CN/` (`--lang en` for single `/demo/`; set `DIGEST_DEMO_PASSWORD=demo` for encrypted mode).
 
 ## Repo map
 
@@ -28,10 +28,10 @@ CI (`.github/workflows/ci.yml`) also runs gitleaks over full history. Required c
 | `fetch/x-recall.md` | Optional read-only X/Twitter search protocol (`.zh-CN.md` twin) |
 | `prompts/<en\|zh-CN>/{papers,daily,weekly}.md` | Self-contained agent prompts; each starts with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and reader-preference profile template (`.zh-CN.md` twins) |
-| `render_html.py` | Markdown → single-file HTML (embedded CSS, full-title sidebar TOC, optional `--md-en` single-page bilingual toggle; parses EN & ZH labels) |
-| `publish.py` | Dual-pane localized nav, index, static encrypted `latest` pages (`/<slug>/{daily,weekly,}/latest` + opt-in `ROOT_LATEST`, HTTP 200), privacy scan, AES-256-GCM encryption, deploy, `--demo`, `--md-en` / auto-discovered `*.en.md` |
+| `render_html.py` | Markdown → single-file HTML (warm paper/charcoal light & dark themes, auto-hide top bar, live-tracked full-title sidebar TOC, optional `--md-en` single-page bilingual toggle; parses EN & ZH labels) |
+| `publish.py` | Localized nav, index, symmetric `/zh/` & `/en/` trees (from auto-discovered `*.en.md` or `--md-en`) + legacy compat, static `latest` pages (HTTP 200, `no-store`), privacy scan, public default (`ENCRYPT=0`, `SLUG=`) + opt-in AES-256-GCM encryption (`ENCRYPT=1`), deploy, `--demo` |
 | `i18n.py` | All UI strings, date formats, fetch labels, and bilingual Markdown vocabulary (`en`, `zh-CN`) |
-| `site/` | Password page template, `CONFIG.example`, site docs (`site/CONFIG` is local and gitignored) |
+| `site/` | Optional password page template, `CONFIG.example`, site docs (`site/CONFIG` is local and gitignored) |
 | `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`) for tests, demo, and docs |
 | `tests/` | Offline pytest suite |
 | `version.py` | `__version__` (also `--version` on `publish.py`, `render_html.py`, `fetch/fetch.py`) |
@@ -46,7 +46,7 @@ Times are local (`DIGEST_TZ`, default UTC); natural-day windows are half-open `[
 |---|---|---|---|
 | 1. Papers prefilter | 00:10 | `prompts/<lang>/papers.md` (runs `fetch/fetch.py --daily --reuse`) | `runs/P/fetch/`, `runs/P/paper-cands.md` |
 | 2. Daily curation | 00:30 | `prompts/<lang>/daily.md` | `digest-P.md`, `runs/P/filter-log.md`, ledger updates |
-| 3. Publish | end of step 2 | `python3 publish.py --issue daily/P --md digest-P.md` | encrypted page `daily/P`, rebuilt index/nav, deploy |
+| 3. Publish | end of step 2 | `python3 publish.py --issue daily/P --md digest-P.md` | published `daily/P` (plus `/zh/` & `/en/` when `*.en.md` exists), rebuilt index/nav, deploy |
 | 4. Weekly | Monday 01:30 | `prompts/<lang>/weekly.md` (uses `fetch/weekly_late.py`) | `weekly-L.md` (`L` = `YYYY-MM-DD_MM-DD`, Monday_Sunday), published `weekly/L` |
 
 File names: daily `digest-YYYY-MM-DD.md`, weekly `weekly-YYYY-MM-DD_MM-DD.md`; issue ids `daily/YYYY-MM-DD`, `weekly/YYYY-MM-DD_MM-DD`.
@@ -66,5 +66,5 @@ Markdown contract (parsed by `render_html.py` in either language): title `**AI D
 - `main` is protected (`enforce_admins`, squash-only linear history): branch with `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, or `ci/`, use a Conventional Commit PR title, wait for required checks, then squash-merge; never push to `main` or force-push published history.
 - Run `publish.py` live deploys, `--rotate-password`, or `--remove` only when explicitly requested (`--demo` is always safe). X/Twitter access is strictly read-only.
 - Read the relevant `prompts/` spec before changing pipeline behavior; use helpers (`ledger.py`, `cand.py`, `page.py`) instead of loading `ledger.json`, `candidates.jsonl`, or full web pages into context.
-- Keep one primary language per site directory (`LANG_ALT` for companion sites; `--md-en` / sibling `<stem>.en.md` for single-page bilingual issues); never hand-edit or commit `dist/`, `site/public`, or `runs/`.
+- Keep separate single-lang pages under `/zh/` and `/en/` when `LANG=zh-CN` has companion `*.en.md` files (with `LANG_ALT` for external companion sites and `render_html.py --md-en` for standalone single-file bilingual output); never hand-edit or commit `dist/`, `site/public`, or `runs/`.
 - Keep `{{demo_hint}}` in `site/password_template.html` demo-only, and never alter encryption parameters or password-page DOM contracts (`id="pw"`, `id="rm"`, `__ENCRYPT_CFG_JSON__`) without updating `verify_decrypt.mjs` and tests.

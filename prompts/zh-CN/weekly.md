@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | 工作目录 | 仓库根目录（下文路径都相对于它） |
-| 环境变量 | `DIGEST_LANG=zh-CN`、`DIGEST_TZ=<IANA 时区>`；要部署还需 `site/CONFIG`、密码文件和 `CLOUDFLARE_API_TOKEN` |
+| 环境变量 | `DIGEST_LANG=zh-CN`、`DIGEST_TZ=<IANA 时区>`；要部署还需 `site/CONFIG` 和 `CLOUDFLARE_API_TOKEN`（仅 `ENCRYPT=1` 时需要密码文件） |
 | 工具 | Shell、文件读写；可选：X 只读检索与网页抓取 |
 | 输入 | 本周各日的 `digest-D.md`、`runs/*/filter-log*.md`、`python3 fetch/weekly_late.py` 的输出、`filter-notes.zh-CN.md` |
 | 产出 | `weekly-L.md`、已发布的 `weekly/L` 页面、台账更新 |
@@ -118,7 +118,7 @@ python3 fetch/weekly_late.py
 python3 publish.py --issue weekly/L --md weekly-L.md
 ```
 
-这条命令只渲染本期周报这一页，自动重建目录和各期导航（本周日报的「本周周报」链接会自动加上并重新加密），部署后自动做 HTTP 和解密校验。成功时第一行是 `OK`，并给出 `url:`（无扩展名网址，HTTP 200）和 `decrypt check: OK`；不需要再单独运行 `render_html.py` 或 `verify_decrypt.mjs`。
+这条命令只渲染本期周报这一页，自动重建目录和各期导航（本周日报的「本周周报」链接会自动加上并更新），部署后自动做 HTTP 和逐页校验。成功时第一行是 `OK`，并给出 `url:`（无扩展名网址，HTTP 200）和 `verify check: OK`（加密模式为 `decrypt check: OK`）；不需要再单独运行 `render_html.py` 或 `verify_decrypt.mjs`。
 - 第一行是 `ERROR` 时看它打印的日志末尾：隐私扫描命中就改稿后重跑同一条命令；部署或校验失败可重跑一次，仍失败则推送时附上 `html/weekly-L.html` 作为附件并说明网站发布失败。
 - 改稿后重发，重跑同一条命令即可。
 

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" width="1100" height="640" role="img" aria-labelledby="t d" font-family="-apple-system,'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
-<title id="t">ai-digest 架构图</title><desc id="d">信源进入抓取与初筛，再由 LLM 精选成 Markdown 成稿，随后渲染、加密并部署到 Cloudflare Pages；调度器驱动流水线，GitHub Actions 负责 CI、发版与演示站部署。</desc>
+<title id="t">ai-digest 架构图</title><desc id="d">信源进入抓取与初筛，再由 LLM 精选成 Markdown 成稿，随后渲染、发布（支持可选客户端加密）并部署到 Cloudflare Pages；调度器驱动流水线，GitHub Actions 负责 CI、发版与演示站部署。</desc>
 <defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/></marker><filter id="sh" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0f172a" flood-opacity=".10"/></filter></defs>
 <rect x="0.5" y="0.5" width="1099" height="639" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
 <text x="550.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#0F172A">ai-digest · agent 驱动的 AI 日报与周报流水线</text>
@@ -49,19 +49,19 @@
 <text x="484" y="338.0" font-size="11.5" fill="#475569">Markdown 成稿</text>
 <line x1="644" y1="214.0" x2="676" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
 <rect x="680" y="64" width="180" height="300" rx="14" fill="#FFF7ED" stroke="#EA580C" stroke-opacity=".35"/>
-<text x="770.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#EA580C">4 · 渲染与加密</text>
+<text x="770.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#EA580C">4 · 渲染与发布</text>
 <g filter="url(#sh)"><rect x="690" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="108.0" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
 <text x="704" y="130.0" font-size="14" font-weight="650" fill="#0F172A">render_html.py</text>
 <text x="704" y="148.0" font-size="11.5" fill="#475569">Markdown → 单文件 HTML</text>
 <g filter="url(#sh)"><rect x="690" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="171.3" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
 <text x="704" y="193.3" font-size="14" font-weight="650" fill="#0F172A">publish.py</text>
-<text x="704" y="211.3" font-size="11.5" fill="#475569">导航 · 目录 · 隐私扫描</text>
+<text x="704" y="211.3" font-size="11.5" fill="#475569">导航 · /zh/ &amp; /en/ · 扫描</text>
 <g filter="url(#sh)"><rect x="690" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="234.7" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
-<text x="704" y="256.7" font-size="14" font-weight="650" fill="#0F172A">AES-256-GCM</text>
-<text x="704" y="274.7" font-size="11.5" fill="#475569">PBKDF2-SHA256 · 60 万次</text>
+<text x="704" y="256.7" font-size="14" font-weight="650" fill="#0F172A">可选 AES-GCM</text>
+<text x="704" y="274.7" font-size="11.5" fill="#475569">ENCRYPT=1 · 60 万次</text>
 <g filter="url(#sh)"><rect x="690" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="298.0" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
 <text x="704" y="320.0" font-size="14" font-weight="650" fill="#0F172A">verify_decrypt</text>
-<text x="704" y="338.0" font-size="11.5" fill="#475569">逐页解密回验</text>
+<text x="704" y="338.0" font-size="11.5" fill="#475569">逐页上线回验</text>
 <line x1="864" y1="214.0" x2="896" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
 <rect x="900" y="64" width="180" height="300" rx="14" fill="#F0FDF4" stroke="#16A34A" stroke-opacity=".35"/>
 <text x="990.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#16A34A">5 · 部署与阅读</text>
@@ -70,13 +70,13 @@
 <text x="924" y="148.0" font-size="11.5" fill="#475569">pages deploy · 增量</text>
 <g filter="url(#sh)"><rect x="910" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="171.3" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
 <text x="924" y="193.3" font-size="14" font-weight="650" fill="#0F172A">Cloudflare Pages</text>
-<text x="924" y="211.3" font-size="11.5" fill="#475569">静态托管 · 仅存密文</text>
+<text x="924" y="211.3" font-size="11.5" fill="#475569">静态托管 · 公开或加密</text>
 <g filter="url(#sh)"><rect x="910" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="234.7" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
 <text x="924" y="256.7" font-size="14" font-weight="650" fill="#0F172A">_headers</text>
 <text x="924" y="274.7" font-size="11.5" fill="#475569">noindex · no-referrer</text>
 <g filter="url(#sh)"><rect x="910" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="298.0" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
 <text x="924" y="320.0" font-size="14" font-weight="650" fill="#0F172A">读者浏览器</text>
-<text x="924" y="338.0" font-size="11.5" fill="#475569">输入密码 → Web Crypto</text>
+<text x="924" y="338.0" font-size="11.5" fill="#475569">直开阅读 · 可选解锁</text>
 <rect x="20" y="398" width="840" height="92" rx="12" fill="#F0F9FF" stroke="#0369A1" stroke-opacity=".4" stroke-dasharray="5 4"/>
 <text x="36" y="420" font-size="13" font-weight="700" fill="#0369A1">调度 · 任何带 shell、文件与联网工具的 agent 运行器</text>
 <g filter="url(#sh)"><rect x="36" y="430" width="262" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>

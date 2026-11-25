@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | Run from | the repository root (all paths below are relative to it) |
-| Environment | `DIGEST_LANG=en` (labels and pages), `DIGEST_TZ=<IANA zone>` (defines "a day"; default UTC). To deploy: `site/CONFIG`, the password file and `CLOUDFLARE_API_TOKEN` (see `site/README.md`) |
+| Environment | `DIGEST_LANG=en` (labels and pages), `DIGEST_TZ=<IANA zone>` (defines "a day"; default UTC). To deploy: `site/CONFIG` and `CLOUDFLARE_API_TOKEN` (password file only when `ENCRYPT=1`; see `site/README.md`) |
 | Tools | shell, file read/write; optional: read-only X search (`search_posts_all`, `get_users_posts`, etc.) and web fetch (`fetch/page.py` covers most checks) |
 | Inputs | `runs/P/fetch/` (written by `fetch/fetch.py`), `runs/P/paper-cands.md` (from `papers.md`, optional), `filter-notes.md`, the ledger via `fetch/ledger.py` |
 | Outputs | `digest-P.md` (the issue, format below), `runs/P/filter-log.md`, ledger updates, the published page `daily/P` |
@@ -145,18 +145,18 @@ Writing rules: only write numbers that appear in the primary source; if the abst
 python3 publish.py --issue daily/P --md digest-P.md
 ```
 
-This command renders only this issue's page (it calls `render_html.py`), rebuilds the navigation and index automatically, re-encrypts only pages whose content changed (this issue, the previous issue's "Next" link, the index), and after deployment runs HTTP and decrypt checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `decrypt check: OK`; there is no need to run `render_html.py` or `verify_decrypt.mjs` separately.
+This command renders only this issue's page (it calls `render_html.py`), rebuilds the navigation and index automatically, updates (or re-encrypts when `ENCRYPT=1`) only pages whose content changed, and after deployment runs HTTP and page verification checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `verify check: OK` (or `decrypt check: OK` when `ENCRYPT=1`); there is no need to run `render_html.py` or `verify_decrypt.mjs` separately.
 - If the first line is `ERROR`, read the log tail it prints: a privacy-scan hit → fix the draft as told and re-run the same command; a deploy or check failure may be retried once, and if it still fails attach `html/daily-P.html` to the push and say the site update failed.
-- To re-publish after editing the draft the same day, re-run the same command (unchanged pages are not re-encrypted).
+- To re-publish after editing the draft the same day, re-run the same command (unchanged pages are skipped).
 - Take an issue down: `python3 publish.py --remove daily/P` (backed up to `backfill/removed/`, the old URL 302s to the index). Only when the reader/operator explicitly asks.
 
-`publish.py` does the privacy scan (a hit fails the run: fix the draft as told and retry), navigation, index, encryption and deployment. Never print or echo any password or token. Do not touch other Cloudflare resources. Do not change the design in render_html.py.
+`publish.py` does the privacy scan (a hit fails the run: fix the draft as told and retry), navigation, index, optional encryption, and deployment. Never print or echo any password or token. Do not touch other Cloudflare resources. Do not change the design in render_html.py.
 
 **Token-saving rules**:
 - Write only this issue's single markdown file, **in one go** (settle the shortlist and verification results first, then write; no first draft followed by a full rewrite); rewrite only the affected passages when publishing fails or you edit. Do not read, rewrite or regenerate other issues' markdown/HTML (never open files under `html/` or `site/`). Navigation, index and other issues' pages are all updated by `publish.py`.
 - Do not `cat`/print big files: `ledger.json`, `candidates.jsonl`, `logs/*.log`, HTML, raw X JSON. `triage.md`, `x-raw.md` (when X recall ran) and the paper path (`paper-cands.md`; `triage-papers.md` on fallback) **must be read in full, each once** (step 3) with paged Read — do not stop after `head`/`tail`; saving tokens applies to other days' files, logs and raw data, never to the day's candidates.
 - Do not re-run `fetch.py --daily` (the full fetch runs once, in step 1); for a missing arXiv batch only follow `fetch/troubleshoot-arxiv.md` with `--only arxiv,hf_daily` once (output in `fetch-extra/`).
-- The publish command prints about 6 summary lines; no `--verbose`; after success (`OK` + `decrypt check: OK`) **do not verify the URL separately and do not WebFetch your own page**. On failure it prints the last 15 log lines; act on them.
+- The publish command prints about 6 summary lines; no `--verbose`; after success (`OK` + `verify check: OK` / `decrypt check: OK`) **do not verify the URL separately and do not WebFetch your own page**. On failure it prints the last 15 log lines; act on them.
 - Keep reasoning restrained: decide each section's shortlist in one pass, verify, then write; do not weigh the same item repeatedly; without new information do not rephrase and re-search or re-fetch.
 
 ## 7. Bookkeeping (not sent to the reader; all done after publishing, once each)

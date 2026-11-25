@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | Run from | the repository root (all paths below are relative to it) |
-| Environment | `DIGEST_LANG=en`, `DIGEST_TZ=<IANA zone>`; to deploy: `site/CONFIG`, the password file and `CLOUDFLARE_API_TOKEN` |
+| Environment | `DIGEST_LANG=en`, `DIGEST_TZ=<IANA zone>`; to deploy: `site/CONFIG` and `CLOUDFLARE_API_TOKEN` (password file only when `ENCRYPT=1`) |
 | Tools | shell, file read/write; optional: read-only X search and web fetch |
 | Inputs | the week's `digest-D.md` files, `runs/*/filter-log*.md`, `python3 fetch/weekly_late.py` output, `filter-notes.md` |
 | Outputs | `weekly-L.md`, the published page `weekly/L`, ledger updates |
@@ -119,7 +119,7 @@ Writing and privacy rules are the same as the daily: only numbers that appear in
 python3 publish.py --issue weekly/L --md weekly-L.md
 ```
 
-This command renders only this weekly's page, rebuilds the index and every issue's navigation automatically (the "This week's recap" link on the week's dailies is added and those pages are re-encrypted), and after deployment runs HTTP and decrypt checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `decrypt check: OK`; there is no need to run `render_html.py` or `verify_decrypt.mjs` separately.
+This command renders only this weekly's page, rebuilds the index and every issue's navigation automatically (the "This week's recap" link on the week's dailies is added and updated), and after deployment runs HTTP and page verification checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `verify check: OK` (or `decrypt check: OK` when `ENCRYPT=1`); there is no need to run `render_html.py` or `verify_decrypt.mjs` separately.
 - If the first line is `ERROR`, read the log tail it prints: a privacy-scan hit → fix the draft and re-run the same command; a deploy or check failure may be retried once, and if it still fails attach `html/weekly-L.html` to the push and say the site publish failed.
 - To re-publish after editing, re-run the same command.
 

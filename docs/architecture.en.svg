@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" width="1100" height="640" role="img" aria-labelledby="t d" font-family="-apple-system,'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
-<title id="t">ai-digest architecture</title><desc id="d">Sources feed a fetch and triage stage, then LLM curation produces a Markdown digest, which is rendered, encrypted and deployed to Cloudflare Pages. A scheduler drives the pipeline and GitHub Actions provides CI, release and demo deploy.</desc>
+<title id="t">ai-digest architecture</title><desc id="d">Sources feed a fetch and triage stage, then LLM curation produces a Markdown digest, which is rendered, published (with optional AES-256-GCM encryption) and deployed to Cloudflare Pages. A scheduler drives the pipeline and GitHub Actions provides CI, release and demo deploy.</desc>
 <defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/></marker><filter id="sh" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0f172a" flood-opacity=".10"/></filter></defs>
 <rect x="0.5" y="0.5" width="1099" height="639" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
 <text x="550.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#0F172A">ai-digest · agent-driven AI daily &amp; weekly pipeline</text>
@@ -49,19 +49,19 @@
 <text x="484" y="338.0" font-size="11.5" fill="#475569">Markdown issue</text>
 <line x1="644" y1="214.0" x2="676" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
 <rect x="680" y="64" width="180" height="300" rx="14" fill="#FFF7ED" stroke="#EA580C" stroke-opacity=".35"/>
-<text x="770.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#EA580C">4 · Render &amp; encrypt</text>
+<text x="770.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#EA580C">4 · Render &amp; publish</text>
 <g filter="url(#sh)"><rect x="690" y="108.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="108.0" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
 <text x="704" y="130.0" font-size="14" font-weight="650" fill="#0F172A">render_html.py</text>
 <text x="704" y="148.0" font-size="11.5" fill="#475569">Markdown → one-file HTML</text>
 <g filter="url(#sh)"><rect x="690" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="171.3" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
 <text x="704" y="193.3" font-size="14" font-weight="650" fill="#0F172A">publish.py</text>
-<text x="704" y="211.3" font-size="11.5" fill="#475569">nav · TOC · privacy scan</text>
+<text x="704" y="211.3" font-size="11.5" fill="#475569">nav · /zh/ &amp; /en/ · scan</text>
 <g filter="url(#sh)"><rect x="690" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="234.7" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
-<text x="704" y="256.7" font-size="14" font-weight="650" fill="#0F172A">AES-256-GCM</text>
-<text x="704" y="274.7" font-size="11.5" fill="#475569">PBKDF2-SHA256 · 600k</text>
+<text x="704" y="256.7" font-size="14" font-weight="650" fill="#0F172A">Optional AES-GCM</text>
+<text x="704" y="274.7" font-size="11.5" fill="#475569">ENCRYPT=1 · 600k PBKDF2</text>
 <g filter="url(#sh)"><rect x="690" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="690" y="298.0" width="5" height="52" rx="2.5" fill="#EA580C"/></g>
 <text x="704" y="320.0" font-size="14" font-weight="650" fill="#0F172A">verify_decrypt</text>
-<text x="704" y="338.0" font-size="11.5" fill="#475569">per-page round-trip check</text>
+<text x="704" y="338.0" font-size="11.5" fill="#475569">per-page live check</text>
 <line x1="864" y1="214.0" x2="896" y2="214.0" stroke="#475569" stroke-width="2.2" marker-end="url(#ar)"/>
 <rect x="900" y="64" width="180" height="300" rx="14" fill="#F0FDF4" stroke="#16A34A" stroke-opacity=".35"/>
 <text x="990.0" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#16A34A">5 · Deploy &amp; read</text>
@@ -70,13 +70,13 @@
 <text x="924" y="148.0" font-size="11.5" fill="#475569">pages deploy · incremental</text>
 <g filter="url(#sh)"><rect x="910" y="171.3" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="171.3" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
 <text x="924" y="193.3" font-size="14" font-weight="650" fill="#0F172A">Cloudflare Pages</text>
-<text x="924" y="211.3" font-size="11.5" fill="#475569">static · ciphertext only</text>
+<text x="924" y="211.3" font-size="11.5" fill="#475569">static · public or encrypted</text>
 <g filter="url(#sh)"><rect x="910" y="234.7" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="234.7" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
 <text x="924" y="256.7" font-size="14" font-weight="650" fill="#0F172A">_headers</text>
 <text x="924" y="274.7" font-size="11.5" fill="#475569">noindex · no-referrer</text>
 <g filter="url(#sh)"><rect x="910" y="298.0" width="160" height="52" rx="9" fill="#fff" stroke="#E2E8F0"/><rect x="910" y="298.0" width="5" height="52" rx="2.5" fill="#16A34A"/></g>
 <text x="924" y="320.0" font-size="14" font-weight="650" fill="#0F172A">Reader's browser</text>
-<text x="924" y="338.0" font-size="11.5" fill="#475569">password → Web Crypto</text>
+<text x="924" y="338.0" font-size="11.5" fill="#475569">instant read / optional unlock</text>
 <rect x="20" y="398" width="840" height="92" rx="12" fill="#F0F9FF" stroke="#0369A1" stroke-opacity=".4" stroke-dasharray="5 4"/>
 <text x="36" y="420" font-size="13" font-weight="700" fill="#0369A1">Scheduler · any agent runner with shell, file and web tools</text>
 <g filter="url(#sh)"><rect x="36" y="430" width="262" height="48" rx="8" fill="#fff" stroke="#E2E8F0"/></g>
