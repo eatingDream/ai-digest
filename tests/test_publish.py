@@ -527,3 +527,113 @@ def test_public_root_mounted_default_and_symmetric_lang_paths(tmp_path):
     assert "/daily/2026-01-15 / 302" in redirs
     assert subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env, capture_output=True, text=True, cwd=ROOT).returncode == 0
 
+
+def test_security_hardening_csp_hashes_privacy_and_brand_links(monkeypatch, tmp_path):
+    # 1. privacy_scan catches entity-encoded emails, tag-split phrases, local paths, tokens, and rejects bad custom regex
+    entity_mail = tmp_path / "ent.html"
+    entity_mail.write_text("<p>&#117;&#115;&#101;&#114;&#64;example.com</p>", encoding="utf-8")
+    tag_split = tmp_path / "split.html"
+    tag_split.write_text("<p><strong>my</strong> bookmarks on X</p>", encoding="utf-8")
+    loc_path = tmp_path / "loc.html"
+    loc_path.write_text("<p>file at /Users/alice/notes.md</p>", encoding="utf-8")
+    tok_leak = tmp_path / "tok.html"
+    tok_leak.write_text("<p>key " + "ghp_" + ("a" * 24) + "</p>", encoding="utf-8")
+    for f in (entity_mail, tag_split, loc_path, tok_leak):
+        with pytest.raises(SystemExit):
+            publish.privacy_scan([f])
+    bad_pats = tmp_path / "bad-pats.txt"
+    bad_pats.write_text("[unclosed(\tbad\n", encoding="utf-8")
+    monkeypatch.setenv("DIGEST_PRIVACY_PATTERNS_FILE", str(bad_pats))
+    with pytest.raises(SystemExit):
+        publish.privacy_scan([tmp_path / "ok.html"])
+    monkeypatch.delenv("DIGEST_PRIVACY_PATTERNS_FILE", raising=False)
+
+    # 2. Strict label, LANG_ALT, SLUG, and removed-paths validation
+    for bad_d in ("20260115", "2026-01-15\n", "2026-1-5"):
+        with pytest.raises(SystemExit):
+            publish.parse_daily_label(bad_d)
+    for bad_w in ("2026-01-12_01-18\n", "2026-01-12_+01-+18", "2026-01-12_ 01- 18 "):
+        with pytest.raises(SystemExit):
+            publish.parse_weekly_label(bad_w)
+    for bad_alt in ("en:/\\evil.example", "en:https://evil.example/a\nb", "en:../escape", "en:javascript:alert(1)"):
+        with pytest.raises(ValueError):
+            publish._parse_lang_alt(bad_alt, "zh-CN")
+    cfg_path = tmp_path / "s" / "CONFIG"
+    cfg_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(publish, "CONFIG_PATH", cfg_path)
+    for bad_slug in ("_headers", "_redirects", "_worker.js", "robots.txt", "favicon.svg", ".hiddenslug", ".."):
+        cfg_path.write_text(f"SLUG={bad_slug}\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            publish.load_config()
+
+    # 3. verify_decrypt.mjs rejects SLUG=.. traversal and reserved names
+    env_bad = dict(os.environ, DIGEST_ROOT=str(tmp_path / "s"), SITE_SLUG="..")
+    v_bad = subprocess.run(["node", str(ROOT / "verify_decrypt.mjs"), "--local"], env=env_bad, capture_output=True, text=True, cwd=ROOT)
+    assert v_bad.returncode != 0 and "invalid" in v_bad.stderr
+
+    # 4. Full build: hash-locked CSP (no unsafe-inline in script-src), hardened headers, favicon, AI Digest brand + home links, strict removed-paths, fail-closed plain check
+    work = tmp_path / "secwork"
+    env = dict(os.environ, DIGEST_ROOT=str(work), DIGEST_TZ="UTC", SITE_DOMAIN="sec.example.com")
+    for k in ("DIGEST_LANG", "SITE_SLUG", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST", "DIGEST_ENCRYPT", "DIGEST_SITE_PASSWORD_FILE"):
+        env.pop(k, None)
+    run_pub = lambda *a: subprocess.run([sys.executable, str(ROOT / "publish.py"), *a], env=env, capture_output=True, text=True, cwd=ROOT)
+    assert run_pub("--init", "--lang", "zh-CN").returncode == 0
+    (work / "site" / "removed-paths.txt").write_text("# comment line\n*\ndaily/*\n../etc\ndaily/2026-01-10\n", encoding="utf-8")
+    shutil.copy(ROOT / "examples" / "sample-digest.zh-CN.md", work / "digest-2026-01-15.md")
+    shutil.copy(ROOT / "examples" / "sample-digest.en.md", work / "digest-2026-01-15.en.md")
+    assert run_pub("--issue", "daily/2026-01-15", "--md", "digest-2026-01-15.md", "--prepare-only").returncode == 0
+
+    pub = work / "site" / "public"
+    assert (pub / "favicon.svg").is_file() and "<svg" in (pub / "favicon.svg").read_text(encoding="utf-8")
+    redirs = (pub / "_redirects").read_text(encoding="utf-8").splitlines()
+    assert redirs == [
+        "/daily/2026-01-10 / 302",
+        "/daily/2026-01-10.html / 302",
+        "/zh/daily/2026-01-10 /zh/ 302",
+        "/zh/daily/2026-01-10.html /zh/ 302",
+        "/en/daily/2026-01-10 /en/ 302",
+        "/en/daily/2026-01-10.html /en/ 302",
+    ]
+    hdrs = (pub / "_headers").read_text(encoding="utf-8")
+    for need in (
+        "Strict-Transport-Security: max-age=31536000; includeSubDomains",
+        "Cross-Origin-Opener-Policy: same-origin",
+        "Cross-Origin-Resource-Policy: same-origin",
+        "Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "script-src-attr 'none'",
+        "img-src 'self';",
+        "upgrade-insecure-requests",
+        "'inline-speculation-rules'",
+        "/favicon.svg\n  Cache-Control: public, max-age=86400",
+    ):
+        assert need in hdrs, f"missing header token: {need}"
+    csp_line = next(l for l in hdrs.splitlines() if "Content-Security-Policy:" in l)
+    script_dir = re.search(r"script-src ([^;]+);", csp_line).group(1)
+    assert "'unsafe-inline'" not in script_dir and "'sha256-" in script_dir
+
+    # Every executable inline <script> across all published HTML pages must match a sha256 hash in CSP
+    for page in sorted(pub.rglob("*.html")):
+        if page.name == "404.html":
+            continue
+        doc = page.read_text(encoding="utf-8")
+        assert "<title>AI Digest</title>" in doc and publish.FAVICON_LINK in doc
+        assert '<span class="ai">AI</span> Digest</a>' in doc
+        for attrs, body in publish._SCRIPT_TAG_RE.findall(doc):
+            if publish._SCRIPT_SRC_RE.search(attrs) or publish._SCRIPT_NONEXEC_RE.search(attrs):
+                continue
+            h = "'sha256-" + base64.b64encode(hashlib.sha256(body.replace("\r\n", "\n").encode("utf-8")).digest()).decode("ascii") + "'"
+            assert h in script_dir, f"unhashed script in {page.relative_to(pub)}"
+
+    # Brand home link targets per route
+    assert 'class="np-link" href="./"' in (pub / "zh/index.html").read_text(encoding="utf-8")
+    assert 'class="np-link" href="./"' in (pub / "en/index.html").read_text(encoding="utf-8")
+    assert 'class="np-link" href="../" data-brand-home>' in (pub / "zh/daily/2026-01-15.html").read_text(encoding="utf-8")
+    assert 'class="np-link" href="/zh/" data-brand-home>' in (pub / "zh/daily/latest.html").read_text(encoding="utf-8")
+    assert 'class="np-link" href="/en/" data-brand-home>' in (pub / "en/daily/latest.html").read_text(encoding="utf-8")
+    assert 'class="np-link" href="/" data-brand-home>' in (pub / "daily/latest.html").read_text(encoding="utf-8")
+
+    # Fail closed if site/plain is removed before --deploy-only
+    shutil.rmtree(work / "site" / "plain")
+    r_dep = run_pub("--deploy-only", "--prepare-only")
+    assert r_dep.returncode != 0 and "missing plaintext" in r_dep.stderr
+

@@ -143,17 +143,88 @@ DOMAIN_DEFAULT = "digest.example.com"
 PLATFORM = "pages"
 CF_API = "https://api.cloudflare.com/client/v4"
 WRANGLER_VERSION = os.environ.get("WRANGLER_VERSION", "4.166.0").strip() or "4.166.0"
-SECURITY_HEADERS = (
-    "/*\n"
-    "  X-Robots-Tag: noindex, nofollow\n"
-    "  X-Content-Type-Options: nosniff\n"
-    "  Referrer-Policy: no-referrer\n"
-    "  X-Frame-Options: DENY\n"
-    "  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; "
-    "style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
-    "connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
-    "form-action 'none'; object-src 'none'\n"
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="8" fill="#b85432"/>'
+    '<path d="M16 6.5 9.2 25h3.5l1.4-4.1h3.8L19.3 25h3.5L16 6.5Zm-1.1 11.4 1.1-3.6 1.1 3.6h-2.2Z" fill="#faf8f4"/>'
+    '<circle cx="24.2" cy="8.2" r="2.3" fill="#f3c6a5"/>'
+    "</svg>\n"
 )
+FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/favicon.svg">'
+_FAVICON_HEADER = "/favicon.svg\n  Cache-Control: public, max-age=86400\n"
+_SCRIPT_TAG_RE = re.compile(r"<script([^>]*)>(.*?)</script>", re.I | re.S)
+_SCRIPT_NONEXEC_RE = re.compile(
+    r"""\btype\s*=\s*["']?(?:application/json|speculationrules)\b""", re.I
+)
+_SCRIPT_SRC_RE = re.compile(r"\bsrc\s*=", re.I)
+
+
+def _render_security_headers(script_hashes: Iterable[str] = ()) -> str:
+    hashes = sorted(set(script_hashes))
+    script_src = (
+        " ".join(hashes) + " 'inline-speculation-rules'"
+        if hashes
+        else "'unsafe-inline'"
+    )
+    return (
+        "/*\n"
+        "  X-Robots-Tag: noindex, nofollow\n"
+        "  X-Content-Type-Options: nosniff\n"
+        "  Referrer-Policy: no-referrer\n"
+        "  X-Frame-Options: DENY\n"
+        "  Strict-Transport-Security: max-age=31536000; includeSubDomains\n"
+        "  Cross-Origin-Opener-Policy: same-origin\n"
+        "  Cross-Origin-Resource-Policy: same-origin\n"
+        "  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()\n"
+        f"  Content-Security-Policy: default-src 'none'; script-src {script_src}; "
+        "script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; "
+        "connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "form-action 'none'; object-src 'none'; upgrade-insecure-requests\n"
+        + _FAVICON_HEADER
+    )
+
+
+def _collect_inline_script_hashes(paths: Iterable[Path]) -> list[str]:
+    hashes: set[str] = set()
+    for p in paths:
+        if not p.is_file() or p.suffix.lower() != ".html":
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for attrs, body in _SCRIPT_TAG_RE.findall(text):
+            if _SCRIPT_SRC_RE.search(attrs) or _SCRIPT_NONEXEC_RE.search(attrs):
+                continue
+            norm = body.replace("\r\n", "\n").replace("\r", "\n")
+            digest = base64.b64encode(hashlib.sha256(norm.encode("utf-8")).digest()).decode("ascii")
+            hashes.add(f"'sha256-{digest}'")
+    return sorted(hashes)
+
+
+def _finalize_csp_headers() -> None:
+    """Replace script-src 'unsafe-inline' in PUBLIC/_headers with exact build-time SHA-256 hashes."""
+    hp = PUBLIC / "_headers"
+    if not hp.is_file():
+        return
+    htmls = [p for p in iter_plain_files() if p.suffix.lower() == ".html"]
+    htmls.extend(p for p in iter_public_files() if p.suffix.lower() == ".html")
+    hashes = _collect_inline_script_hashes(htmls)
+    if not hashes:
+        return
+    script_src = " ".join(hashes) + " 'inline-speculation-rules'"
+    text = hp.read_text(encoding="utf-8")
+    updated = re.sub(
+        r"(Content-Security-Policy:[^\n]*?script-src )[^;]+;",
+        lambda m: m.group(1) + script_src + ";",
+        text,
+        count=1,
+    )
+    if updated != text:
+        hp.write_text(updated, encoding="utf-8")
+
+
+SECURITY_HEADERS = _render_security_headers()
 
 # Output language of the site (en | zh-CN); resolved by load_config() / --lang, see i18n.py.
 LANG = i18n.DEFAULT_LANG
@@ -195,6 +266,9 @@ PRIVACY_PATTERNS: list[tuple[str, str]] = [
     (r"\b(people|accounts) I follow\b", "x-circle"),
     (r"\bmy (follows|bookmarks|likes|following list|X circle|Twitter circle)\b", "x-circle"),
     (r"\b(your|my) (X|Twitter) (circle|following)\b", "x-circle"),
+    (r"(?:/Users/|/home/|C:\\Users\\)[A-Za-z0-9._-]+", "local-path"),
+    (r"\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{24,})\b", "token-secret"),
+    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "private-key"),
 ]
 
 
@@ -295,7 +369,7 @@ def perf_head_html(hints: list[str], slug: str | None = None) -> str:
             ]
         },
         separators=(",", ":"),
-    )
+    ).replace("<", "\\u003c")
     return (
         f"{PERF_MARK_START}\n{links}"
         f'<script type="speculationrules">{rules}</script>\n{PERF_MARK_END}\n'
@@ -454,11 +528,21 @@ def _read_config_raw() -> dict[str, str]:
     return data
 
 
+_RESERVED_SLUGS = frozenset({
+    ".", "..", "_headers", "_redirects", "_worker.js", "_routes.json",
+    "robots.txt", "404.html", "favicon.svg", "zh", "en", "daily", "weekly", "latest",
+})
+
+
 def _parse_lang_alt(raw: str | None, current_lang: str) -> dict[str, str] | None:
     """Parse LANG_ALT (e.g. 'zh-CN:/zh-CN/', '/zh-slug/', 'https://zh.example.com/s/') -> {code, base}."""
+    from urllib.parse import urlsplit
+
     val = (raw or "").strip()
     if not val:
         return None
+    if any(ord(c) < 32 or c in "\r\n\t\\" for c in val):
+        raise ValueError(f"invalid control character or backslash in LANG_ALT {val!r}")
     m = re.match(r"^([A-Za-z][A-Za-z_-]{1,9}):(?!//)(.+)$", val)
     if m:
         code = i18n.normalize_lang(m.group(1))
@@ -466,14 +550,19 @@ def _parse_lang_alt(raw: str | None, current_lang: str) -> dict[str, str] | None
     else:
         code = "zh-CN" if i18n.normalize_lang(current_lang) == "en" else "en"
         base = val
-    if not base:
-        raise ValueError("empty LANG_ALT target base URL/path")
+    if not base or any(c.isspace() or c == "\\" for c in base):
+        raise ValueError(f"invalid LANG_ALT target base URL/path {val!r}")
     low = base.lower()
     if low.startswith(("http://", "https://")):
+        parsed = urlsplit(base)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError(f"invalid URL in LANG_ALT {val!r}")
         base = base.rstrip("/") + "/"
     else:
-        if ":" in base.split("/", 1)[0]:
+        if base.startswith("//") or ":" in base.split("/", 1)[0]:
             raise ValueError(f"unsupported URL scheme in LANG_ALT {val!r}")
+        if not re.fullmatch(r"[A-Za-z0-9._~/-]+", base) or ".." in base.split("/"):
+            raise ValueError(f"invalid path in LANG_ALT {val!r}")
         clean = base.strip("/")
         base = f"/{clean}/" if clean else "/"
     return {"code": code, "base": base}
@@ -522,9 +611,13 @@ def load_config() -> dict[str, str]:
     data["LANG"] = LANG
     slug = data.get("SLUG", "").strip()
     if slug:
-        if slug in {".", ".."} or not _SLUG_SAFE_RE.fullmatch(slug):
+        if (
+            slug.startswith(".")
+            or not _SLUG_SAFE_RE.fullmatch(slug)
+            or (not _DEMO_MODE and slug.lower() in _RESERVED_SLUGS)
+        ):
             die(
-                f"invalid SLUG {slug!r}: must contain only URL-safe characters [A-Za-z0-9._~-]; "
+                f"invalid SLUG {slug!r}: must contain only URL-safe characters [A-Za-z0-9._~-] and not be a reserved root name; "
                 f"run python3 publish.py --init or edit {CONFIG_PATH}"
             )
         if not _DEMO_MODE and len(slug) < 8:
@@ -593,8 +686,13 @@ def init_config_if_needed(*, encrypt: bool = False) -> dict[str, str]:
     return load_config()
 
 
+_DAILY_LABEL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_WEEKLY_LABEL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_(?:\d{4}-)?\d{2}-\d{2}$")
+_REMOVED_PATH_RE = re.compile(r"^(?:daily/\d{4}-\d{2}-\d{2}|weekly/\d{4}-\d{2}-\d{2}_(?:\d{4}-)?\d{2}-\d{2})$")
+
+
 def parse_weekly_label(label: str) -> tuple[date, date]:
-    if "_" not in label:
+    if not _WEEKLY_LABEL_RE.fullmatch(label):
         die(f"weekly date label must look like 2026-11-09_11-13, got {label!r}")
     left, right = label.split("_", 1)
     try:
@@ -602,7 +700,7 @@ def parse_weekly_label(label: str) -> tuple[date, date]:
     except ValueError:
         die(f"invalid weekly start date: {left!r}")
     try:
-        if len(right) >= 10 and right[4] == "-":
+        if len(right) == 10 and right[4] == "-":
             end = date.fromisoformat(right)
         else:
             mm_s, dd_s = right.split("-")
@@ -619,6 +717,8 @@ def parse_weekly_label(label: str) -> tuple[date, date]:
 
 
 def parse_daily_label(label: str) -> date:
+    if not _DAILY_LABEL_RE.fullmatch(label):
+        die(f"daily date label must be YYYY-MM-DD, got {label!r}")
     try:
         return date.fromisoformat(label)
     except ValueError:
@@ -630,10 +730,15 @@ def _t(key: str, **kw) -> str:
 
 
 def extract_title(html: str) -> str:
+    from html import unescape as _unescape
+
+    m = re.search(r'<meta\s+name=["\']digest-title["\']\s+content=["\']([^"\']*)["\']', html, flags=re.I)
+    if m and m.group(1).strip():
+        return re.sub(r"\s+", " ", _unescape(m.group(1))).strip()
     m = re.search(r"<title>(.*?)</title>", html, flags=re.S | re.I)
     if not m:
         return ""
-    return re.sub(r"\s+", " ", m.group(1)).strip()
+    return re.sub(r"\s+", " ", _unescape(m.group(1))).strip()
 
 
 def strip_marked(html: str, start: str, end: str) -> str:
@@ -657,6 +762,11 @@ def strip_injections(html: str) -> str:
         (LANG_BTN_START, LANG_BTN_END),
     ):
         html = strip_marked(html, s, e)
+    html = re.sub(
+        r'(<a\s+class="np-link"\s+href=")[^"]*("\s+data-brand-home>)',
+        r'\1./\2',
+        html,
+    )
     return html
 
 
@@ -685,6 +795,21 @@ def ensure_noindex(html: str) -> str:
     if "<head>" in html.lower():
         return re.sub(r"(<head[^>]*>)", r"\1\n" + meta, html, count=1, flags=re.I)
     die("HTML has no <head>; cannot inject noindex meta")
+    return html
+
+
+def ensure_favicon(html: str) -> str:
+    """Point page icon to /favicon.svg so CSP img-src stays strictly 'self'."""
+    if re.search(r'<link\s+rel=["\']icon["\'][^>]*>', html, flags=re.I):
+        return re.sub(
+            r'<link\s+rel=["\']icon["\'][^>]*>',
+            FAVICON_LINK,
+            html,
+            count=1,
+            flags=re.I,
+        )
+    if re.search(r"<title>", html, flags=re.I):
+        return re.sub(r"(<title>)", FAVICON_LINK + "\n" + r"\1", html, count=1, flags=re.I)
     return html
 
 
@@ -794,10 +919,10 @@ def nav_html(
     def link(href: str, text: str, extra: str = "", nav: str = "") -> str:
         cls = f' class="{extra}"' if extra else ""
         dn = f' data-nav="{nav}"' if nav else ""
-        return f'<a href="{href}"{cls}{dn}>{text}</a>'
+        return f'<a href="{_esc(href)}"{cls}{dn}>{_esc(text)}</a>'
 
     def gone(text: str) -> str:
-        return f'<span class="gone">{text}</span>'
+        return f'<span class="gone">{_esc(text)}</span>'
 
     s = load_config()["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
     prefix = (url_prefix if url_prefix is not None else _url_prefix(s)) if abs_links else ""
@@ -874,6 +999,16 @@ def _inject_nav_into_fragment(
             pill = f"{LANG_BTN_START}\n{lang_pill_html(btn_href, btn_code)}\n{LANG_BTN_END}\n"
             fragment = fragment.replace(theme_marker, pill + theme_marker, 1)
             skip_nav_lang = True
+
+    s = load_config()["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
+    prefix = (url_prefix if url_prefix is not None else _url_prefix(s)) if abs_links else ""
+    brand_href = f"{prefix}/" if abs_links else "../"
+    fragment = re.sub(
+        r'(<a\s+class="np-link"\s+href=")[^"]*("\s+data-brand-home>)',
+        lambda m: m.group(1) + _esc(brand_href) + m.group(2),
+        fragment,
+        count=1,
+    )
 
     top = (
         f"{NAV_TOP_START}\n"
@@ -1168,6 +1303,7 @@ def write_static_root(
         "</html>\n",
         encoding="utf-8",
     )
+    (PUBLIC / "favicon.svg").write_text(FAVICON_SVG, encoding="utf-8")
     # Latest aliases are served directly as static HTML pages (HTTP 200,
     # keeping the browser URL on /.../latest); _redirects is only used for removed
     # issues (sending old URLs to the index to override stale caches).
@@ -1184,12 +1320,13 @@ def write_static_root(
     base_p = _url_prefix(slug)
     removed = SITE / "removed-paths.txt"
     if removed.is_file():
-        for line in removed.read_text(encoding="utf-8").split():
-            line = line.strip().strip("/")
-            if not line:
+        for raw_line in removed.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
                 continue
+            line = line.strip("/")
             norm = line[:-5] if line.endswith(".html") else line
-            if norm in active_latest:
+            if norm in active_latest or not _REMOVED_PATH_RE.fullmatch(norm):
                 continue
             _add_rule(f"{base_p}/{norm} {base_p}/ 302")
             _add_rule(f"{base_p}/{norm}.html {base_p}/ 302")
@@ -1303,7 +1440,7 @@ def index_html(
 
     def daily_item(i: Issue) -> str:
         return (
-            f'<li{_item_attrs(i)}><a href="{i.rel_url}">'
+            f'<li{_item_attrs(i)}><a href="{_esc(i.rel_url)}">'
             f'<span class="when num">{_md(i.start)}</span>'
             f'<span class="dow">{_esc(i18n.weekday_short(lg, i.start))}</span>'
             f"{lead_spans(i)}"
@@ -1312,7 +1449,7 @@ def index_html(
 
     def weekly_item(i: Issue) -> str:
         return (
-            f'<li{_item_attrs(i)}><a href="{i.rel_url}">'
+            f'<li{_item_attrs(i)}><a href="{_esc(i.rel_url)}">'
             f'<span class="when num">{_md(i.start)}–{_md(i.end)}</span>'
             f"{lead_spans(i)}"
             f"</a></li>"
@@ -1333,7 +1470,7 @@ def index_html(
         sun = mon + timedelta(days=6)
         items = weeks[mon]
         wk = next((w for w in weeklies if mon <= w.end <= sun), None)
-        wlink = f'<a class="wk-weekly" href="{wk.rel_url}">{_esc(tr("week_link"))}</a>' if wk else ""
+        wlink = f'<a class="wk-weekly" href="{_esc(wk.rel_url)}">{_esc(tr("week_link"))}</a>' if wk else ""
         body = (
             '<ol class="issue-list">\n' + "\n".join(daily_item(i) for i in items) + "\n</ol>"
             if items else f'<p class="empty">{_esc(tr("no_daily_week"))}</p>'
@@ -1439,7 +1576,8 @@ def index_html(
 {META_MARK_END}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#faf8f4">
-<title>{_esc(tr("index_title"))}</title>
+{FAVICON_LINK}
+<title>AI Digest</title>
 <script>(function(){{try{{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);var dk=t==='dark'||(t!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',dk?'#141311':'#faf8f4');}}catch(e){{}}}})();</script>
 {perf_head}<style>
 :root {{
@@ -1676,6 +1814,16 @@ button {{ cursor: pointer; font-family: inherit; }}
 }}
 @media (min-width: 880px) {{ .mast-bar .np {{ font-size: 28px; }} }}
 .mast-bar .np .ai {{ color: var(--accent); }}
+.mast-bar .np a.np-link {{
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: baseline;
+  border-radius: 6px;
+  transition: opacity 150ms ease;
+}}
+.mast-bar .np a.np-link:hover {{ opacity: 0.82; }}
+.mast-bar .np a.np-link:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 3px; }}
 .mast-chip {{
   display: inline-flex;
   align-items: baseline;
@@ -1883,7 +2031,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 <body>
 <header class="mast">
 <div class="mast-bar">
-<h1 class="np"><span class="ai">AI</span>{_esc(tr("brand_tail"))}</h1>
+<h1 class="np"><a class="np-link" href="./"><span class="ai">AI</span> Digest</a></h1>
 <span class="mast-chip"><span class="mark-kicker">{_esc(tr("index_chip"))}</span><span class="mark-figure num">{len(issues)}</span><span class="mark-kicker">{_esc(i18n.issue_unit(lg, len(issues)))}</span></span>
 <span class="mast-meta"><span class="num">{_esc(today_line)}</span><span>{_esc(tr("index_meta", d=len(dailies), w=len(weeklies)))}</span><span class="motto">{_esc(tr("motto"))}</span></span>
 <span class="mast-tools">
@@ -2106,6 +2254,7 @@ def _render_issue_page(
     html = issue.source.read_text(encoding="utf-8")
     html = strip_injections(html)
     html = ensure_noindex(html)
+    html = ensure_favicon(html)
     html = ensure_nav_css(html)
     html = inject_nav(
         html,
@@ -2290,8 +2439,15 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
 
 
 def privacy_scan(paths: Iterable[Path]) -> None:
+    from html import unescape as _unescape
+
     hits: list[str] = []
-    compiled = [(re.compile(pat, re.I | re.S), name) for pat, name in PRIVACY_PATTERNS + _load_extra_privacy_patterns()]
+    compiled: list[tuple[re.Pattern[str], str]] = []
+    for pat, name in PRIVACY_PATTERNS + _load_extra_privacy_patterns():
+        try:
+            compiled.append((re.compile(pat, re.I | re.S), name))
+        except re.error as e:
+            die(f"invalid privacy pattern {pat!r} ({name}): {e}")
     for path in paths:
         if not path.is_file():
             continue
@@ -2300,12 +2456,21 @@ def privacy_scan(paths: Iterable[Path]) -> None:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        for rx, name in compiled:
-            for m in rx.finditer(text):
-                snippet = m.group(0).replace("\n", " ")
-                if len(snippet) > 80:
-                    snippet = snippet[:80] + "…"
-                hits.append(f"{path}: [{name}] {snippet}")
+        # Scan both raw source and stripped+unescaped visible text so HTML entities
+        # or inline formatting tags cannot hide leaked emails or banned phrases.
+        visible = _unescape(re.sub(r"<[^>]+>", "", text))
+        views = (text, visible) if visible != text else (text,)
+        seen_hits: set[tuple[str, str]] = set()
+        for view in views:
+            for rx, name in compiled:
+                for m in rx.finditer(view):
+                    snippet = m.group(0).replace("\n", " ")
+                    if len(snippet) > 80:
+                        snippet = snippet[:80] + "…"
+                    key = (name, snippet)
+                    if key not in seen_hits:
+                        seen_hits.add(key)
+                        hits.append(f"{path}: [{name}] {snippet}")
     if hits:
         print("privacy scan FAILED:", file=sys.stderr)
         for h in hits:
@@ -2328,9 +2493,9 @@ def iter_plain_files() -> list[Path]:
 
 
 def iter_unencrypted_public() -> list[Path]:
-    """Root files that stay in plaintext: robots.txt, 404.html, _headers, _redirects."""
+    """Root files that stay in plaintext: robots.txt, 404.html, favicon.svg, _headers, _redirects."""
     out: list[Path] = []
-    for name in ("robots.txt", "_headers", "404.html", "_redirects"):
+    for name in ("robots.txt", "_headers", "404.html", "favicon.svg", "_redirects"):
         p = PUBLIC / name
         if p.is_file():
             out.append(p)
@@ -2347,6 +2512,8 @@ def content_type_for(path: Path, rel: str) -> str:
         return "text/plain; charset=utf-8"
     if name.endswith(".html"):
         return "text/html; charset=utf-8"
+    if name.endswith(".svg"):
+        return "image/svg+xml"
     if name.endswith(".txt"):
         return "text/plain; charset=utf-8"
     guessed, _ = mimetypes.guess_type(str(path))
@@ -2805,7 +2972,7 @@ def localize_template(tmpl: str, lang: str | None = None, extras: dict[str, str]
             val = i18n.t(lang, key)
         except KeyError:
             die(f"password template uses unknown i18n key {key!r}")
-        return json.dumps(val, ensure_ascii=False) if js else _esc(val)
+        return json.dumps(val, ensure_ascii=False).replace("<", "\\u003c") if js else _esc(val)
 
     return re.sub(r"\{\{(js:)?(\w+)\}\}", sub, tmpl)
 
@@ -3014,7 +3181,9 @@ def assert_public_matches_plain(cfg: dict[str, str]) -> None:
         text = path.read_text(encoding="utf-8")
         if PROMPT_MARK in text or "__ENCRYPT_CFG_JSON__" in text:
             die(f"{path.relative_to(PUBLIC)} contains password prompt despite ENCRYPT=0; run --rebuild")
-        if plain_path.is_file() and text != plain_path.read_text(encoding="utf-8"):
+        if not plain_path.is_file():
+            die(f"missing plaintext source for {path.relative_to(PUBLIC)}; run --rebuild")
+        if text != plain_path.read_text(encoding="utf-8"):
             die(f"{path.relative_to(PUBLIC)} does not match plaintext; run --rebuild")
         checked += 1
 
@@ -3279,9 +3448,11 @@ def prepare(
     privacy_scan(iter_plain_files() + iter_unencrypted_public())
     if _parse_bool(cfg.get("ENCRYPT")):
         encrypt_all_pages(cfg)
+        _finalize_csp_headers()
         assert_public_is_encrypted(cfg)
     else:
         publish_plain_pages(cfg)
+        _finalize_csp_headers()
         assert_public_matches_plain(cfg)
     idx_path = f"{_url_prefix(cfg['SLUG'])}/"
     print(f"prepared {len(issues)} issue(s); index at {idx_path}", file=sys.stderr)
@@ -3492,6 +3663,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         if multi:  # one _headers with cache rules for every language prefix
             rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
             (PUBLIC / "_headers").write_text(SECURITY_HEADERS + rules, encoding="utf-8")
+        _finalize_csp_headers()
         if out.exists():
             shutil.rmtree(out)
         shutil.copytree(PUBLIC, out)
@@ -3623,10 +3795,13 @@ def main(argv: list[str] | None = None) -> int:
         if not issues and not (_site_dir(PUBLIC, cfg["SLUG"]) / "index.html").exists():
             die("nothing to deploy; publish an issue first")
         # Never privacy-scan ciphertext (base64 can false-positive).
+        is_enc = _parse_bool(cfg.get("ENCRYPT"))
         scan_paths = iter_unencrypted_public() + iter_plain_files()
+        if not is_enc:
+            scan_paths += [p for p in iter_public_files() if p.suffix.lower() == ".html"]
         if scan_paths:
             privacy_scan(scan_paths)
-        if _parse_bool(cfg.get("ENCRYPT")):
+        if is_enc:
             assert_public_is_encrypted(cfg)
         else:
             assert_public_matches_plain(cfg)
