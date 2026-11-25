@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.7.0](https://github.com/eatingDream/ai-digest/compare/v0.6.0...v0.7.0) (2026-11-25)
+
+
+### Features
+
+* harden public site security (hash-locked CSP, XSS/privacy defenses) and add AI Digest favicon & home brand ([#32](https://github.com/eatingDream/ai-digest/issues/32)) ([540c254](https://github.com/eatingDream/ai-digest/commit/540c254f63fb2f69a04f81bfeccad4a7bd889f34))
+
+
+### Documentation
+
+* refresh READMEs, architecture diagrams, agent guide, and prompts for public default ([#30](https://github.com/eatingDream/ai-digest/issues/30)) ([0b75d07](https://github.com/eatingDream/ai-digest/commit/0b75d0778e4fb4c7603ef54adbc6540940a22eb5))
+
 ## [0.6.0](https://github.com/eatingDream/ai-digest/compare/v0.5.2...v0.6.0) (2026-11-25)
 
 
