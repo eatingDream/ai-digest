@@ -176,6 +176,8 @@ PERF_MARK_START = "<!-- digest-perf:start -->"
 PERF_MARK_END = "<!-- digest-perf:end -->"
 LOCK_MARK_START = "<!-- digest-lock:start -->"
 LOCK_MARK_END = "<!-- digest-lock:end -->"
+LANG_BTN_START = "<!-- digest-lang-btn:start -->"
+LANG_BTN_END = "<!-- digest-lang-btn:end -->"
 # Text that every encrypted prompt shell must contain (used by sanity checks).
 PROMPT_MARK = 'id="rm"'  # the "remember this device" checkbox; language-neutral
 STORE_KEY = "aie.k"
@@ -237,7 +239,7 @@ NAV_CSS = """
 }
 .issue-nav a { color: var(--accent-ink); text-decoration: none; }
 .issue-nav a:hover {
-  background: var(--accent-softer, rgba(23, 107, 117, 0.06));
+  background: var(--accent-softer, rgba(184, 84, 50, 0.06));
   transform: translateY(-1px);
 }
 .issue-nav a:active, .issue-nav .lock:active { transform: scale(0.94); transition-duration: 80ms; }
@@ -271,12 +273,10 @@ LOCK_JS_BLOCK = f"{LOCK_MARK_START}\n<script>{LOCK_JS}</script>\n{LOCK_MARK_END}
 
 
 def perf_head_html(hints: list[str], slug: str | None = None) -> str:
-    """Prefetch hints + speculation rules (prerender same-site links on intent).
-
-    Lives inside the encrypted plaintext; the decrypted document is parsed via
-    document.write, so these take effect once the page is open.
-    """
-    slug = slug or load_config()["SLUG"]
+    """Prefetch hints + speculation rules (prerender same-site links on intent)."""
+    raw_slug = load_config()["SLUG"] if slug is None else slug
+    s = raw_slug.strip("/")
+    match_pat = f"/{s}/*" if s else "/*"
     seen: list[str] = []
     for h in hints:
         if h and h not in seen:
@@ -287,7 +287,7 @@ def perf_head_html(hints: list[str], slug: str | None = None) -> str:
             "prerender": [
                 {
                     "where": {"and": [
-                        {"href_matches": f"/{slug}/*"},
+                        {"href_matches": match_pat},
                         {"not": {"selector_matches": "[data-lock], [target=_blank]"}},
                     ]},
                     "eagerness": "moderate",
@@ -314,17 +314,29 @@ def minify_css(html: str) -> str:
     return re.sub(r"(<style[^>]*>)(.*?)</style>", _min, html, flags=re.S | re.I)
 
 
+def _site_dir(base: Path, slug: str) -> Path:
+    s = slug.strip("/")
+    return (base / s) if s else base
+
+
+def _url_prefix(slug: str, sub: str = "") -> str:
+    parts = [p for p in (slug.strip("/"), sub.strip("/")) if p]
+    return ("/" + "/".join(parts)) if parts else ""
+
+
 def issue_prefetch_hints(
     issue: "Issue",
     issues: list["Issue"],
     *,
     slug: str | None = None,
     abs_links: bool = False,
+    url_prefix: str | None = None,
 ) -> list[str]:
     same = sorted([i for i in issues if i.kind == issue.kind], key=lambda x: (x.start, x.end, x.label))
     idx = next(n for n, i in enumerate(same) if i.label == issue.label)
     if abs_links:
-        prefix = f"/{slug or load_config()['SLUG']}"
+        s = load_config()["SLUG"] if slug is None else slug
+        prefix = url_prefix if url_prefix is not None else _url_prefix(s)
         hints = [f"{prefix}/"]
         if idx + 1 < len(same):
             hints.append(f"{prefix}/{issue.kind}/{same[idx + 1].label}")
@@ -356,10 +368,16 @@ def inject_perf_and_lock(
     slug: str | None = None,
     *,
     abs_links: bool = False,
+    url_prefix: str | None = None,
+    encrypted: bool = False,
 ) -> str:
-    head = perf_head_html(issue_prefetch_hints(issue, issues, slug=slug, abs_links=abs_links), slug=slug)
+    head = perf_head_html(
+        issue_prefetch_hints(issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix),
+        slug=slug,
+    )
     html = re.sub(r"(<meta charset=[^>]*>\s*)", lambda m: m.group(1) + head, html, count=1, flags=re.I)
-    html = re.sub(r"</body>", lambda m: LOCK_JS_BLOCK + "\n</body>", html, count=1, flags=re.I)
+    if encrypted:
+        html = re.sub(r"</body>", lambda m: LOCK_JS_BLOCK + "\n</body>", html, count=1, flags=re.I)
     return html
 
 
@@ -379,21 +397,20 @@ class Issue:
 
     @property
     def dest(self) -> Path:
-        # Plaintext after nav injection; encrypted copy is written to PUBLIC.
+        # Plaintext after nav injection; published copy is written to PUBLIC.
         return PLAIN_SLUG() / self.kind / f"{self.label}.html"
 
     def sort_key(self) -> tuple:
-        # Newest first: later end date, then later start, daily after weekly on same day? 
-        # Independent lists, so just end then start.
+        # Newest first: later end date, then later start.
         return (self.end, self.start, self.label)
 
 
 def PUBLIC_SLUG() -> Path:
-    return PUBLIC / load_config()["SLUG"]
+    return _site_dir(PUBLIC, load_config()["SLUG"])
 
 
 def PLAIN_SLUG() -> Path:
-    return PLAIN / load_config()["SLUG"]
+    return _site_dir(PLAIN, load_config()["SLUG"])
 
 
 def die(msg: str, code: int = 1) -> None:  # message goes to stderr; exit code 1 unless given
@@ -411,6 +428,7 @@ _ENV_KEYS = {
     "DIGEST_LANG": "LANG",
     "DIGEST_LANG_ALT": "LANG_ALT",
     "DIGEST_ROOT_LATEST": "ROOT_LATEST",
+    "DIGEST_ENCRYPT": "ENCRYPT",
 }
 
 _TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -474,7 +492,7 @@ def set_lang(cli: str | None = None, config: str | None = None) -> str:
 def load_config() -> dict[str, str]:
     """site/CONFIG (KEY=VALUE lines), overridden by env vars (SITE_DOMAIN,
     SITE_SLUG, CF_ACCOUNT_ID, CF_ZONE_ID, CF_PAGES_PROJECT, DIGEST_LANG,
-    DIGEST_LANG_ALT, DIGEST_ROOT_LATEST)."""
+    DIGEST_LANG_ALT, DIGEST_ROOT_LATEST, DIGEST_ENCRYPT)."""
     global LANG_ALT
     data: dict[str, str] = {"PLATFORM": PLATFORM}
     data.update(_read_config_raw())
@@ -486,13 +504,14 @@ def load_config() -> dict[str, str]:
         if alias in data and canonical not in data:
             data[canonical] = data[alias]
     for env_k, key in _ENV_KEYS.items():
-        v = os.environ.get(env_k, "").strip()
-        if v:
-            data[key] = v
+        if env_k in os.environ:
+            v = os.environ.get(env_k, "").strip()
+            if v or key == "SLUG":
+                data[key] = v
     data.setdefault("PROJECT", PROJECT_DEFAULT)
     data.setdefault("DOMAIN", DOMAIN_DEFAULT)
     data.setdefault("ACCOUNT_ID", ACCOUNT_ID_DEFAULT)
-    for chk_key in ("SLUG", "ACCOUNT_ID", "CF_ACCOUNT_ID", "PROJECT", "CF_PROJECT", "DOMAIN", "ZONE_ID", "LANG_ALT", "ROOT_LATEST"):
+    for chk_key in ("SLUG", "ACCOUNT_ID", "CF_ACCOUNT_ID", "PROJECT", "CF_PROJECT", "DOMAIN", "ZONE_ID", "LANG_ALT", "ROOT_LATEST", "ENCRYPT"):
         val = data.get(chk_key, "")
         if val and _PLACEHOLDER_RE.search(val):
             die(
@@ -502,19 +521,19 @@ def load_config() -> dict[str, str]:
     set_lang(CLI_LANG, data.get("LANG"))
     data["LANG"] = LANG
     slug = data.get("SLUG", "").strip()
-    if not slug:
-        die(f"SLUG not set: run python3 publish.py --init or edit {CONFIG_PATH} (or set env SITE_SLUG)")
-    if slug in {".", ".."} or not _SLUG_SAFE_RE.fullmatch(slug):
-        die(
-            f"invalid SLUG {slug!r}: must contain only URL-safe characters [A-Za-z0-9._~-]; "
-            f"run python3 publish.py --init or edit {CONFIG_PATH}"
-        )
-    if not _DEMO_MODE and len(slug) < 8:
-        die(
-            f"SLUG {slug!r} is too short ({len(slug)} chars; must be >= 8 unless --demo); "
-            f"run python3 publish.py --init or edit {CONFIG_PATH}"
-        )
+    if slug:
+        if slug in {".", ".."} or not _SLUG_SAFE_RE.fullmatch(slug):
+            die(
+                f"invalid SLUG {slug!r}: must contain only URL-safe characters [A-Za-z0-9._~-]; "
+                f"run python3 publish.py --init or edit {CONFIG_PATH}"
+            )
+        if not _DEMO_MODE and len(slug) < 8:
+            die(
+                f"SLUG {slug!r} is too short ({len(slug)} chars; must be >= 8 unless --demo or empty); "
+                f"run python3 publish.py --init or edit {CONFIG_PATH}"
+            )
     data["SLUG"] = slug
+    data["ENCRYPT"] = "1" if _parse_bool(data.get("ENCRYPT")) else "0"
     data["ROOT_LATEST"] = "1" if _parse_bool(data.get("ROOT_LATEST")) else "0"
     try:
         LANG_ALT = _parse_lang_alt(data.get("LANG_ALT"), LANG)
@@ -532,12 +551,13 @@ def write_config(data: dict[str, str]) -> None:
         "ZONE_ID",
         "DOMAIN",
         "SLUG",
+        "ENCRYPT",
         "LANG",
         "LANG_ALT",
         "ROOT_LATEST",
     ]
     lines = [
-        "# AI digest public site. No secrets. Do not change SLUG once published.",
+        "# AI digest site config. No secrets. Leave SLUG empty for root-mounted public paths; set ENCRYPT=1 for client-side password encryption.",
         f"# generated {datetime.now().astimezone().isoformat(timespec='seconds')}",
     ]
     seen = set()
@@ -551,11 +571,12 @@ def write_config(data: dict[str, str]) -> None:
     CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def init_config_if_needed() -> dict[str, str]:
+def init_config_if_needed(*, encrypt: bool = False) -> dict[str, str]:
     if CONFIG_PATH.exists() or os.environ.get("SITE_SLUG", "").strip():
         return load_config()
+    want_enc = encrypt or _parse_bool(os.environ.get("DIGEST_ENCRYPT"))
     alphabet = "abcdefghijkmnopqrstuvwxyz23456789"
-    slug = "".join(secrets.choice(alphabet) for _ in range(22))
+    slug = "".join(secrets.choice(alphabet) for _ in range(22)) if want_enc else ""
     data = {
         "PLATFORM": PLATFORM,
         "PROJECT": os.environ.get("CF_PAGES_PROJECT") or PROJECT_DEFAULT,
@@ -563,10 +584,12 @@ def init_config_if_needed() -> dict[str, str]:
         "ZONE_ID": os.environ.get("CF_ZONE_ID") or ZONE_ID_DEFAULT,
         "DOMAIN": os.environ.get("SITE_DOMAIN") or DOMAIN_DEFAULT,
         "SLUG": slug,
+        "ENCRYPT": "1" if want_enc else "0",
         "LANG": i18n.resolve_lang(CLI_LANG),
     }
     write_config(data)
-    print(f"created {CONFIG_PATH} with slug {slug}", file=sys.stderr)
+    mode_msg = f"encrypted (slug {slug})" if want_enc else "public (root-mounted, ENCRYPT=0)"
+    print(f"created {CONFIG_PATH} [{mode_msg}]", file=sys.stderr)
     return load_config()
 
 
@@ -631,6 +654,7 @@ def strip_injections(html: str) -> str:
         (META_MARK_START, META_MARK_END),
         (NAV_TOP_START, NAV_TOP_END),
         (NAV_BOT_START, NAV_BOT_END),
+        (LANG_BTN_START, LANG_BTN_END),
     ):
         html = strip_marked(html, s, e)
     return html
@@ -679,11 +703,30 @@ def lang_switch_href(rel: str = "") -> str | None:
     return LANG_ALT["base"] + rel.strip("/").removesuffix(".html").removesuffix("index")
 
 
+def lang_pill_html(href: str, target_lang: str, *, cls: str = "ctrl-btn lang-btn lang-switch") -> str:
+    code = i18n.normalize_lang(target_lang)
+    label = i18n.t(code, "lang_code")
+    title = i18n.t(code, "lang_toggle_title")
+    aria = f'{i18n.t(code, "aria_lang_switch")}: {i18n.t(code, "lang_name")}'
+    return (
+        f'<a class="{cls}" href="{_esc(href)}" hreflang="{code}" lang="{code}"'
+        f' aria-label="{_esc(aria)}" title="{_esc(title)}">'
+        '<span class="ctrl-ic" aria-hidden="true">'
+        '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
+        '<circle cx="8" cy="8" r="6.2"/>'
+        '<path d="M1.8 8h12.4M8 1.8c1.9 1.8 2.8 3.9 2.8 6.2S9.9 12.4 8 14.2C6.1 12.4 5.2 10.3 5.2 8S6.1 3.6 8 1.8Z"/>'
+        "</svg></span>"
+        f'<span class="ctrl-lbl">{_esc(label)}</span></a>'
+    )
+
+
 def lang_switch_link(rel: str = "", cls: str = "lang-switch") -> str:
     href = lang_switch_href(rel)
     if href is None:
         return ""
     code = LANG_ALT["code"]  # type: ignore[index]
+    if "ctrl-btn" in cls:
+        return lang_pill_html(href, code, cls=cls)
     return (f'<a class="{cls}" href="{_esc(href)}" hreflang="{code}" lang="{code}">'
             f'{_esc(i18n.t(code, "lang_name"))}</a>')
 
@@ -729,6 +772,11 @@ def nav_html(
     slug: str | None = None,
     abs_links: bool = False,
     lang_rel: str | None = None,
+    url_prefix: str | None = None,
+    skip_nav_lang: bool = False,
+    lang_href: str | None = None,
+    lang_code: str | None = None,
+    encrypted: bool = False,
 ) -> str:
     lg = i18n.normalize_lang(lang) if lang is not None else LANG
 
@@ -751,7 +799,8 @@ def nav_html(
     def gone(text: str) -> str:
         return f'<span class="gone">{text}</span>'
 
-    prefix = f"/{slug or load_config()['SLUG']}" if abs_links else ""
+    s = load_config()["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
+    prefix = (url_prefix if url_prefix is not None else _url_prefix(s)) if abs_links else ""
     idx_href = f"{prefix}/" if abs_links else slug_index_rel
     prev_href = f"{prefix}/{issue.kind}/{prev.label}" if (abs_links and prev) else (prev.label if prev else "")
     nxt_href = f"{prefix}/{issue.kind}/{nxt.label}" if (abs_links and nxt) else (nxt.label if nxt else "")
@@ -779,9 +828,18 @@ def nav_html(
             w.kind == "weekly" and w.start <= issue.start <= w.end for w in issues
         ):
             parts.append('<span class="week-link"></span>')
-        switch_rel = lang_rel if lang_rel is not None else f"{issue.kind}/{issue.label}"
-        parts.append(lang_switch_link(switch_rel))
-        parts.append(f'<button type="button" class="lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>')
+        if not skip_nav_lang:
+            if lang_href and lang_code:
+                code = i18n.normalize_lang(lang_code)
+                parts.append(
+                    f'<a href="{_esc(lang_href)}" class="lang-alt" hreflang="{code}" lang="{code}">'
+                    f'{_esc(i18n.t(code, "lang_name"))}</a>'
+                )
+            else:
+                switch_rel = lang_rel if lang_rel is not None else f"{issue.kind}/{issue.label}"
+                parts.append(lang_switch_link(switch_rel))
+        if encrypted:
+            parts.append(f'<button type="button" class="lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>')
     return (
         f'<nav class="issue-nav {which}" aria-label="{_esc(tr("nav_aria"))}">'
         + "".join(parts)
@@ -798,15 +856,33 @@ def _inject_nav_into_fragment(
     slug: str | None = None,
     abs_links: bool = False,
     lang_rel: str | None = None,
+    url_prefix: str | None = None,
+    lang_href: str | None = None,
+    lang_code: str | None = None,
+    encrypted: bool = False,
 ) -> str:
+    skip_nav_lang = False
+    btn_href = lang_href
+    btn_code = lang_code
+    if not btn_href and LANG_ALT:
+        switch_rel = lang_rel if lang_rel is not None else f"{issue.kind}/{issue.label}"
+        btn_href = lang_switch_href(switch_rel)
+        btn_code = LANG_ALT["code"]  # type: ignore[index]
+    if btn_href and btn_code and '<button type="button" class="ctrl-btn lang-btn' not in fragment:
+        theme_marker = '<button type="button" class="ctrl-btn theme-btn'
+        if theme_marker in fragment:
+            pill = f"{LANG_BTN_START}\n{lang_pill_html(btn_href, btn_code)}\n{LANG_BTN_END}\n"
+            fragment = fragment.replace(theme_marker, pill + theme_marker, 1)
+            skip_nav_lang = True
+
     top = (
         f"{NAV_TOP_START}\n"
-        f"{nav_html(issue, issues, '../', 'top', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel)}\n"
+        f"{nav_html(issue, issues, '../', 'top', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel, url_prefix=url_prefix, skip_nav_lang=skip_nav_lang, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted)}\n"
         f"{NAV_TOP_END}"
     )
     bot = (
         f"{NAV_BOT_START}\n"
-        f"{nav_html(issue, issues, '../', 'bottom', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel)}\n"
+        f"{nav_html(issue, issues, '../', 'bottom', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel, url_prefix=url_prefix, encrypted=encrypted)}\n"
         f"{NAV_BOT_END}"
     )
     if "</header>" not in fragment.lower():
@@ -829,12 +905,18 @@ def inject_nav(
     issue: Issue,
     issues: list[Issue],
     *,
+    lang: str | None = None,
     slug: str | None = None,
     abs_links: bool = False,
     lang_rel: str | None = None,
+    url_prefix: str | None = None,
+    lang_href: str | None = None,
+    lang_code: str | None = None,
+    encrypted: bool = False,
 ) -> str:
     html = strip_marked(html, NAV_TOP_START, NAV_TOP_END)
     html = strip_marked(html, NAV_BOT_START, NAV_BOT_END)
+    html = strip_marked(html, LANG_BTN_START, LANG_BTN_END)
     zh_m = _LANG_ZH_RE.search(html)
     en_m = _LANG_EN_RE.search(html)
     if zh_m and en_m:
@@ -842,27 +924,34 @@ def inject_nav(
         first_lang = "zh-CN" if first_m is zh_m else "en"
         second_lang = "en" if first_m is zh_m else "zh-CN"
         part1 = _inject_nav_into_fragment(
-            html[: second_m.start()], issue, issues, lang=first_lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel
+            html[: second_m.start()], issue, issues, lang=first_lang, slug=slug, abs_links=abs_links,
+            lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted,
         )
         part2 = _inject_nav_into_fragment(
-            html[second_m.start():], issue, issues, lang=second_lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel
+            html[second_m.start():], issue, issues, lang=second_lang, slug=slug, abs_links=abs_links,
+            lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted,
         )
         return part1 + part2
-    return _inject_nav_into_fragment(html, issue, issues, slug=slug, abs_links=abs_links, lang_rel=lang_rel)
+    return _inject_nav_into_fragment(
+        html, issue, issues, lang=lang, slug=slug, abs_links=abs_links,
+        lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted,
+    )
 
 
-def list_sources() -> list[Issue]:
+def list_sources(base: Path | None = None, *, lang: str | None = None) -> list[Issue]:
+    root_dir = base if base is not None else SOURCES
+    lg = i18n.normalize_lang(lang) if lang is not None else LANG
     issues: list[Issue] = []
-    if not SOURCES.exists():
+    if not root_dir.exists():
         return issues
     for kind in ("daily", "weekly"):
-        d = SOURCES / kind
+        d = root_dir / kind
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.html")):
             label = path.stem
             html = path.read_text(encoding="utf-8")
-            title = extract_title(html) or f"{_t('daily_title' if kind == 'daily' else 'weekly_title')} · {label}"
+            title = extract_title(html) or f"{i18n.t(lg, 'daily_title' if kind == 'daily' else 'weekly_title')} · {label}"
             if kind == "daily":
                 start = end = parse_daily_label(label)
             else:
@@ -871,10 +960,15 @@ def list_sources() -> list[Issue]:
     return issues
 
 
-def save_source(html_path: Path, kind: str, label: str) -> Path:
+def list_en_sources() -> list[Issue]:
+    return list_sources(SOURCES / "en", lang="en")
+
+
+def save_source(html_path: Path, kind: str, label: str, *, lang_sub: str | None = None) -> Path:
     raw = html_path.read_text(encoding="utf-8")
     raw = strip_injections(raw)
-    dest = SOURCES / kind / f"{label}.html"
+    root_dir = (SOURCES / lang_sub) if lang_sub else SOURCES
+    dest = root_dir / kind / f"{label}.html"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(raw, encoding="utf-8")
     return dest
@@ -895,36 +989,85 @@ _ROOT_LATEST_HEADERS = (
     "  Cache-Control: no-store\n"
 )
 
+_ROOT_LANG_LATEST_HEADERS = (
+    "/zh/latest\n"
+    "  Cache-Control: no-store\n"
+    "/zh/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/zh/daily/latest\n"
+    "  Cache-Control: no-store\n"
+    "/zh/daily/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/zh/weekly/latest\n"
+    "  Cache-Control: no-store\n"
+    "/zh/weekly/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/en/latest\n"
+    "  Cache-Control: no-store\n"
+    "/en/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/en/daily/latest\n"
+    "  Cache-Control: no-store\n"
+    "/en/daily/latest/\n"
+    "  Cache-Control: no-store\n"
+    "/en/weekly/latest\n"
+    "  Cache-Control: no-store\n"
+    "/en/weekly/latest/\n"
+    "  Cache-Control: no-store\n"
+)
 
-def _slug_cache_headers(slug: str) -> str:
-    """Per-slug Cache-Control rules; static latest pages detach wildcard caching."""
+
+def _prefix_cache_headers(prefix: str) -> str:
+    clean = prefix.strip("/")
+    base = f"/{clean}" if clean else ""
     return (
-        f"/{slug}/\n"
+        f"{base}/\n"
         "  Cache-Control: public, max-age=60, stale-while-revalidate=604800\n"
-        f"/{slug}/daily/*\n"
+        f"{base}/daily/*\n"
         "  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
-        f"/{slug}/weekly/*\n"
+        f"{base}/weekly/*\n"
         "  Cache-Control: public, max-age=300, stale-while-revalidate=604800\n"
-        f"/{slug}/latest\n"
+        f"{base}/latest\n"
         "  Cache-Control: no-store\n"
-        f"/{slug}/latest/\n"
+        f"{base}/latest/\n"
         "  Cache-Control: no-store\n"
-        f"/{slug}/daily/latest\n"
+        f"{base}/daily/latest\n"
         "  ! Cache-Control\n"
         "  Cache-Control: no-store\n"
-        f"/{slug}/daily/latest/\n"
+        f"{base}/daily/latest/\n"
         "  ! Cache-Control\n"
         "  Cache-Control: no-store\n"
-        f"/{slug}/weekly/latest\n"
+        f"{base}/weekly/latest\n"
         "  ! Cache-Control\n"
         "  Cache-Control: no-store\n"
-        f"/{slug}/weekly/latest/\n"
+        f"{base}/weekly/latest/\n"
         "  ! Cache-Control\n"
         "  Cache-Control: no-store\n"
     )
 
 
-_ROOT_LATEST_RELS = ("latest.html", "daily/latest.html", "weekly/latest.html")
+def _slug_cache_headers(slug: str, *, has_lang_paths: bool = False) -> str:
+    """Per-slug (or root-mounted when slug='') Cache-Control rules; static latest pages detach wildcard caching."""
+    clean = slug.strip("/")
+    text = _prefix_cache_headers(clean)
+    if has_lang_paths:
+        zh_p = f"{clean}/zh" if clean else "zh"
+        en_p = f"{clean}/en" if clean else "en"
+        text += _prefix_cache_headers(zh_p) + _prefix_cache_headers(en_p)
+    return text
+
+
+_ROOT_LATEST_RELS = (
+    "latest.html",
+    "daily/latest.html",
+    "weekly/latest.html",
+    "zh/latest.html",
+    "zh/daily/latest.html",
+    "zh/weekly/latest.html",
+    "en/latest.html",
+    "en/daily/latest.html",
+    "en/weekly/latest.html",
+)
 
 
 def _latest_issues(issues: Iterable[Issue]) -> tuple[Issue | None, Issue | None, Issue | None]:
@@ -943,16 +1086,17 @@ def _latest_alias_specs(
     *,
     include_root: bool = False,
 ) -> list[tuple[str, Issue, str, bool]]:
-    """Return static encrypted latest alias pages: (rel_path, issue, lang_rel, is_root)."""
+    """Return static latest alias pages: (rel_path, issue, lang_rel, is_root)."""
     latest_daily, latest_weekly, latest_any = _latest_issues(issues)
     specs: list[tuple[str, Issue, str, bool]] = []
+    sub = f"{slug.strip('/')}/" if slug.strip("/") else ""
     if latest_daily:
-        specs.append((f"{slug}/daily/latest.html", latest_daily, "daily/latest", False))
+        specs.append((f"{sub}daily/latest.html", latest_daily, "daily/latest", False))
     if latest_weekly:
-        specs.append((f"{slug}/weekly/latest.html", latest_weekly, "weekly/latest", False))
+        specs.append((f"{sub}weekly/latest.html", latest_weekly, "weekly/latest", False))
     if latest_any:
-        specs.append((f"{slug}/latest.html", latest_any, "latest", False))
-    if include_root:
+        specs.append((f"{sub}latest.html", latest_any, "latest", False))
+    if include_root and sub:
         if latest_daily:
             specs.append(("daily/latest.html", latest_daily, "daily/latest", True))
         if latest_weekly:
@@ -980,6 +1124,7 @@ def write_static_root(
     issues: list[Issue] | None = None,
     *,
     root_latest: bool | None = None,
+    has_lang_paths: bool | None = None,
 ) -> None:
     PUBLIC.mkdir(parents=True, exist_ok=True)
     (PUBLIC / "robots.txt").write_text(
@@ -998,14 +1143,18 @@ def write_static_root(
             root_latest = _parse_bool(_read_config_raw().get("ROOT_LATEST"))
     if issues is None:
         issues = list_sources() if SOURCES.is_dir() else []
+    if has_lang_paths is None:
+        has_lang_paths = bool(list_en_sources()) and LANG == "zh-CN"
     # HTML only changes when an issue is (re)published; short max-age +
     # long stale-while-revalidate makes back/forward and prefetched clicks
     # instant while a publish shows up within minutes. Static latest pages
     # come after daily/* and weekly/* and detach inherited Cache-Control so
     # they are never cached stale.
-    headers_text = SECURITY_HEADERS + _slug_cache_headers(slug)
-    if root_latest:
+    headers_text = SECURITY_HEADERS + _slug_cache_headers(slug, has_lang_paths=has_lang_paths)
+    if root_latest and slug.strip("/"):
         headers_text += _ROOT_LATEST_HEADERS
+        if has_lang_paths:
+            headers_text += _ROOT_LANG_LATEST_HEADERS
     (PUBLIC / "_headers").write_text(headers_text, encoding="utf-8")
     (PUBLIC / "404.html").write_text(
         "<!DOCTYPE html>\n"
@@ -1019,8 +1168,7 @@ def write_static_root(
         "</html>\n",
         encoding="utf-8",
     )
-    # Intentionally no index.html at the site root.
-    # Latest aliases are served directly as static encrypted HTML pages (HTTP 200,
+    # Latest aliases are served directly as static HTML pages (HTTP 200,
     # keeping the browser URL on /.../latest); _redirects is only used for removed
     # issues (sending old URLs to the index to override stale caches).
     active_latest = _active_latest_slug_paths(issues)
@@ -1033,6 +1181,7 @@ def write_static_root(
             seen_sources.add(src)
             rules.append(rule)
 
+    base_p = _url_prefix(slug)
     removed = SITE / "removed-paths.txt"
     if removed.is_file():
         for line in removed.read_text(encoding="utf-8").split():
@@ -1042,8 +1191,13 @@ def write_static_root(
             norm = line[:-5] if line.endswith(".html") else line
             if norm in active_latest:
                 continue
-            _add_rule(f"/{slug}/{norm} /{slug}/ 302")
-            _add_rule(f"/{slug}/{norm}.html /{slug}/ 302")
+            _add_rule(f"{base_p}/{norm} {base_p}/ 302")
+            _add_rule(f"{base_p}/{norm}.html {base_p}/ 302")
+            if has_lang_paths:
+                for lp in ("zh", "en"):
+                    lp_p = _url_prefix(slug, lp)
+                    _add_rule(f"{lp_p}/{norm} {lp_p}/ 302")
+                    _add_rule(f"{lp_p}/{norm}.html {lp_p}/ 302")
     rp = PUBLIC / "_redirects"
     if rules:
         rp.write_text("\n".join(rules) + "\n", encoding="utf-8")
@@ -1094,7 +1248,21 @@ def _md(d: date) -> str:
     return f"{d.month:02d}/{d.day:02d}"
 
 
-def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
+def index_html(
+    cfg: dict[str, str],
+    issues: list[Issue],
+    *,
+    lang: str | None = None,
+    lang_href: str | None = None,
+    lang_code: str | None = None,
+    encrypted: bool | None = None,
+) -> str:
+    lg = i18n.normalize_lang(lang) if lang is not None else LANG
+    is_enc = _parse_bool(cfg.get("ENCRYPT")) if encrypted is None else encrypted
+
+    def tr(key: str, **kw) -> str:
+        return i18n.t(lg, key, **kw)
+
     dailies = sorted(
         [i for i in issues if i.kind == "daily"],
         key=lambda i: (i.end, i.start, i.label),
@@ -1124,7 +1292,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         lead = f'<span class="lab">{_esc(heads[0])}</span>'
         if len(heads) > 1:
             lead += f'<span class="sub">{_esc(" / ".join(heads[1:3]))}</span>'
-        return f'<span class="body">{lead}</span><span class="cnt num">{_esc(i18n.count_items(LANG, len(heads)))}</span>'
+        return f'<span class="body">{lead}</span><span class="cnt num">{_esc(i18n.count_items(lg, len(heads)))}</span>'
 
     def _item_attrs(i: Issue) -> str:
         k = (i.kind, i.label)
@@ -1137,7 +1305,7 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         return (
             f'<li{_item_attrs(i)}><a href="{i.rel_url}">'
             f'<span class="when num">{_md(i.start)}</span>'
-            f'<span class="dow">{_esc(i18n.weekday_short(LANG, i.start))}</span>'
+            f'<span class="dow">{_esc(i18n.weekday_short(lg, i.start))}</span>'
             f"{lead_spans(i)}"
             f"</a></li>"
         )
@@ -1165,18 +1333,18 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         sun = mon + timedelta(days=6)
         items = weeks[mon]
         wk = next((w for w in weeklies if mon <= w.end <= sun), None)
-        wlink = f'<a class="wk-weekly" href="{wk.rel_url}">{_esc(_t("week_link"))}</a>' if wk else ""
+        wlink = f'<a class="wk-weekly" href="{wk.rel_url}">{_esc(tr("week_link"))}</a>' if wk else ""
         body = (
             '<ol class="issue-list">\n' + "\n".join(daily_item(i) for i in items) + "\n</ol>"
-            if items else f'<p class="empty">{_esc(_t("no_daily_week"))}</p>'
+            if items else f'<p class="empty">{_esc(tr("no_daily_week"))}</p>'
         )
         week_blocks.append(
             f'<details class="grp"{" open" if n == 0 else ""}>'
             f'<summary>{chev}<span class="g-range num">{_md(mon)} – {_md(sun)}</span>'
-            f'<span class="g-meta">{_esc(_t("week_n", n=mon.isocalendar()[1]))} · <span class="num">{len(items)}</span> {_esc(i18n.issue_unit(LANG, len(items)))}</span>'
+            f'<span class="g-meta">{_esc(tr("week_n", n=mon.isocalendar()[1]))} · <span class="num">{len(items)}</span> {_esc(i18n.issue_unit(lg, len(items)))}</span>'
             f"{wlink}</summary>\n{body}\n</details>"
         )
-    daily_ol = "\n".join(week_blocks) if week_blocks else f'<p class="empty">{_esc(_t("none_yet"))}</p>'
+    daily_ol = "\n".join(week_blocks) if week_blocks else f'<p class="empty">{_esc(tr("none_yet"))}</p>'
 
     # Weeklies grouped by month of their end (Sunday) date, newest first.
     months: dict[tuple[int, int], list[Issue]] = {}
@@ -1187,11 +1355,11 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         items = months[(y, m)]
         month_blocks.append(
             f'<details class="grp"{" open" if n == 0 else ""}>'
-            f'<summary>{chev}<span class="g-range num">{_esc(i18n.month_label(LANG, y, m))}</span>'
-            f'<span class="g-meta"><span class="num">{len(items)}</span> {_esc(i18n.issue_unit(LANG, len(items)))}</span></summary>\n'
+            f'<summary>{chev}<span class="g-range num">{_esc(i18n.month_label(lg, y, m))}</span>'
+            f'<span class="g-meta"><span class="num">{len(items)}</span> {_esc(i18n.issue_unit(lg, len(items)))}</span></summary>\n'
             '<ol class="issue-list weekly">\n' + "\n".join(weekly_item(i) for i in items) + "\n</ol>\n</details>"
         )
-    weekly_ol = "\n".join(month_blocks) if month_blocks else f'<p class="empty">{_esc(_t("none_yet"))}</p>'
+    weekly_ol = "\n".join(month_blocks) if month_blocks else f'<p class="empty">{_esc(tr("none_yet"))}</p>'
 
     # Warm the likely next clicks: newest daily + newest weekly.
     hints = [i.rel_url for i in (dailies[:2] + weeklies[:1])]
@@ -1199,14 +1367,14 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
     tz_name = os.environ.get("DIGEST_TZ", "").strip()
     today = datetime.now(ZoneInfo(tz_name)).date() if tz_name else datetime.now().astimezone().date()
     today_line = (
-        f"{i18n.date_long(LANG, today)} · {i18n.weekday(LANG, today)}"
-        if LANG == "zh-CN"
-        else f"{i18n.weekday(LANG, today)}, {i18n.date_long(LANG, today)}"
+        f"{i18n.date_long(lg, today)} · {i18n.weekday(lg, today)}"
+        if lg == "zh-CN"
+        else f"{i18n.weekday(lg, today)}, {i18n.date_long(lg, today)}"
     )
     tag_chips = ""
     if top_tags:
         chips = [
-            f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{_esc(_t("filter_all"))}</button>'
+            f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{_esc(tr("filter_all"))}</button>'
         ] + [
             f'<button type="button" class="filter-tag" data-tag="{_esc(tg)}" aria-pressed="false">{_esc(tg)}</button>'
             for tg in top_tags
@@ -1217,20 +1385,31 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
     if latest_daily:
         quick_bits.append(
             f'<a class="quick-pill" href="daily/latest"><span class="qp-dot" aria-hidden="true"></span>'
-            f'<span>{_esc(_t("latest_daily"))}</span><span class="qp-meta num">{_md(latest_daily.start)}</span></a>'
+            f'<span>{_esc(tr("latest_daily"))}</span><span class="qp-meta num">{_md(latest_daily.start)}</span></a>'
         )
     if latest_weekly:
         quick_bits.append(
             f'<a class="quick-pill" href="weekly/latest">'
-            f'<span>{_esc(_t("latest_weekly"))}</span><span class="qp-meta num">{_md(latest_weekly.start)}–{_md(latest_weekly.end)}</span></a>'
+            f'<span>{_esc(tr("latest_weekly"))}</span><span class="qp-meta num">{_md(latest_weekly.start)}–{_md(latest_weekly.end)}</span></a>'
         )
     quick_bar = f'<div class="quick-bar">{"".join(quick_bits)}</div>' if quick_bits else ""
-    lbl_sys, lbl_light, lbl_dark = _t("theme_system"), _t("theme_light"), _t("theme_dark")
+    lang_btn = (
+        lang_pill_html(lang_href, lang_code)
+        if (lang_href and lang_code)
+        else lang_switch_link("", "ctrl-btn lang-btn lang-switch")
+    )
+    lock_btn = (
+        f'<button type="button" class="ctrl-btn lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>'
+        if is_enc
+        else ""
+    )
+    lock_js = LOCK_JS_BLOCK if is_enc else ""
+    lbl_sys, lbl_light, lbl_dark = tr("theme_system"), tr("theme_light"), tr("theme_dark")
     theme_labels_json = _esc(f'{{"system":"{lbl_sys}","light":"{lbl_light}","dark":"{lbl_dark}"}}')
     theme_toggle_btn = (
         f'<button type="button" class="ctrl-btn theme-btn theme-switch" data-theme-toggle data-mode="system"'
-        f' data-aria-base="{_esc(_t("appearance"))}" data-labels="{theme_labels_json}"'
-        f' aria-label="{_esc(_t("appearance"))}" title="{_esc(_t("theme_toggle_title"))}">'
+        f' data-aria-base="{_esc(tr("appearance"))}" data-labels="{theme_labels_json}"'
+        f' aria-label="{_esc(tr("appearance"))}" title="{_esc(tr("theme_toggle_title"))}">'
         '<span class="theme-ics" aria-hidden="true">'
         '<svg class="ic-sys" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.8"/><path d="M8 2.2A5.8 5.8 0 0 1 8 13.8Z" fill="currentColor" stroke="none"/></svg>'
         '<svg class="ic-sun" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.6v1.6M8 12.8v1.6M1.6 8h1.6M12.8 8h1.6M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1"/></svg>'
@@ -1239,29 +1418,29 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
         f'<span class="ctrl-lbl">{_esc(lbl_sys)}</span></button>'
     )
     filter_bar = (
-        f'<div class="filter-bar" id="archiveFilterBar" role="search" aria-label="{_esc(_t("archive_filter_label"))}"'
-        f' data-total="{len(issues)}" data-tpl="{_esc(_t("filter_shown"))}">'
+        f'<div class="filter-bar" id="archiveFilterBar" role="search" aria-label="{_esc(tr("archive_filter_label"))}"'
+        f' data-total="{len(issues)}" data-tpl="{_esc(tr("filter_shown"))}">'
         '<div class="filter-row">'
-        f'<input type="search" id="archiveFilterInput" class="filter-input" placeholder="{_esc(_t("archive_filter_placeholder"))}"'
-        f' aria-label="{_esc(_t("archive_filter_label"))}" autocomplete="off" spellcheck="false">'
+        f'<input type="search" id="archiveFilterInput" class="filter-input" placeholder="{_esc(tr("archive_filter_placeholder"))}"'
+        f' aria-label="{_esc(tr("archive_filter_label"))}" autocomplete="off" spellcheck="false">'
         '<kbd class="filter-kbd" aria-hidden="true">/</kbd>'
         f'<span id="archiveFilterCount" class="filter-count num" aria-live="polite" hidden></span>'
-        f'<button type="button" id="archiveFilterClear" class="filter-clear" hidden>{_esc(_t("filter_clear"))}</button>'
+        f'<button type="button" id="archiveFilterClear" class="filter-clear" hidden>{_esc(tr("filter_clear"))}</button>'
         f"</div>{tag_chips}</div>"
-        f'<p id="archiveFilterEmpty" class="filter-empty" hidden>{_esc(_t("archive_filter_empty"))}</p>'
+        f'<p id="archiveFilterEmpty" class="filter-empty" hidden>{_esc(tr("archive_filter_empty"))}</p>'
         if issues else ""
     )
     return f"""<!DOCTYPE html>
-<html lang="{_t("html_lang")}">
+<html lang="{tr("html_lang")}">
 <head>
 <meta charset="utf-8">
 {META_MARK_START}
 <meta name="robots" content="noindex,nofollow">
 {META_MARK_END}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#faf9f6">
-<title>{_esc(_t("index_title"))}</title>
-<script>(function(){{try{{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);var dk=t==='dark'||(t!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',dk?'#13191c':'#faf9f6');}}catch(e){{}}}})();</script>
+<meta name="theme-color" content="#faf8f4">
+<title>{_esc(tr("index_title"))}</title>
+<script>(function(){{try{{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);var dk=t==='dark'||(t!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',dk?'#141311':'#faf8f4');}}catch(e){{}}}})();</script>
 {perf_head}<style>
 :root {{
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -1270,59 +1449,59 @@ def index_html(cfg: dict[str, str], issues: list[Issue]) -> str:
   --radius-panel: 14px;
   --paper-max: 1100px; /* layout2: index content capped at ~1100px, centered */
   --gutter: max(16px, env(safe-area-inset-left));
-  --bg: #faf9f6;
-  --bg-sunk: #f3f3ef;
+  --bg: #faf8f4;
+  --bg-sunk: #f2eee7;
   --surface: #ffffff;
-  --ink: #202a30;
-  --ink-2: #303c42;
-  --ink-3: #59656b;
-  --ink-4: #657176;
-  --line: #dfe4e1;
-  --line-strong: #d1d9d5;
-  --line-soft: #e9ede9;
-  --accent: #176b75;
-  --accent-ink: #145f68;
-  --well: #f3f3ef;
-  --shadow-soft: 0 4px 12px rgba(28, 39, 51, 0.06);
+  --ink: #1f1c18;
+  --ink-2: #363029;
+  --ink-3: #635a4f;
+  --ink-4: #7b7164;
+  --line: #e4ddd2;
+  --line-strong: #d4cabd;
+  --line-soft: #ede7dd;
+  --accent: #b85432;
+  --accent-ink: #9c4223;
+  --well: #f3efe8;
+  --shadow-soft: 0 4px 14px rgba(31, 24, 16, 0.06);
   --btn-glint: rgba(255, 255, 255, 0.55);
   color-scheme: light;
 }}
 @media (prefers-color-scheme: dark) {{
   :root:not([data-theme="light"]) {{
-    --bg: #13191c;
-    --bg-sunk: #182024;
-    --well: #182024;
-    --surface: #1a2226;
-    --ink: #e7eceb;
-    --ink-2: #d2dada;
-    --ink-3: #a5b0b3;
-    --ink-4: #89979d;
-    --line: rgba(255, 255, 255, 0.08);
-    --line-strong: rgba(255, 255, 255, 0.12);
-    --line-soft: rgba(255, 255, 255, 0.06);
-    --accent: #12ccd8;
-    --accent-ink: #2ce2e8;
-    --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.35);
-    --btn-glint: rgba(255, 255, 255, 0.08);
+    --bg: #141311;
+    --bg-sunk: #1c1a17;
+    --well: #1b1916;
+    --surface: #1f1d19;
+    --ink: #efeae2;
+    --ink-2: #d8d1c7;
+    --ink-3: #a89f92;
+    --ink-4: #877f73;
+    --line: rgba(239, 234, 226, 0.10);
+    --line-strong: rgba(239, 234, 226, 0.17);
+    --line-soft: rgba(239, 234, 226, 0.06);
+    --accent: #df7d56;
+    --accent-ink: #ec9672;
+    --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.42);
+    --btn-glint: rgba(255, 255, 255, 0.07);
     color-scheme: dark;
   }}
 }}
 :root[data-theme="dark"] {{
-  --bg: #13191c;
-  --bg-sunk: #182024;
-  --well: #182024;
-  --surface: #1a2226;
-  --ink: #e7eceb;
-  --ink-2: #d2dada;
-  --ink-3: #a5b0b3;
-  --ink-4: #89979d;
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.12);
-  --line-soft: rgba(255, 255, 255, 0.06);
-  --accent: #12ccd8;
-  --accent-ink: #2ce2e8;
-  --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.35);
-  --btn-glint: rgba(255, 255, 255, 0.08);
+  --bg: #141311;
+  --bg-sunk: #1c1a17;
+  --well: #1b1916;
+  --surface: #1f1d19;
+  --ink: #efeae2;
+  --ink-2: #d8d1c7;
+  --ink-3: #a89f92;
+  --ink-4: #877f73;
+  --line: rgba(239, 234, 226, 0.10);
+  --line-strong: rgba(239, 234, 226, 0.17);
+  --line-soft: rgba(239, 234, 226, 0.06);
+  --accent: #df7d56;
+  --accent-ink: #ec9672;
+  --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.42);
+  --btn-glint: rgba(255, 255, 255, 0.07);
   color-scheme: dark;
 }}
 * {{ box-sizing: border-box; }}
@@ -1635,17 +1814,17 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 .mast.is-scrolled {{
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   border-bottom-color: var(--line);
-  box-shadow: 0 2px 14px rgba(20, 30, 36, 0.08);
+  box-shadow: 0 2px 14px rgba(31, 24, 16, 0.08);
 }}
 @media (prefers-color-scheme: dark) {{
   :root:not([data-theme="light"]) .mast.is-scrolled {{
     background: color-mix(in srgb, var(--bg-sunk) 92%, transparent);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.42);
   }}
 }}
 :root[data-theme="dark"] .mast.is-scrolled {{
   background: color-mix(in srgb, var(--bg-sunk) 92%, transparent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.42);
 }}
 .mast.is-hidden {{ transform: translateY(calc(-100% - 2px)); box-shadow: none !important; pointer-events: none; }}
 .ctrl-btn {{
@@ -1653,7 +1832,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 88%, var(--well)); color: var(--ink-2);
   font-size: 12px; font-weight: 560; white-space: nowrap; text-decoration: none; user-select: none;
-  box-shadow: inset 0 1px 0 var(--btn-glint), 0 1px 2px rgba(20, 30, 36, 0.05);
+  box-shadow: inset 0 1px 0 var(--btn-glint), 0 1px 2px rgba(31, 24, 16, 0.05);
   transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 200ms ease;
 }}
 .ctrl-btn::after {{
@@ -1663,12 +1842,14 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 }}
 .ctrl-btn:hover {{
   color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface)); transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 var(--btn-glint), 0 4px 12px rgba(23, 107, 117, 0.12);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface)); transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 var(--btn-glint), 0 4px 12px color-mix(in srgb, var(--accent) 18%, transparent);
 }}
 .ctrl-btn:hover::after {{ transform: translateX(125%); }}
 .ctrl-btn:active {{ transform: translateY(0) scale(0.93); transition-duration: 90ms; }}
 .ctrl-btn.is-pop {{ animation: ctrlPop 340ms cubic-bezier(0.34, 1.56, 0.64, 1); }}
+.ctrl-ic {{ display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex-shrink: 0; color: var(--accent); transition: transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1); }}
+.lang-btn:hover .ctrl-ic {{ transform: rotate(28deg); }}
 .theme-ics {{ position: relative; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: var(--accent); }}
 .theme-ics svg {{ position: absolute; inset: 0; opacity: 0; transform: scale(0.4) rotate(-65deg); transition: transform 360ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 180ms ease; }}
 .theme-btn[data-mode="system"] .ic-sys, .theme-btn[data-mode="light"] .ic-sun, .theme-btn[data-mode="dark"] .ic-moon {{ opacity: 1; transform: scale(1) rotate(0deg); }}
@@ -1682,12 +1863,12 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 13px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink);
   font-size: 12.5px; font-weight: 600; text-decoration: none;
-  box-shadow: 0 1px 2px rgba(20, 30, 36, 0.04);
+  box-shadow: 0 1px 2px rgba(31, 24, 16, 0.04);
   transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 150ms ease, color 150ms ease, box-shadow 180ms ease;
 }}
 .quick-pill:hover {{
   border-color: var(--accent); color: var(--accent-ink); transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(23, 107, 117, 0.1);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 16%, transparent);
 }}
 .quick-pill:active {{ transform: scale(0.95); transition-duration: 80ms; }}
 .qp-dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }}
@@ -1702,13 +1883,13 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 <body>
 <header class="mast">
 <div class="mast-bar">
-<h1 class="np"><span class="ai">AI</span>{_esc(_t("brand_tail"))}</h1>
-<span class="mast-chip"><span class="mark-kicker">{_esc(_t("index_chip"))}</span><span class="mark-figure num">{len(issues)}</span><span class="mark-kicker">{_esc(i18n.issue_unit(LANG, len(issues)))}</span></span>
-<span class="mast-meta"><span class="num">{_esc(today_line)}</span><span>{_esc(_t("index_meta", d=len(dailies), w=len(weeklies)))}</span><span class="motto">{_esc(_t("motto"))}</span></span>
+<h1 class="np"><span class="ai">AI</span>{_esc(tr("brand_tail"))}</h1>
+<span class="mast-chip"><span class="mark-kicker">{_esc(tr("index_chip"))}</span><span class="mark-figure num">{len(issues)}</span><span class="mark-kicker">{_esc(i18n.issue_unit(lg, len(issues)))}</span></span>
+<span class="mast-meta"><span class="num">{_esc(today_line)}</span><span>{_esc(tr("index_meta", d=len(dailies), w=len(weeklies)))}</span><span class="motto">{_esc(tr("motto"))}</span></span>
 <span class="mast-tools">
-{lang_switch_link("", "ctrl-btn lang-link")}
+{lang_btn}
 {theme_toggle_btn}
-<button type="button" class="ctrl-btn lock" data-lock title="{_esc(_t("lock_title"))}">{_esc(_t("lock"))}</button>
+{lock_btn}
 </span>
 </div>
 </header>
@@ -1716,16 +1897,16 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 {quick_bar}
 {filter_bar}
 <section class="archive-sec">
-<div class="kicker"><span class="bar"></span>{_esc(_t("index_daily"))}<span class="cnt num">{_esc(i18n.count_issues(LANG, len(dailies)))}</span></div>
+<div class="kicker"><span class="bar"></span>{_esc(tr("index_daily"))}<span class="cnt num">{_esc(i18n.count_issues(lg, len(dailies)))}</span></div>
 {daily_ol}
 </section>
 <section class="archive-sec">
-<div class="kicker"><span class="bar"></span>{_esc(_t("index_weekly"))}<span class="cnt num">{_esc(i18n.count_issues(LANG, len(weeklies)))}</span></div>
+<div class="kicker"><span class="bar"></span>{_esc(tr("index_weekly"))}<span class="cnt num">{_esc(i18n.count_issues(lg, len(weeklies)))}</span></div>
 {weekly_ol}
 </section>
-<footer class="colophon"><div class="end">{_esc(_t("index_end"))}</div></footer>
+<footer class="colophon"><div class="end">{_esc(tr("index_end"))}</div></footer>
 </article>
-{LOCK_JS_BLOCK}
+{lock_js}
 <script>
 (function(){{
   const KEY='digest-theme';
@@ -1738,7 +1919,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   function pop(el){{if(!el)return;el.classList.remove('is-pop');void el.offsetWidth;el.classList.add('is-pop');}}
   function paintMeta(){{
     const isDark=root.getAttribute('data-theme')==='dark'||(!root.getAttribute('data-theme')&&Boolean(mq&&mq.matches));
-    if(meta)meta.setAttribute('content',isDark?'#13191c':'#faf9f6');
+    if(meta)meta.setAttribute('content',isDark?'#141311':'#faf8f4');
   }}
   function apply(v,anim){{
     curTheme=MODES.includes(v)?v:'system';
@@ -1868,6 +2049,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
     if(/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||''))return;
     if(e.key==='/'){{const inp=document.getElementById('archiveFilterInput');if(inp){{e.preventDefault();inp.focus();}}}}
     else if(e.key==='t'||e.key==='T'){{e.preventDefault();cycleTheme();showMast();}}
+    else if(e.key==='l'||e.key==='L'){{const a=document.querySelector('a.lang-btn[href]');if(a&&a.href){{e.preventDefault();location.href=a.href;}}}}
   }});
   if(location.hash.length>1){{
     let id=location.hash.slice(1);try{{id=decodeURIComponent(id);}}catch(e){{}}
@@ -1894,12 +2076,12 @@ def _clear_files(root: Path) -> None:
 
 
 def _clear_root_latest(base: Path) -> None:
-    """Remove any generated root-level latest alias files (and empty daily/weekly dirs)."""
+    """Remove any generated root-level latest alias files (and empty daily/weekly/zh/en dirs)."""
     for rel in _ROOT_LATEST_RELS:
         p = base / rel
         if p.is_file():
             p.unlink()
-    for sub in ("daily", "weekly"):
+    for sub in ("zh/daily", "zh/weekly", "zh", "en/daily", "en/weekly", "en", "daily", "weekly"):
         d = base / sub
         if d.is_dir():
             try:
@@ -1914,56 +2096,196 @@ def _render_issue_page(
     *,
     slug: str,
     alias_rel: str | None = None,
+    lang: str | None = None,
+    url_prefix: str | None = None,
+    lang_href: str | None = None,
+    lang_code: str | None = None,
+    encrypted: bool = False,
 ) -> str:
     abs_links = alias_rel is not None
     html = issue.source.read_text(encoding="utf-8")
     html = strip_injections(html)
     html = ensure_noindex(html)
     html = ensure_nav_css(html)
-    html = inject_nav(html, issue, issues, slug=slug, abs_links=abs_links, lang_rel=alias_rel)
-    html = inject_perf_and_lock(html, issue, issues, slug=slug, abs_links=abs_links)
+    html = inject_nav(
+        html,
+        issue,
+        issues,
+        lang=lang,
+        slug=slug,
+        abs_links=abs_links,
+        lang_rel=alias_rel,
+        url_prefix=url_prefix,
+        lang_href=lang_href,
+        lang_code=lang_code,
+        encrypted=encrypted,
+    )
+    html = inject_perf_and_lock(
+        html, issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix, encrypted=encrypted
+    )
     return minify_css(html)
 
 
 def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
     """Build plaintext (nav already injected) under site/plain/.
 
-    Does not write issue HTML into public/; encrypt_all_pages does that.
+    Does not write issue HTML into public/; publish_plain_pages or encrypt_all_pages does that.
     Root files (robots.txt, 404, _headers, _redirects) are written unencrypted to public/.
     """
     slug = cfg["SLUG"]
+    encrypted = _parse_bool(cfg.get("ENCRYPT"))
     root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
     issues = list_sources()
+    en_issues = list_en_sources()
+    has_lang_paths = bool(en_issues) and LANG == "zh-CN"
     write_static_root(
         slug=slug,
         issues=issues,
         root_latest=root_latest,
+        has_lang_paths=has_lang_paths,
     )
-    plain_dir = PLAIN / slug
+    plain_dir = _site_dir(PLAIN, slug)
     _clear_files(plain_dir)
-    _clear_root_latest(PLAIN)
-    # public/<slug> is NOT cleared: unchanged encrypted pages are reused
-    # (see encrypt_all_pages cache); stale ones are pruned after encryption.
+    if slug and not _DEMO_MODE:
+        _clear_root_latest(PLAIN)
     (plain_dir / "daily").mkdir(parents=True, exist_ok=True)
     (plain_dir / "weekly").mkdir(parents=True, exist_ok=True)
 
+    en_keys = {(i.kind, i.label) for i in en_issues}
+    zh_keys = {(i.kind, i.label) for i in issues}
+    en_daily, en_weekly, en_any = _latest_issues(en_issues)
+    zh_daily, zh_weekly, zh_any = _latest_issues(issues)
+    zh_base = _url_prefix(slug, "zh")
+    en_base = _url_prefix(slug, "en")
+
+    def _en_target_for(kind: str, label: str) -> str:
+        return f"{en_base}/{kind}/{label}" if (kind, label) in en_keys else f"{en_base}/"
+
+    def _en_latest_target(alias_rel: str, *, root_level: bool) -> str:
+        base_en = "/en" if root_level else en_base
+        if alias_rel == "daily/latest":
+            return f"{base_en}/daily/latest" if en_daily else (f"{base_en}/latest" if root_level else f"{base_en}/")
+        if alias_rel == "weekly/latest":
+            return f"{base_en}/weekly/latest" if en_weekly else (f"{base_en}/latest" if root_level else f"{base_en}/")
+        return f"{base_en}/latest" if en_any else (f"{base_en}/latest" if root_level else f"{base_en}/")
+
+    def _zh_latest_target(alias_rel: str, *, root_level: bool) -> str:
+        base_zh = "/zh" if root_level else zh_base
+        if alias_rel == "daily/latest":
+            return f"{base_zh}/daily/latest" if zh_daily else (f"{base_zh}/latest" if root_level else f"{base_zh}/")
+        if alias_rel == "weekly/latest":
+            return f"{base_zh}/weekly/latest" if zh_weekly else (f"{base_zh}/latest" if root_level else f"{base_zh}/")
+        return f"{base_zh}/latest" if zh_any else (f"{base_zh}/latest" if root_level else f"{base_zh}/")
+
+    # 1. Legacy unprefixed paths under plain_dir (root when SLUG='', or /{slug}/ when SLUG is set)
     for issue in issues:
-        html = _render_issue_page(issue, issues, slug=slug)
+        leg_href = None if LANG_ALT else (_en_target_for(issue.kind, issue.label) if has_lang_paths else None)
+        leg_code = "en" if leg_href else None
+        html = _render_issue_page(
+            issue, issues, slug=slug, lang_href=leg_href, lang_code=leg_code, encrypted=encrypted
+        )
         dest = plain_dir / issue.kind / f"{issue.label}.html"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(html, encoding="utf-8")
 
-    # Static latest alias pages keep the URL on /.../latest (HTTP 200) instead of
-    # 302-redirecting to a dated issue URL, using root-absolute /{slug}/... links.
-    for rel_path, issue, lang_rel, _is_root in _latest_alias_specs(
-        slug, issues, include_root=root_latest
+    for rel_path, issue, lang_rel, is_root in _latest_alias_specs(
+        slug, issues, include_root=root_latest and bool(slug)
     ):
         dest = PLAIN / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(_render_issue_page(issue, issues, slug=slug, alias_rel=lang_rel), encoding="utf-8")
+        if is_root and has_lang_paths:
+            lh = _en_latest_target(lang_rel, root_level=True)
+            html = _render_issue_page(
+                issue, issues, slug=slug, alias_rel=lang_rel,
+                url_prefix=zh_base, lang_href=lh, lang_code="en", encrypted=encrypted,
+            )
+        elif not is_root and has_lang_paths and not LANG_ALT:
+            lh = _en_latest_target(lang_rel, root_level=False)
+            html = _render_issue_page(
+                issue, issues, slug=slug, alias_rel=lang_rel,
+                lang_href=lh, lang_code="en", encrypted=encrypted,
+            )
+        else:
+            html = _render_issue_page(
+                issue, issues, slug=slug, alias_rel=lang_rel, encrypted=encrypted
+            )
+        dest.write_text(html, encoding="utf-8")
 
-    index_path = plain_dir / "index.html"
-    index_path.write_text(minify_css(index_html(cfg, issues)), encoding="utf-8")
+    leg_idx_href = None if LANG_ALT else (f"{en_base}/" if has_lang_paths else None)
+    leg_idx_code = "en" if leg_idx_href else None
+    (plain_dir / "index.html").write_text(
+        minify_css(index_html(cfg, issues, lang_href=leg_idx_href, lang_code=leg_idx_code, encrypted=encrypted)),
+        encoding="utf-8",
+    )
+
+    # 2. Symmetric /zh/ and /en/ URL trees whenever companion English sources exist
+    if has_lang_paths:
+        zh_dir = plain_dir / "zh"
+        en_dir = plain_dir / "en"
+        for d in (zh_dir / "daily", zh_dir / "weekly", en_dir / "daily", en_dir / "weekly"):
+            d.mkdir(parents=True, exist_ok=True)
+
+        for issue in issues:
+            html = _render_issue_page(
+                issue, issues, slug=slug, lang="zh-CN",
+                lang_href=_en_target_for(issue.kind, issue.label), lang_code="en", encrypted=encrypted,
+            )
+            (zh_dir / issue.kind / f"{issue.label}.html").write_text(html, encoding="utf-8")
+        (zh_dir / "index.html").write_text(
+            minify_css(index_html(cfg, issues, lang="zh-CN", lang_href=f"{en_base}/", lang_code="en", encrypted=encrypted)),
+            encoding="utf-8",
+        )
+
+        for alias_rel, issue in (("daily/latest", zh_daily), ("weekly/latest", zh_weekly), ("latest", zh_any)):
+            if not issue:
+                continue
+            html_slug = _render_issue_page(
+                issue, issues, slug=slug, alias_rel=alias_rel, lang="zh-CN",
+                url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=False), lang_code="en", encrypted=encrypted,
+            )
+            p_slug = zh_dir / f"{alias_rel}.html"
+            p_slug.parent.mkdir(parents=True, exist_ok=True)
+            p_slug.write_text(html_slug, encoding="utf-8")
+            if root_latest and slug:
+                html_root = _render_issue_page(
+                    issue, issues, slug=slug, alias_rel=alias_rel, lang="zh-CN",
+                    url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=True), lang_code="en", encrypted=encrypted,
+                )
+                p_root = PLAIN / "zh" / f"{alias_rel}.html"
+                p_root.parent.mkdir(parents=True, exist_ok=True)
+                p_root.write_text(html_root, encoding="utf-8")
+
+        for issue in en_issues:
+            zh_href = f"{zh_base}/{issue.kind}/{issue.label}" if (issue.kind, issue.label) in zh_keys else f"{zh_base}/"
+            html = _render_issue_page(
+                issue, en_issues, slug=slug, lang="en",
+                lang_href=zh_href, lang_code="zh-CN", encrypted=encrypted,
+            )
+            (en_dir / issue.kind / f"{issue.label}.html").write_text(html, encoding="utf-8")
+        (en_dir / "index.html").write_text(
+            minify_css(index_html(cfg, en_issues, lang="en", lang_href=f"{zh_base}/", lang_code="zh-CN", encrypted=encrypted)),
+            encoding="utf-8",
+        )
+
+        for alias_rel, issue in (("daily/latest", en_daily), ("weekly/latest", en_weekly), ("latest", en_any)):
+            if not issue:
+                continue
+            html_slug = _render_issue_page(
+                issue, en_issues, slug=slug, alias_rel=alias_rel, lang="en",
+                url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=False), lang_code="zh-CN", encrypted=encrypted,
+            )
+            p_slug = en_dir / f"{alias_rel}.html"
+            p_slug.parent.mkdir(parents=True, exist_ok=True)
+            p_slug.write_text(html_slug, encoding="utf-8")
+            if root_latest and slug:
+                html_root = _render_issue_page(
+                    issue, en_issues, slug=slug, alias_rel=alias_rel, lang="en",
+                    url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=True), lang_code="zh-CN", encrypted=encrypted,
+                )
+                p_root = PLAIN / "en" / f"{alias_rel}.html"
+                p_root.parent.mkdir(parents=True, exist_ok=True)
+                p_root.write_text(html_root, encoding="utf-8")
+
     return issues
 
 
@@ -2339,10 +2661,20 @@ def bind_custom_domain(cfg: dict[str, str], token: str | None) -> dict | None:
 
 
 def public_urls(cfg: dict[str, str], issues: list[Issue]) -> list[tuple[str, str]]:
-    base = f"https://{cfg['DOMAIN']}/{cfg['SLUG']}"
+    base = f"https://{cfg['DOMAIN']}{_url_prefix(cfg['SLUG'])}"
+    en_issues = list_en_sources() if LANG == "zh-CN" else []
+    has_lang_paths = bool(en_issues)
     out = [("index", f"{base}/")]
+    if has_lang_paths:
+        out.append(("zh/index", f"{base}/zh/"))
+        out.append(("en/index", f"{base}/en/"))
     for i in sorted(issues, key=lambda x: (x.kind, x.start, x.label)):
-        out.append((f"{i.kind}/{i.label}", f"{base}/{i.kind}/{i.label}"))
+        if has_lang_paths:
+            out.append((f"zh/{i.kind}/{i.label}", f"{base}/zh/{i.kind}/{i.label}"))
+        else:
+            out.append((f"{i.kind}/{i.label}", f"{base}/{i.kind}/{i.label}"))
+    for i in sorted(en_issues, key=lambda x: (x.kind, x.start, x.label)):
+        out.append((f"en/{i.kind}/{i.label}", f"{base}/en/{i.kind}/{i.label}"))
     return out
 
 
@@ -2478,13 +2810,28 @@ def localize_template(tmpl: str, lang: str | None = None, extras: dict[str, str]
     return re.sub(r"\{\{(js:)?(\w+)\}\}", sub, tmpl)
 
 
-def shell_extras(rel: str = "", *, allow_lang_switch: bool = True) -> dict[str, str]:
+def _shell_lang_for_rel(rel: str) -> str:
+    clean = rel.lstrip("/")
+    if clean == "en/index.html" or clean.startswith("en/"):
+        return "en"
+    if clean == "zh/index.html" or clean.startswith("zh/"):
+        return "zh-CN"
+    return LANG
+
+
+def shell_extras(
+    rel: str = "",
+    *,
+    allow_lang_switch: bool = True,
+    shell_lang: str | None = None,
+) -> dict[str, str]:
     """Extra HTML for the password shell of the page at `rel` (e.g. daily/2026-01-15.html)."""
+    lg = shell_lang or LANG
     extras = {"lang_switch": lang_switch_link(rel, "lang-alt") if allow_lang_switch else ""}
     if _PASSWORD_OVERRIDE is not None:  # demo builds only: the demo password is public by design
         extras["demo_hint"] = (
             '<p class="demo-hint">'
-            + _esc(i18n.t(LANG, "pw_demo_hint")).replace("{pw}", f"<code>{_esc(_PASSWORD_OVERRIDE)}</code>")
+            + _esc(i18n.t(lg, "pw_demo_hint")).replace("{pw}", f"<code>{_esc(_PASSWORD_OVERRIDE)}</code>")
             + "</p>"
         )
     return extras
@@ -2498,6 +2845,7 @@ def wrap_encrypted(
     rel: str = "",
     *,
     allow_lang_switch: bool = True,
+    shell_lang: str | None = None,
 ) -> str:
     nonce = os.urandom(NONCE_LEN)
     # v2: gzip before encrypting (ciphertext is incompressible, so the CDN's
@@ -2514,7 +2862,10 @@ def wrap_encrypted(
     }
     if "__ENCRYPT_CFG_JSON__" not in tmpl:
         die("password template is missing the __ENCRYPT_CFG_JSON__ placeholder")
-    tmpl = localize_template(tmpl, extras=shell_extras(rel, allow_lang_switch=allow_lang_switch))
+    lg = shell_lang or _shell_lang_for_rel(rel)
+    tmpl = localize_template(
+        tmpl, lang=lg, extras=shell_extras(rel, allow_lang_switch=allow_lang_switch, shell_lang=lg)
+    )
     return tmpl.replace(
         "__ENCRYPT_CFG_JSON__",
         json.dumps(cfg, separators=(",", ":")),
@@ -2546,15 +2897,19 @@ def _assert_no_plaintext_leak(
     tmpl: str,
     *,
     allow_lang_switch: bool = True,
+    shell_lang: str | None = None,
 ) -> None:
+    lg = shell_lang or _shell_lang_for_rel(rel.as_posix())
     tmpl = localize_template(
-        tmpl, extras=shell_extras(rel.as_posix(), allow_lang_switch=allow_lang_switch)
+        tmpl,
+        lang=lg,
+        extras=shell_extras(rel.as_posix(), allow_lang_switch=allow_lang_switch, shell_lang=lg),
     )  # the shell's own (localized) words are not a leak
     for snip in _distinctive_snippets(plain, tmpl):
         if snip in wrapped:
             die(f"plaintext leak in encrypted {rel}: {snip!r}")
     # Prompt page must be present
-    for needle in (_t("pw_title"), _t("pw_label"), _t("pw_open"), PROMPT_MARK, "noindex"):
+    for needle in (i18n.t(lg, "pw_title"), i18n.t(lg, "pw_label"), i18n.t(lg, "pw_open"), PROMPT_MARK, "noindex"):
         if needle not in wrapped:
             die(f"encrypted {rel} is missing the password prompt ({needle})")
     if "__ENCRYPT_CFG_JSON__" in wrapped:
@@ -2564,8 +2919,132 @@ def _assert_no_plaintext_leak(
         die(f"encrypted {rel} is missing ciphertext")
 
 
+_ROOT_CONTROL_HTML = frozenset({"404.html"})
+
+
+def _prune_empty_dirs(root: Path) -> None:
+    if not root.is_dir():
+        return
+    for d in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+
+
+def publish_plain_pages(cfg: dict[str, str]) -> None:
+    """Publish plaintext HTML directly from site/plain/ into site/public/ (ENCRYPT=0)."""
+    slug = cfg["SLUG"]
+    src_root = _site_dir(PLAIN, slug)
+    dst_root = _site_dir(PUBLIC, slug)
+    if not src_root.is_dir():
+        die("plaintext pages not found under site/plain; run a rebuild first")
+    html_files = sorted(src_root.rglob("*.html"))
+    if not html_files:
+        die("no plaintext HTML to publish")
+
+    written = reused = 0
+    CHANGED_PAGES.clear()
+
+    def _copy_one(src: Path, dest: Path, change_name: str) -> None:
+        nonlocal written, reused
+        body = src.read_bytes()
+        if dest.is_file() and dest.read_bytes() == body:
+            reused += 1
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(body)
+        CHANGED_PAGES.append(change_name)
+        written += 1
+
+    for src in html_files:
+        rel = src.relative_to(src_root)
+        _copy_one(src, dst_root / rel, rel.as_posix())
+
+    keep = {s.relative_to(src_root).as_posix() for s in html_files}
+    if dst_root.is_dir():
+        for pub in sorted(dst_root.rglob("*.html")):
+            r = pub.relative_to(dst_root).as_posix()
+            if not slug and r in _ROOT_CONTROL_HTML:
+                continue
+            if r not in keep:
+                pub.unlink()
+                CHANGED_PAGES.append(f"-{r}")
+
+    if slug and not _DEMO_MODE:
+        for rel_str in _ROOT_LATEST_RELS:
+            if rel_str.startswith(f"{slug}/"):
+                continue
+            src = PLAIN / rel_str
+            dest = PUBLIC / rel_str
+            if src.is_file():
+                _copy_one(src, dest, f"/{rel_str}")
+            elif dest.is_file():
+                dest.unlink()
+                CHANGED_PAGES.append(f"-/{rel_str}")
+
+    ENC_CACHE_PATH.unlink(missing_ok=True)
+    _prune_empty_dirs(PUBLIC)
+    print(
+        f"published {written} public HTML page(s), kept {reused} unchanged (ENCRYPT=0)",
+        file=sys.stderr,
+    )
+
+
+def assert_public_matches_plain(cfg: dict[str, str]) -> None:
+    """Verify public HTML pages match site/plain/ verbatim with no password prompt (ENCRYPT=0)."""
+    slug = cfg["SLUG"]
+    src_root = _site_dir(PLAIN, slug)
+    dst_root = _site_dir(PUBLIC, slug)
+    pages = (
+        [
+            p
+            for p in sorted(dst_root.rglob("*.html"))
+            if slug or p.relative_to(dst_root).as_posix() not in _ROOT_CONTROL_HTML
+        ]
+        if dst_root.exists()
+        else []
+    )
+    if not pages:
+        die("no published HTML under public/; run a rebuild first")
+    checked = 0
+
+    def _check_plain(path: Path, plain_path: Path) -> None:
+        nonlocal checked
+        text = path.read_text(encoding="utf-8")
+        if PROMPT_MARK in text or "__ENCRYPT_CFG_JSON__" in text:
+            die(f"{path.relative_to(PUBLIC)} contains password prompt despite ENCRYPT=0; run --rebuild")
+        if plain_path.is_file() and text != plain_path.read_text(encoding="utf-8"):
+            die(f"{path.relative_to(PUBLIC)} does not match plaintext; run --rebuild")
+        checked += 1
+
+    for path in pages:
+        rel = path.relative_to(dst_root)
+        _check_plain(path, src_root / rel)
+    if slug and not _DEMO_MODE:
+        for rel_str in _ROOT_LATEST_RELS:
+            if rel_str.startswith(f"{slug}/"):
+                continue
+            path = PUBLIC / rel_str
+            if path.is_file():
+                _check_plain(path, PLAIN / rel_str)
+    for name in ("robots.txt", "_headers", "404.html"):
+        path = PUBLIC / name
+        if not path.is_file():
+            die(f"missing root file: {name}")
+        body = path.read_text(encoding="utf-8")
+        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
+            die(f"{name} must stay unencrypted")
+    redirects_path = PUBLIC / "_redirects"
+    if redirects_path.is_file():
+        body = redirects_path.read_text(encoding="utf-8")
+        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
+            die("_redirects must stay unencrypted")
+    print(f"public check: {checked} page(s) match plaintext (ENCRYPT=0)", file=sys.stderr)
+
+
 def encrypt_all_pages(cfg: dict[str, str]) -> None:
-    """Encrypt every HTML page under site/plain/<slug>/ (and opt-in root latest aliases) into public/."""
+    """Encrypt every HTML page under site/plain/ into site/public/ (ENCRYPT=1)."""
     if not TEMPLATE_PATH.is_file():
         die(f"password template not found: {TEMPLATE_PATH}")
     tmpl = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -2576,8 +3055,8 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
     password = None  # noqa: F841
 
     slug = cfg["SLUG"]
-    src_root = PLAIN / slug
-    dst_root = PUBLIC / slug
+    src_root = _site_dir(PLAIN, slug)
+    dst_root = _site_dir(PUBLIC, slug)
     if not src_root.is_dir():
         die("plaintext pages not found under site/plain; run a rebuild first")
     html_files = sorted(src_root.rglob("*.html"))
@@ -2607,9 +3086,10 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
     ) -> None:
         nonlocal n, skipped
         plain = src.read_text(encoding="utf-8")
+        shell_lg = _shell_lang_for_rel(rel.as_posix())
         alt_href = lang_switch_href(rel.as_posix()) if allow_lang_switch else ""
         alt_fp = hashlib.sha256((alt_href or "").encode()).hexdigest()[:8]
-        fp = f"{hashlib.sha256(plain.encode('utf-8')).hexdigest()}:{salt_fp}:{key_fp}:{tmpl_fp}:{alt_fp}:{LANG}"
+        fp = f"{hashlib.sha256(plain.encode('utf-8')).hexdigest()}:{salt_fp}:{key_fp}:{tmpl_fp}:{alt_fp}:{shell_lg}"
         if cache.get(cache_key) == fp and dest.is_file():
             body = dest.read_text(encoding="utf-8")
             if PROMPT_MARK in body and '"ct":' in body:
@@ -2617,9 +3097,22 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
                 skipped += 1
                 return
         wrapped = wrap_encrypted(
-            plain, key, salt, tmpl, rel.as_posix(), allow_lang_switch=allow_lang_switch
+            plain,
+            key,
+            salt,
+            tmpl,
+            rel.as_posix(),
+            allow_lang_switch=allow_lang_switch,
+            shell_lang=shell_lg,
         )
-        _assert_no_plaintext_leak(plain, wrapped, rel, tmpl, allow_lang_switch=allow_lang_switch)
+        _assert_no_plaintext_leak(
+            plain,
+            wrapped,
+            rel,
+            tmpl,
+            allow_lang_switch=allow_lang_switch,
+            shell_lang=shell_lg,
+        )
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(wrapped, encoding="utf-8")
         new_cache[cache_key] = fp
@@ -2632,35 +3125,35 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
         _encrypt_one(src, dst_root / rel, rel, key_rel, key_rel, allow_lang_switch=True)
     # Prune encrypted pages whose plaintext no longer exists (removed issues).
     keep = {s.relative_to(src_root).as_posix() for s in html_files}
-    for pub in sorted(dst_root.rglob("*.html")):
-        r = pub.relative_to(dst_root).as_posix()
-        if r not in keep:
-            pub.unlink()
-            CHANGED_PAGES.append(f"-{r}")
-    # Opt-in root latest aliases (ROOT_LATEST=1): omit unencrypted lang_switch from
-    # the root password shell so companion slugs stay hidden before unlock.
-    for rel_str in _ROOT_LATEST_RELS:
-        src = PLAIN / rel_str
-        dest = PUBLIC / rel_str
-        if src.is_file():
-            _encrypt_one(
-                src,
-                dest,
-                Path(rel_str),
-                f"__root__/{rel_str}",
-                f"/{rel_str}",
-                allow_lang_switch=False,
-            )
-        elif dest.is_file():
-            dest.unlink()
-            CHANGED_PAGES.append(f"-/{rel_str}")
-    for sub in ("daily", "weekly"):
-        d = PUBLIC / sub
-        if d.is_dir():
-            try:
-                d.rmdir()
-            except OSError:
-                pass
+    if dst_root.is_dir():
+        for pub in sorted(dst_root.rglob("*.html")):
+            r = pub.relative_to(dst_root).as_posix()
+            if not slug and r in _ROOT_CONTROL_HTML:
+                continue
+            if r not in keep:
+                pub.unlink()
+                CHANGED_PAGES.append(f"-{r}")
+    # Opt-in root latest aliases (ROOT_LATEST=1 when SLUG is set): omit unencrypted
+    # lang_switch from the root password shell so companion slugs stay hidden before unlock.
+    if slug and not _DEMO_MODE:
+        for rel_str in _ROOT_LATEST_RELS:
+            if rel_str.startswith(f"{slug}/"):
+                continue
+            src = PLAIN / rel_str
+            dest = PUBLIC / rel_str
+            if src.is_file():
+                _encrypt_one(
+                    src,
+                    dest,
+                    Path(rel_str),
+                    f"__root__/{rel_str}",
+                    f"/{rel_str}",
+                    allow_lang_switch=False,
+                )
+            elif dest.is_file():
+                dest.unlink()
+                CHANGED_PAGES.append(f"-/{rel_str}")
+    _prune_empty_dirs(PUBLIC)
     _save_enc_cache(new_cache)
     print(
         f"encrypted {n} HTML page(s), reused {skipped} unchanged, with AES-256-GCM / "
@@ -2689,17 +3182,28 @@ def _save_enc_cache(cache: dict[str, str]) -> None:
 
 def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
     """Refuse to deploy if issue/index/latest HTML is still plaintext."""
-    slug_dir = PUBLIC / cfg["SLUG"]
-    pages = sorted(slug_dir.rglob("*.html")) if slug_dir.exists() else []
+    slug = cfg["SLUG"]
+    dst_root = _site_dir(PUBLIC, slug)
+    src_root = _site_dir(PLAIN, slug)
+    pages = (
+        [
+            p
+            for p in sorted(dst_root.rglob("*.html"))
+            if slug or p.relative_to(dst_root).as_posix() not in _ROOT_CONTROL_HTML
+        ]
+        if dst_root.exists()
+        else []
+    )
     if not pages:
-        die("no published HTML under public/<slug>; run a rebuild first")
+        die("no published HTML under public/; run a rebuild first")
     tmpl = TEMPLATE_PATH.read_text(encoding="utf-8") if TEMPLATE_PATH.is_file() else ""
     checked = 0
 
     def _check_page(path: Path, rel: Path, plain_path: Path, *, allow_lang_switch: bool) -> None:
         nonlocal checked
         text = path.read_text(encoding="utf-8")
-        if PROMPT_MARK not in text or _t("pw_title") not in text:
+        lg = _shell_lang_for_rel(rel.as_posix())
+        if PROMPT_MARK not in text or i18n.t(lg, "pw_title") not in text:
             die(f"{path.relative_to(PUBLIC)} does not look encrypted; run --rebuild")
         if "__ENCRYPT_CFG_JSON__" in text:
             die(f"{path.relative_to(PUBLIC)} has an unreplaced placeholder")
@@ -2710,16 +3214,20 @@ def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
                 rel,
                 tmpl,
                 allow_lang_switch=allow_lang_switch,
+                shell_lang=lg,
             )
         checked += 1
 
     for path in pages:
-        rel = path.relative_to(slug_dir)
-        _check_page(path, rel, PLAIN / cfg["SLUG"] / rel, allow_lang_switch=True)
-    for rel_str in _ROOT_LATEST_RELS:
-        path = PUBLIC / rel_str
-        if path.is_file():
-            _check_page(path, Path(rel_str), PLAIN / rel_str, allow_lang_switch=False)
+        rel = path.relative_to(dst_root)
+        _check_page(path, rel, src_root / rel, allow_lang_switch=True)
+    if slug and not _DEMO_MODE:
+        for rel_str in _ROOT_LATEST_RELS:
+            if rel_str.startswith(f"{slug}/"):
+                continue
+            path = PUBLIC / rel_str
+            if path.is_file():
+                _check_page(path, Path(rel_str), PLAIN / rel_str, allow_lang_switch=False)
     # Root files must remain unencrypted and must not be prompt pages.
     for name in ("robots.txt", "_headers", "404.html"):
         path = PUBLIC / name
@@ -2741,7 +3249,13 @@ def print_urls(cfg: dict[str, str], issues: list[Issue]) -> None:
         print(f"{name}: {url}")
 
 
-def prepare(html_path: Path | None, kind: str | None, label: str | None) -> tuple[dict[str, str], list[Issue]]:
+def prepare(
+    html_path: Path | None,
+    kind: str | None,
+    label: str | None,
+    *,
+    en_html_path: Path | None = None,
+) -> tuple[dict[str, str], list[Issue]]:
     cfg = init_config_if_needed()
     if html_path is not None:
         if not html_path.is_file():
@@ -2754,13 +3268,23 @@ def prepare(html_path: Path | None, kind: str | None, label: str | None) -> tupl
             parse_weekly_label(label)  # type: ignore[arg-type]
         save_source(html_path, kind, label)  # type: ignore[arg-type]
         print(f"saved source {kind}/{label}", file=sys.stderr)
+        if en_html_path is not None:
+            if not en_html_path.is_file():
+                die(f"English HTML file not found: {en_html_path}")
+            save_source(en_html_path, kind, label, lang_sub="en")  # type: ignore[arg-type]
+            print(f"saved English source en/{kind}/{label}", file=sys.stderr)
     issues = rebuild_all(cfg)
     # Privacy scan MUST run on plaintext, before encryption. Ciphertext is
     # base64 and can false-positive the email regex.
     privacy_scan(iter_plain_files() + iter_unencrypted_public())
-    encrypt_all_pages(cfg)
-    assert_public_is_encrypted(cfg)
-    print(f"prepared {len(issues)} issue(s); index at /{cfg['SLUG']}/", file=sys.stderr)
+    if _parse_bool(cfg.get("ENCRYPT")):
+        encrypt_all_pages(cfg)
+        assert_public_is_encrypted(cfg)
+    else:
+        publish_plain_pages(cfg)
+        assert_public_matches_plain(cfg)
+    idx_path = f"{_url_prefix(cfg['SLUG'])}/"
+    print(f"prepared {len(issues)} issue(s); index at {idx_path}", file=sys.stderr)
     return cfg, issues
 
 
@@ -2792,8 +3316,9 @@ attach the domain in the dashboard or via the API:
 def rerender_all_sources() -> None:
     """Re-render each existing issue from its markdown into site/sources.
 
-    Skips (loudly) any issue whose markdown is missing; its old source stays.
-    Normal runs never call this.
+    When LANG=zh-CN and a companion *.en.md exists, renders separate single-lang
+    Chinese (site/sources/) and English (site/sources/en/) pages so the site serves
+    symmetric /zh/ and /en/ URL trees. Skips (loudly) any missing markdown.
     """
     if CONFIG_PATH.exists() or os.environ.get("SITE_SLUG", "").strip():
         load_config()
@@ -2810,37 +3335,51 @@ def rerender_all_sources() -> None:
             continue
         en_md = _discover_en_md(md)
         out = ROOT / "html" / f"{issue.kind}-{issue.label}.html"
-        render_html.render_file(md, out, LANG, year=issue.start.year, en_md_path=en_md)
-        save_source(out, issue.kind, issue.label)
-        extra = f" + {en_md.name}" if en_md else ""
+        if en_md is not None and LANG == "zh-CN":
+            render_html.render_file(md, out, LANG, year=issue.start.year)
+            save_source(out, issue.kind, issue.label)
+            en_out = ROOT / "html" / f"{issue.kind}-{issue.label}.en.html"
+            render_html.render_file(en_md, en_out, "en", year=issue.start.year)
+            save_source(en_out, issue.kind, issue.label, lang_sub="en")
+            extra = f" + en/{issue.kind}/{issue.label} ({en_md.name})"
+        else:
+            render_html.render_file(md, out, LANG, year=issue.start.year, en_md_path=en_md)
+            save_source(out, issue.kind, issue.label)
+            if LANG == "zh-CN":
+                (SOURCES / "en" / issue.kind / f"{issue.label}.html").unlink(missing_ok=True)
+            extra = f" + {en_md.name}" if en_md else ""
         print(f"rerender: {issue.kind}/{issue.label} <- {md.name}{extra}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
-# Demo build (CI-friendly): examples/*.md -> encrypted static site in --out DIR.
+# Demo build (CI-friendly): examples/*.md -> static site in --out DIR.
 # Non-interactive, no Cloudflare, nothing written outside the temp workdir and
-# the output dir. The password comes from env DIGEST_DEMO_PASSWORD (a *public*
-# demo password; never reuse a real one). The salt is random per build.
+# the output dir. Public by default (ENCRYPT=0); set env DIGEST_DEMO_PASSWORD
+# (>= 4 chars; a *public* demo password) to build an encrypted demo instead.
 # ---------------------------------------------------------------------------
 
 DEMO_DAILY_LABEL = "2026-01-15"
 DEMO_WEEKLY_LABEL = "2026-01-12_01-18"
 
 
-def _verify_demo_pages(out_slug_dir: Path, plain_slug_dir: Path, key: bytes) -> int:
-    """Decrypt every output page with the demo key and compare to its plaintext."""
+def _verify_demo_pages(out_slug_dir: Path, plain_slug_dir: Path, key: bytes | None) -> int:
+    """Verify every output page matches its plaintext (decrypting first when encrypted)."""
     n = 0
     for page in sorted(out_slug_dir.rglob("*.html")):
         text = page.read_text(encoding="utf-8")
-        i = text.index('id="c">') + len('id="c">')
-        cfg = json.loads(text[i:text.index("</script>", i)])
-        packed = AESGCM(key).decrypt(
-            base64.b64decode(cfg["iv"]), base64.b64decode(cfg["ct"]), None
-        )
-        plain = gzip.decompress(packed).decode("utf-8") if cfg.get("z") == "gzip" else packed.decode("utf-8")
         expect = (plain_slug_dir / page.relative_to(out_slug_dir)).read_text(encoding="utf-8")
-        if plain != expect:
-            die(f"demo verify failed: {page} decrypts to different plaintext")
+        if key is None:
+            if PROMPT_MARK in text or text != expect:
+                die(f"demo verify failed: {page} does not match plaintext")
+        else:
+            i = text.index('id="c">') + len('id="c">')
+            cfg = json.loads(text[i:text.index("</script>", i)])
+            packed = AESGCM(key).decrypt(
+                base64.b64decode(cfg["iv"]), base64.b64decode(cfg["ct"]), None
+            )
+            plain = gzip.decompress(packed).decode("utf-8") if cfg.get("z") == "gzip" else packed.decode("utf-8")
+            if plain != expect:
+                die(f"demo verify failed: {page} decrypts to different plaintext")
         n += 1
     return n
 
@@ -2852,10 +3391,11 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                langs: tuple[str, ...] | None = None) -> int:
     """Build the demo site from examples/ into `out` (no deploy).
 
+    Public (no password) by default; set DIGEST_DEMO_PASSWORD (>= 4 chars) to
+    enable client-side AES-256-GCM encryption on the demo build.
     `langs=None` or one language: a single site at /<slug>/ (slug "demo" by default).
     Both languages (DEMO_LANGS): English at /en/ and Chinese at /zh-CN/ in one output tree,
-    sharing one salt (unlocking one language unlocks the other), with a language-switch link
-    on every page and `/` redirecting to /en/.
+    with a language-switch link on every page and `/` redirecting to /en/.
     """
     global SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH
     global _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE
@@ -2863,8 +3403,9 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
     import tempfile
 
     password = os.environ.get("DIGEST_DEMO_PASSWORD", "")
-    if len(password) < 4:
-        die("set env DIGEST_DEMO_PASSWORD (>= 4 chars; it is a public demo password) for --demo")
+    if 0 < len(password) < 4:
+        die("DIGEST_DEMO_PASSWORD must be >= 4 chars (or unset for a public demo)")
+    encrypted = bool(password)
     langs = tuple(langs) if langs else (LANG,)
     multi = len(langs) > 1
     daily_date = parse_daily_label(daily_label)
@@ -2878,8 +3419,10 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
     saved_slug = os.environ.get("SITE_SLUG")
     saved_lang_alt = os.environ.get("DIGEST_LANG_ALT")
     saved_root_latest = os.environ.get("DIGEST_ROOT_LATEST")
+    saved_encrypt = os.environ.get("DIGEST_ENCRYPT")
     os.environ.pop("DIGEST_LANG_ALT", None)
     os.environ.pop("DIGEST_ROOT_LATEST", None)
+    os.environ.pop("DIGEST_ENCRYPT", None)
     if multi:  # the language prefixes are the slugs; an env slug would override them in load_config()
         os.environ.pop("SITE_SLUG", None)
     work = Path(tempfile.mkdtemp(prefix="ai-digest-demo-"))
@@ -2888,9 +3431,14 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         SITE = work / "site"
         PUBLIC, PLAIN = SITE / "public", SITE / "plain"
         CONFIG_PATH = SITE / "CONFIG"
-        _PASSWORD_OVERRIDE = password
-        _SALT_OVERRIDE = os.urandom(SALT_LEN)
-        key = derive_key(password, _SALT_OVERRIDE)
+        if encrypted:
+            _PASSWORD_OVERRIDE = password
+            _SALT_OVERRIDE = os.urandom(SALT_LEN)
+            key: bytes | None = derive_key(password, _SALT_OVERRIDE)
+        else:
+            _PASSWORD_OVERRIDE = None
+            _SALT_OVERRIDE = None
+            key = None
         if str(CODE_ROOT) not in sys.path:
             sys.path.insert(0, str(CODE_ROOT))
         import render_html
@@ -2910,6 +3458,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                 "ACCOUNT_ID": ACCOUNT_ID_DEFAULT,
                 "DOMAIN": os.environ.get("SITE_DOMAIN") or DOMAIN_DEFAULT,
                 "SLUG": slugs[lg],
+                "ENCRYPT": "1" if encrypted else "0",
                 "LANG": lg,
             }
             if multi and other:
@@ -2928,13 +3477,17 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             cfg = load_config()
             issues = rebuild_all(cfg)
             privacy_scan(iter_plain_files() + iter_unencrypted_public())
-            encrypt_all_pages(cfg)
-            assert_public_is_encrypted(cfg)
+            if encrypted:
+                encrypt_all_pages(cfg)
+                assert_public_is_encrypted(cfg)
+            else:
+                publish_plain_pages(cfg)
+                assert_public_matches_plain(cfg)
             total_pages += _verify_demo_pages(PUBLIC / slugs[lg], PLAIN / slugs[lg], key)
             total_issues += len(issues)
         entry = slugs[langs[0]]
         # Pages: send the site root to the (first language's) index; per-language latest aliases
-        # are static encrypted HTML pages served directly at HTTP 200 (URL stays on latest).
+        # are static HTML pages served directly at HTTP 200 (URL stays on latest).
         (PUBLIC / "_redirects").write_text(f"/ /{entry}/ 302\n", encoding="utf-8")
         if multi:  # one _headers with cache rules for every language prefix
             rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
@@ -2943,7 +3496,10 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             shutil.rmtree(out)
         shutil.copytree(PUBLIC, out)
         where = ", ".join(f"/{sl}/" for sl in slugs.values())
-        print(f"demo site: {total_issues} issue(s), {total_pages} page(s) verified by decrypt -> {out}/ (entry: /{entry}/; {where})")
+        if encrypted:
+            print(f"demo site: {total_issues} issue(s), {total_pages} page(s) verified by decrypt -> {out}/ (entry: /{entry}/; {where})")
+        else:
+            print(f"demo site: {total_issues} issue(s), {total_pages} public page(s) verified -> {out}/ (entry: /{entry}/; {where})")
         return 0
     finally:
         SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH = saved_paths
@@ -2954,6 +3510,8 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             os.environ["DIGEST_LANG_ALT"] = saved_lang_alt
         if saved_root_latest is not None:
             os.environ["DIGEST_ROOT_LATEST"] = saved_root_latest
+        if saved_encrypt is not None:
+            os.environ["DIGEST_ENCRYPT"] = saved_encrypt
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -2990,29 +3548,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("html", nargs="?", help="path to rendered HTML")
     parser.add_argument("kind", nargs="?", choices=["daily", "weekly"])
     parser.add_argument("date_label", nargs="?", help="daily: YYYY-MM-DD; weekly: YYYY-MM-DD_MM-DD")
-    parser.add_argument("--rebuild", action="store_true", help="rebuild nav, index, and static files from sources, then encrypt")
+    parser.add_argument("--rebuild", action="store_true", help="rebuild nav, index, and static files from sources")
     parser.add_argument("--prepare-only", action="store_true", help="do not deploy")
     parser.add_argument("--deploy-only", action="store_true", help="deploy already-prepared public/ tree")
-    parser.add_argument("--init", action="store_true", help="create CONFIG and exit")
+    parser.add_argument("--init", action="store_true", help="create CONFIG and exit (public root-mounted by default; pass --encrypt to enable password encryption + random SLUG)")
+    parser.add_argument("--encrypt", action="store_true", help="with --init: enable client-side password encryption (ENCRYPT=1) and generate a random 22-char SLUG")
     parser.add_argument(
         "--rotate-password",
         action="store_true",
         help=(
             "generate a new password (same file, mode 600) and a new salt, "
-            "re-encrypt all issues from sources, and deploy (unless --prepare-only). "
+            "re-encrypt all issues from sources, and deploy (unless --prepare-only; requires ENCRYPT=1). "
             "Never prints the password."
         ),
     )
     parser.add_argument("--rerender-all", action="store_true", help="re-render every issue in site/sources from its markdown (digest-LABEL.md / weekly-LABEL.md) with the current render_html.py, then rebuild + deploy (use after a template change; implies --rebuild)")
     parser.add_argument("--lang", help="output language: en | zh-CN (default: $DIGEST_LANG, else CONFIG LANG, else en). With --demo also: all (English at /en/ + Chinese at /zh-CN/; the --demo default when no language is given)")
-    parser.add_argument("--demo", action="store_true", help="build the demo site from examples/ into --out (no deploy, no config/secrets needed; password from env DIGEST_DEMO_PASSWORD)")
+    parser.add_argument("--demo", action="store_true", help="build the demo site from examples/ into --out (no deploy, no config/secrets needed; public by default, or set env DIGEST_DEMO_PASSWORD for encrypted demo)")
     parser.add_argument("--out", default="dist", help="with --demo: output directory (default: dist)")
     parser.add_argument("--examples", default=None, help="with --demo: examples directory (default: <repo>/examples)")
     parser.add_argument("--issue", help="incremental publish of one issue: daily/YYYY-MM-DD or weekly/YYYY-MM-DD_MM-DD")
     parser.add_argument("--md", help="with --issue: markdown to render (render_html.py) before publishing")
-    parser.add_argument("--md-en", help="with --issue --md: English companion markdown for single-page bilingual rendering (auto-discovered as <stem>.en.md when LANG=zh-CN)")
+    parser.add_argument("--md-en", help="with --issue --md: English companion markdown for /en/ path rendering (auto-discovered as <stem>.en.md when LANG=zh-CN)")
     parser.add_argument("--remove", help="remove one issue (daily/LABEL or weekly/LABEL); backup to backfill/removed/")
-    parser.add_argument("--no-verify", action="store_true", help="with --issue/--remove: skip post-deploy decrypt check")
+    parser.add_argument("--no-verify", action="store_true", help="with --issue/--remove: skip post-deploy verification")
     parser.add_argument("--verbose", action="store_true", help="with --issue/--remove: stream full logs instead of a short summary")
     args = parser.parse_args(argv)
 
@@ -3022,8 +3581,9 @@ def main(argv: list[str] | None = None) -> int:
     set_lang(CLI_LANG)
 
     if args.init:
-        cfg = init_config_if_needed()
+        cfg = init_config_if_needed(encrypt=args.encrypt)
         print(f"SLUG={cfg['SLUG']}")
+        print(f"ENCRYPT={cfg['ENCRYPT']}")
         return 0
 
     if args.demo:
@@ -3049,6 +3609,9 @@ def main(argv: list[str] | None = None) -> int:
         args.rebuild = True
 
     if args.rotate_password:
+        cfg_cur = init_config_if_needed()
+        if not _parse_bool(cfg_cur.get("ENCRYPT")):
+            die("--rotate-password requires ENCRYPT=1 in site/CONFIG (or DIGEST_ENCRYPT=1)")
         rotate_password_and_salt()
         ENC_CACHE_PATH.unlink(missing_ok=True)  # full re-encrypt
         # Re-encrypt from sources (and save a new issue if one was given).
@@ -3057,13 +3620,16 @@ def main(argv: list[str] | None = None) -> int:
     elif args.deploy_only:
         cfg = load_config()
         issues = list_sources()
-        if not issues and not (PUBLIC / cfg["SLUG"] / "index.html").exists():
+        if not issues and not (_site_dir(PUBLIC, cfg["SLUG"]) / "index.html").exists():
             die("nothing to deploy; publish an issue first")
         # Never privacy-scan ciphertext (base64 can false-positive).
         scan_paths = iter_unencrypted_public() + iter_plain_files()
         if scan_paths:
             privacy_scan(scan_paths)
-        assert_public_is_encrypted(cfg)
+        if _parse_bool(cfg.get("ENCRYPT")):
+            assert_public_is_encrypted(cfg)
+        else:
+            assert_public_matches_plain(cfg)
     elif args.rebuild or (args.html is None and not args.deploy_only):
         if args.html:
             # rebuild plus a new issue if provided
@@ -3120,9 +3686,9 @@ def main(argv: list[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 # Incremental, quiet publish (--issue / --remove). Designed for routine runs:
 # the agent writes ONE markdown file, this renders that one issue, rebuilds
-# nav/index from site/sources (cheap, deterministic), re-encrypts only pages
-# whose plaintext changed (enc-cache.json), deploys (Wrangler uploads only
-# new hashes), checks HTTP + decrypt, and prints a few summary lines.
+# nav/index from site/sources (cheap, deterministic), writes/re-encrypts only
+# pages whose plaintext changed, deploys (Wrangler uploads only new hashes),
+# checks HTTP + verify, and prints a few summary lines.
 # Full logs go to logs/publish-*.log, never to stdout.
 # ---------------------------------------------------------------------------
 
@@ -3195,24 +3761,36 @@ def run_incremental(args) -> int:
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
             kind, label = _parse_issue_ref(ref)
             cfg = init_config_if_needed()
-            base = f"https://{cfg['DOMAIN']}/{cfg['SLUG']}"
-            issue_url = f"{base}/{kind}/{label}"
+            base = f"https://{cfg['DOMAIN']}{_url_prefix(cfg['SLUG'])}"
             items_note = ""
             if args.remove:
                 src = SOURCES / kind / f"{label}.html"
+                en_src = SOURCES / "en" / kind / f"{label}.html"
                 bdir = REMOVED_DIR / f"{kind}-{label}-{stamp}"
                 bdir.mkdir(parents=True, exist_ok=True)
                 moved = []
-                for p in (src, ROOT / "html" / f"{kind}-{label}.html"):
+                for p, backup_name in (
+                    (src, f"source-{src.name}"),
+                    (en_src, f"source-en-{en_src.name}"),
+                    (ROOT / "html" / f"{kind}-{label}.html", f"{kind}-{label}.html"),
+                    (ROOT / "html" / f"{kind}-{label}.en.html", f"{kind}-{label}.en.html"),
+                ):
                     if p.is_file():
-                        p.rename(bdir / p.name if p != src else bdir / f"source-{p.name}")
+                        p.rename(bdir / backup_name)
                         moved.append(p.name)
                 for sub in ("plain", "public"):
-                    p = SITE / sub / cfg["SLUG"] / kind / f"{label}.html"
-                    if p.is_file():
-                        if sub == "public":
-                            (bdir / f"encrypted-{p.name}").write_bytes(p.read_bytes())
-                        p.unlink()
+                    sub_dir = _site_dir(SITE / sub, cfg["SLUG"])
+                    for rel_p in (
+                        Path(kind) / f"{label}.html",
+                        Path("zh") / kind / f"{label}.html",
+                        Path("en") / kind / f"{label}.html",
+                    ):
+                        p = sub_dir / rel_p
+                        if p.is_file():
+                            if sub == "public":
+                                safe_name = rel_p.as_posix().replace("/", "-")
+                                (bdir / f"published-{safe_name}").write_bytes(p.read_bytes())
+                            p.unlink()
                 if not moved:
                     die(f"{kind}/{label} not found in site/sources")
                 print(f"moved {moved} to {bdir}")
@@ -3224,6 +3802,7 @@ def run_incremental(args) -> int:
                 cfg, issues = prepare(None, None, None)
             else:
                 html_path = ROOT / "html" / f"{kind}-{label}.html"
+                en_html_path: Path | None = None
                 if args.md:
                     md = Path(args.md)
                     if not md.is_absolute() and not md.is_file():
@@ -3241,26 +3820,47 @@ def run_incremental(args) -> int:
                     import render_html
 
                     try:
-                        digest = render_html.render_file(
-                            md.resolve(),
-                            html_path,
-                            LANG,
-                            year=issue_year,
-                            en_md_path=en_md.resolve() if en_md else None,
-                        )
+                        if en_md is not None and LANG == "zh-CN":
+                            digest = render_html.render_file(
+                                md.resolve(),
+                                html_path,
+                                LANG,
+                                year=issue_year,
+                            )
+                            en_html_path = ROOT / "html" / f"{kind}-{label}.en.html"
+                            render_html.render_file(
+                                en_md.resolve(),
+                                en_html_path,
+                                "en",
+                                year=issue_year,
+                            )
+                        else:
+                            digest = render_html.render_file(
+                                md.resolve(),
+                                html_path,
+                                LANG,
+                                year=issue_year,
+                                en_md_path=en_md.resolve() if en_md else None,
+                            )
                     except ValueError as e:
                         die(f"render_html failed: {e}")
                     items_note = f" ({len(digest.items)} items)"
                     if en_md is not None:
                         items_note += f" + English ({en_md.name})"
-                elif not html_path.is_file():
-                    die(f"no --md given and {html_path} does not exist")
+                else:
+                    if not html_path.is_file():
+                        die(f"no --md given and {html_path} does not exist")
+                    cand_en = ROOT / "html" / f"{kind}-{label}.en.html"
+                    if cand_en.is_file() and LANG == "zh-CN":
+                        en_html_path = cand_en
                 rf = SITE / "removed-paths.txt"
                 if rf.is_file():
                     keep = [x for x in rf.read_text(encoding="utf-8").split() if x != f"{kind}/{label}"]
                     rf.write_text("\n".join(keep) + ("\n" if keep else ""), encoding="utf-8")
-                cfg, issues = prepare(html_path, kind, label)
+                cfg, issues = prepare(html_path, kind, label, en_html_path=en_html_path)
                 summary.append(f"published: {kind}/{label}{items_note}")
+            has_lang_paths = bool(list_en_sources()) and LANG == "zh-CN"
+            issue_url = f"{base}/zh/{kind}/{label}" if has_lang_paths else f"{base}/{kind}/{label}"
             changed = list(CHANGED_PAGES)
             summary.append("changed pages: " + (", ".join(changed) if changed else "none"))
 
@@ -3291,7 +3891,8 @@ def run_incremental(args) -> int:
                 summary.append(f"index: {base}/  (HTTP {idx_st})")
                 if not args.no_verify:
                     vok, vmsg = _verify_decrypt(log)
-                    summary.append(f"decrypt check: {vmsg}")
+                    label_chk = "decrypt check" if _parse_bool(cfg.get("ENCRYPT")) else "verify check"
+                    summary.append(f"{label_chk}: {vmsg}")
                     ok = ok and vok
     except SystemExit as e:
         ok = False

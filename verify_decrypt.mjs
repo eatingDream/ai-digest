@@ -34,18 +34,21 @@ const PLAIN_ROOT = join(ROOT, "site/plain");
 const PUBLIC_ROOT = join(ROOT, "site/public");
 const CONFIG = join(ROOT, "site/CONFIG");
 
-function loadSlug() {
-  let slug = process.env.SITE_SLUG ? process.env.SITE_SLUG.trim() : "";
-  if (!slug) {
-    const text = readFileSync(CONFIG, "utf8");
-    const m = text.match(/^SLUG=(.+)$/m);
-    if (!m) throw new Error("SLUG missing from CONFIG");
-    slug = m[1].trim();
+function loadConfigFlags() {
+  const text = existsSync(CONFIG) ? readFileSync(CONFIG, "utf8") : "";
+  let slug = process.env.SITE_SLUG !== undefined ? process.env.SITE_SLUG.trim() : "";
+  if (process.env.SITE_SLUG === undefined) {
+    const m = text.match(/^SLUG=(.*)$/m);
+    slug = m ? m[1].trim() : "";
   }
-  if (!slug || /<[^>]*>|\{\{.*?\}\}|[<>]/.test(slug) || !/^[A-Za-z0-9._~-]+$/.test(slug)) {
+  if (slug && (/<[^>]*>|\{\{.*?\}\}|[<>]/.test(slug) || !/^[A-Za-z0-9._~-]+$/.test(slug))) {
     throw new Error(`invalid or unreplaced SLUG (${slug}); run python3 publish.py --init or edit site/CONFIG`);
   }
-  return slug;
+  const envEnc = process.env.DIGEST_ENCRYPT !== undefined ? process.env.DIGEST_ENCRYPT.trim() : "";
+  const mEnc = text.match(/^ENCRYPT=(.*)$/m);
+  const rawEnc = envEnc || (mEnc ? mEnc[1].trim() : "0");
+  const encrypted = /^(1|true|yes|on)$/i.test(rawEnc);
+  return { slug, encrypted };
 }
 
 function readPassword() {
@@ -182,56 +185,78 @@ async function fetchText(url) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const password = readPassword();
+  const { slug, encrypted } = loadConfigFlags();
+  const password = encrypted ? readPassword() : null;
   const keyCache = new Map();
-  const slug = loadSlug();
   const pairs = [];
 
-  const ROOT_LATEST_RELS = ["latest.html", "daily/latest.html", "weekly/latest.html"];
+  const ROOT_LATEST_RELS = [
+    "latest.html",
+    "daily/latest.html",
+    "weekly/latest.html",
+    "zh/latest.html",
+    "zh/daily/latest.html",
+    "zh/weekly/latest.html",
+    "en/latest.html",
+    "en/daily/latest.html",
+    "en/weekly/latest.html",
+  ];
+
+  const pubBase = slug ? `${PUBLIC_ROOT}/${slug}` : PUBLIC_ROOT;
+  const plainBase = slug ? `${PLAIN_ROOT}/${slug}` : PLAIN_ROOT;
 
   if (opts.local) {
-    const pub = `${PUBLIC_ROOT}/${slug}`;
-    const plain = `${PLAIN_ROOT}/${slug}`;
-    if (!existsSync(pub)) throw new Error(`encrypted directory not found: ${pub}`);
-    const files = walkHtmlSync(pub);
-    if (!files.length) throw new Error("no encrypted HTML under public/");
+    if (!existsSync(plainBase)) throw new Error(`plaintext directory not found: ${plainBase}`);
+    const files = walkHtmlSync(plainBase);
+    if (!files.length) throw new Error("no HTML under site/plain/");
     for (const f of files) {
-      const rel = f.slice(pub.length + 1);
+      const rel = f.slice(plainBase.length + 1);
+      const pubFile = `${pubBase}/${rel}`;
+      if (!existsSync(pubFile)) throw new Error(`published file missing: ${pubFile}`);
       pairs.push({
         name: `local ${rel}`,
-        enc: readFileSync(f, "utf8"),
-        plainPath: `${plain}/${rel}`,
+        enc: readFileSync(pubFile, "utf8"),
+        plainPath: f,
       });
     }
-    for (const rel of ROOT_LATEST_RELS) {
-      const f = `${PUBLIC_ROOT}/${rel}`;
-      if (existsSync(f)) {
-        pairs.push({
-          name: `local /${rel}`,
-          enc: readFileSync(f, "utf8"),
-          plainPath: `${PLAIN_ROOT}/${rel}`,
-        });
+    if (slug) {
+      for (const rel of ROOT_LATEST_RELS) {
+        const f = `${PUBLIC_ROOT}/${rel}`;
+        if (existsSync(f)) {
+          pairs.push({
+            name: `local /${rel}`,
+            enc: readFileSync(f, "utf8"),
+            plainPath: `${PLAIN_ROOT}/${rel}`,
+          });
+        }
       }
     }
   }
 
   if (opts.urlBase) {
-    const plain = `${PLAIN_ROOT}/${slug}`;
-    if (!existsSync(plain)) throw new Error(`plaintext directory not found: ${plain}`);
+    if (!existsSync(plainBase)) throw new Error(`plaintext directory not found: ${plainBase}`);
     const base = opts.urlBase.replace(/\/$/, "");
-    const files = walkHtmlSync(plain);
+    const files = walkHtmlSync(plainBase);
     for (const f of files) {
-      const rel = f.slice(plain.length + 1);
+      const rel = f.slice(plainBase.length + 1);
       // Extensionless, exactly as the site links them (no 308 hop).
-      const urlPath = rel === "index.html" ? `${slug}/` : `${slug}/${rel.replace(/\.html$/, "")}`;
+      const relUrl =
+        rel === "index.html"
+          ? ""
+          : rel.endsWith("/index.html")
+            ? rel.slice(0, -10)
+            : rel.replace(/\.html$/, "");
+      const urlPath = slug ? `${slug}/${relUrl}` : relUrl;
       const url = `${base}/${urlPath}`;
       pairs.push({ name: `GET ${url}`, url, plainPath: f });
     }
-    for (const rel of ROOT_LATEST_RELS) {
-      const f = `${PLAIN_ROOT}/${rel}`;
-      if (existsSync(f)) {
-        const url = `${base}/${rel.replace(/\.html$/, "")}`;
-        pairs.push({ name: `GET ${url}`, url, plainPath: f });
+    if (slug) {
+      for (const rel of ROOT_LATEST_RELS) {
+        const f = `${PLAIN_ROOT}/${rel}`;
+        if (existsSync(f)) {
+          const url = `${base}/${rel.replace(/\.html$/, "")}`;
+          pairs.push({ name: `GET ${url}`, url, plainPath: f });
+        }
       }
     }
   }
@@ -252,28 +277,33 @@ async function main() {
   let failed = 0;
   for (const pair of pairs) {
     try {
-      let enc = pair.enc;
+      let body = pair.enc;
       if (pair.url) {
         const r = await fetchText(pair.url);
-        enc = r.body;
+        body = r.body;
       }
-      if (!enc.includes('id="rm"') || !enc.includes('id="pw"')) {
-        throw new Error("body is missing the password prompt");
+      let actual = body;
+      if (encrypted) {
+        if (!body.includes('id="rm"') || !body.includes('id="pw"')) {
+          throw new Error("body is missing the password prompt");
+        }
+        actual = await decrypt(body, password, keyCache);
+      } else if (body.includes('id="rm"') && body.includes('id="pw"')) {
+        throw new Error("public page unexpectedly contains a password prompt");
       }
-      const dec = await decrypt(enc, password, keyCache);
       if (!pair.plainPath || !existsSync(pair.plainPath)) {
         throw new Error(`plaintext missing: ${pair.plainPath}`);
       }
       const expected = readFileSync(pair.plainPath, "utf8");
-      if (dec !== expected) {
-        const a = Buffer.from(dec);
+      if (actual !== expected) {
+        const a = Buffer.from(actual);
         const b = Buffer.from(expected);
         let pos = 0;
         const n = Math.min(a.length, b.length);
         while (pos < n && a[pos] === b[pos]) pos++;
         throw new Error(
-          `decrypted content does not match plaintext ` +
-            `(dec ${a.length} bytes, plain ${b.length} bytes, first diff at ${pos})`
+          `${encrypted ? "decrypted" : "published"} content does not match plaintext ` +
+            `(got ${a.length} bytes, plain ${b.length} bytes, first diff at ${pos})`
         );
       }
       console.log(`OK  ${pair.name}  (${expected.length} bytes, exact match)`);
@@ -286,7 +316,7 @@ async function main() {
     console.error(`${failed} page(s) failed`);
     process.exit(1);
   }
-  console.log(`all ${pairs.length} page(s) decrypted and matched plaintext`);
+  console.log(`all ${pairs.length} page(s) ${encrypted ? "decrypted and " : ""}matched plaintext`);
 }
 
 main().catch((e) => {
