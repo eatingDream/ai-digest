@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.5.1](https://github.com/eatingDream/ai-digest/compare/v0.5.0...v0.5.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **ui:** make header full-width Zhihu-style, stop TOC squeeze, reveal on scroll-up or 3s idle ([#24](https://github.com/eatingDream/ai-digest/issues/24)) ([d9dea03](https://github.com/eatingDream/ai-digest/commit/d9dea0380eadf09c4211ac28bf2a1deecf859d8c))
+
 ## [0.5.0](https://github.com/eatingDream/ai-digest/compare/v0.4.1...v0.5.0) (2026-11-25)
 
 
