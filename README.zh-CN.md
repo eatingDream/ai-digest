@@ -26,7 +26,7 @@
 1. **广覆盖召回与初筛（`fetch/`）** — 并行抓取约 155 个公开只读信源（`fetch/sources.toml`，零密钥），去重并用 `fetch/ledger.py` 记录已推（★）/ 看过未推（☆）历史，只有出现实质新进展才会复推；产出 `triage.md`、`triage-papers.md` 和 `candidates.jsonl`（可选按能力启用 X 只读检索 `fetch/x-recall.zh-CN.md`）。
 2. **内容优先的 LLM 精选（`prompts/<语言>/`）** — 与平台无关的日报/周报提示词（含轻量论文初筛）按 `filter-notes.zh-CN.md` 核验一手出处，写成七个固定版面（模型、论文、工具与项目、行业与产品、算力与基础设施、安全与政策、观点与长文）——只看内容分量，不看热度数字。
 3. **单文件 HTML 阅读器（`render_html.py`）** — 生成自包含 HTML，带完整标题侧栏目录、纯前端关键词与标签筛选、解密后 `#锚点` 自动定位、深浅色主题及中英双语支持（`DIGEST_LANG=en|zh-CN`、`--md-en` 单页双语切换，或 `LANG_ALT` 互链伴生站）。
-4. **加密静态发布（`publish.py`）** — 客户端逐页 AES-256-GCM 加密（PBKDF2-SHA256，60 万次迭代，gzip），在 `_redirects` 生成静态 `/<slug>/{daily,weekly,}/latest` 跳转，发布前隐私扫描，增量部署到 Cloudflare Pages，并用 `verify_decrypt.mjs` 逐页解密校验。
+4. **加密静态发布（`publish.py`）** — 客户端逐页 AES-256-GCM 加密（PBKDF2-SHA256，60 万次迭代，gzip），直接生成 `/<slug>/{daily,weekly,}/latest` 加密静态页（HTTP 200、URL 停留在 `latest`、`no-store`），发布前隐私扫描，增量部署到 Cloudflare Pages，并用 `verify_decrypt.mjs` 逐页解密校验。
 
 ## 快速开始
 
@@ -60,7 +60,7 @@ python3 fetch/fetch.py --daily                           # 周报用 --weekly
 
 # 3. 交给 agent 精选：在运行器里执行 prompts/zh-CN/daily.md（或 weekly.md；英文用 prompts/en/）→ digest-<P>.md
 
-# 4. 发布（zh-CN 站点自动发现同目录 <同名>.en.md，或显式传 --md-en；自动生成静态 latest 跳转）
+# 4. 发布（zh-CN 站点自动发现同目录 <同名>.en.md，或显式传 --md-en；自动生成静态 latest 页）
 python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 ```
 
@@ -86,7 +86,7 @@ python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 | `DIGEST_SITE_SALT_FILE` | — | PBKDF2 盐文件（自动生成） | `~/.config/ai-digest/site-salt` |
 | `DIGEST_LANG` | `LANG` | 日报与站点界面语言：`en` 或 `zh-CN`（命令行 `--lang` 优先） | `en` |
 | `DIGEST_LANG_ALT` | `LANG_ALT` | 可选的另一语言伴生站点路径/URL（如 `en:/en/`） | — |
-| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | 可选开启根路径 `/latest`、`/daily/latest`、`/weekly/latest` 静态 302 跳转（`1`/`true`/`yes`/`on`；`/<slug>/...latest` 始终自动生成） | `0`（关闭） |
+| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | 可选开启根路径 `/latest`、`/daily/latest`、`/weekly/latest` 加密静态页（HTTP 200、URL 停留在 `latest`；`1`/`true`/`yes`/`on`；`/<slug>/...latest` 始终自动生成） | `0`（关闭） |
 | `DIGEST_TZ` | — | 用来划分「自然日」的 IANA 时区 | `UTC` |
 | `DIGEST_ROOT` | — | `runs/`、`html/`、`site/`、`ledger.json`、`logs/`、`state/` 工作目录 | 仓库根目录 |
 | `LEDGER_PATH` | — | `ledger.json` 路径（首次 `ledger.py add` 自动创建） | `<DIGEST_ROOT>/ledger.json` |

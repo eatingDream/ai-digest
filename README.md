@@ -26,7 +26,7 @@ English | [简体中文](README.zh-CN.md)
 1. **Wide recall & triage (`fetch/`)** — pulls ~155 read-only open sources in parallel (`fetch/sources.toml`, no API keys), deduplicates, tracks pushed (★) / seen (☆) history in `fetch/ledger.py` so items repeat only on substantive new developments, and writes `triage.md`, `triage-papers.md`, and `candidates.jsonl` (plus optional capability-gated X/Twitter search via `fetch/x-recall.md`).
 2. **Content-first LLM curation (`prompts/<lang>/`)** — platform-agnostic daily/weekly prompts (with a lightweight papers prefilter) verify primary sources against `filter-notes.md` and write seven sections (`Models`, `Papers`, `Tools & Projects`, `Industry & Products`, `Compute & Infrastructure`, `Safety & Policy`, `Opinion & Essays`) — selected by substance, never popularity counts.
 3. **Single-file HTML reader (`render_html.py`)** — emits self-contained HTML with a full-title sidebar TOC, instant client-side keyword/tag filtering, `#fragment` deep links after decryption, light/dark themes, and bilingual support (`DIGEST_LANG=en|zh-CN`, `--md-en` single-page toggle, or `LANG_ALT` companion links).
-4. **Encrypted static hosting (`publish.py`)** — encrypts every page client-side (AES-256-GCM, PBKDF2-SHA256, 600k iterations, gzip), generates static `/<slug>/{daily,weekly,}/latest` redirects in `_redirects`, runs a pre-publish privacy scan, deploys incrementally to Cloudflare Pages, and decrypt-verifies each page via `verify_decrypt.mjs`.
+4. **Encrypted static hosting (`publish.py`)** — encrypts every page client-side (AES-256-GCM, PBKDF2-SHA256, 600k iterations, gzip), serves static encrypted `/<slug>/{daily,weekly,}/latest` pages directly (HTTP 200, URL stays on `latest`, `no-store`), runs a pre-publish privacy scan, deploys incrementally to Cloudflare Pages, and decrypt-verifies each page via `verify_decrypt.mjs`.
 
 ## Quick start
 
@@ -60,7 +60,7 @@ python3 fetch/fetch.py --daily                           # weekly: --weekly
 
 # 3. Curate with an agent: run prompts/en/daily.md (or weekly.md; prompts/zh-CN/ for Chinese) → digest-<P>.md
 
-# 4. Publish (auto-discovers sibling <stem>.en.md on zh-CN sites or pass --md-en; writes static latest redirects)
+# 4. Publish (auto-discovers sibling <stem>.en.md on zh-CN sites or pass --md-en; builds static latest pages)
 python3 publish.py --issue daily/2026-01-15 --md digest-2026-01-15.md
 ```
 
@@ -86,7 +86,7 @@ Environment variables take precedence over `site/CONFIG`.
 | `DIGEST_SITE_SALT_FILE` | — | PBKDF2 salt file (auto-generated) | `~/.config/ai-digest/site-salt` |
 | `DIGEST_LANG` | `LANG` | Digest & site UI language: `en` or `zh-CN` (`--lang` overrides) | `en` |
 | `DIGEST_LANG_ALT` | `LANG_ALT` | Optional companion site URL/path in the other language (e.g. `zh-CN:/zh-CN/`) | — |
-| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | Opt-in root `/latest`, `/daily/latest`, `/weekly/latest` 302 redirects (`1`/`true`/`yes`/`on`; slug-scoped `/<slug>/...latest` aliases are always generated) | `0` (off) |
+| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | Opt-in root `/latest`, `/daily/latest`, `/weekly/latest` encrypted static pages (HTTP 200, URL stays on `latest`; `1`/`true`/`yes`/`on`; slug-scoped `/<slug>/...latest` pages are always generated) | `0` (off) |
 | `DIGEST_TZ` | — | IANA time zone defining a natural calendar day | `UTC` |
 | `DIGEST_ROOT` | — | Working directory for `runs/`, `html/`, `site/`, `ledger.json`, `logs/`, `state/` | repo root |
 | `LEDGER_PATH` | — | Explicit path to `ledger.json` (auto-created on first `ledger.py add`) | `<DIGEST_ROOT>/ledger.json` |

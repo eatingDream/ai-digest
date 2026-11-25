@@ -300,9 +300,28 @@ def minify_css(html: str) -> str:
     return re.sub(r"(<style[^>]*>)(.*?)</style>", _min, html, flags=re.S | re.I)
 
 
-def issue_prefetch_hints(issue: "Issue", issues: list["Issue"]) -> list[str]:
+def issue_prefetch_hints(
+    issue: "Issue",
+    issues: list["Issue"],
+    *,
+    slug: str | None = None,
+    abs_links: bool = False,
+) -> list[str]:
     same = sorted([i for i in issues if i.kind == issue.kind], key=lambda x: (x.start, x.end, x.label))
     idx = next(n for n, i in enumerate(same) if i.label == issue.label)
+    if abs_links:
+        prefix = f"/{slug or load_config()['SLUG']}"
+        hints = [f"{prefix}/"]
+        if idx + 1 < len(same):
+            hints.append(f"{prefix}/{issue.kind}/{same[idx + 1].label}")
+        if idx > 0:
+            hints.append(f"{prefix}/{issue.kind}/{same[idx - 1].label}")
+        if issue.kind == "daily":
+            ws = sorted([w for w in issues if w.kind == "weekly" and w.start <= issue.start <= w.end],
+                        key=lambda w: (w.end, w.start), reverse=True)
+            if ws:
+                hints.append(f"{prefix}/weekly/{ws[0].label}")
+        return hints
     hints = ["../"]
     if idx + 1 < len(same):
         hints.append(same[idx + 1].label)
@@ -316,8 +335,15 @@ def issue_prefetch_hints(issue: "Issue", issues: list["Issue"]) -> list[str]:
     return hints
 
 
-def inject_perf_and_lock(html: str, issue: "Issue", issues: list["Issue"], slug: str | None = None) -> str:
-    head = perf_head_html(issue_prefetch_hints(issue, issues), slug=slug)
+def inject_perf_and_lock(
+    html: str,
+    issue: "Issue",
+    issues: list["Issue"],
+    slug: str | None = None,
+    *,
+    abs_links: bool = False,
+) -> str:
+    head = perf_head_html(issue_prefetch_hints(issue, issues, slug=slug, abs_links=abs_links), slug=slug)
     html = re.sub(r"(<meta charset=[^>]*>\s*)", lambda m: m.group(1) + head, html, count=1, flags=re.I)
     html = re.sub(r"</body>", lambda m: LOCK_JS_BLOCK + "\n</body>", html, count=1, flags=re.I)
     return html
@@ -686,6 +712,9 @@ def nav_html(
     which: str,
     *,
     lang: str | None = None,
+    slug: str | None = None,
+    abs_links: bool = False,
+    lang_rel: str | None = None,
 ) -> str:
     lg = i18n.normalize_lang(lang) if lang is not None else LANG
 
@@ -707,10 +736,15 @@ def nav_html(
     def gone(text: str) -> str:
         return f'<span class="gone">{text}</span>'
 
-    parts = [link(slug_index_rel, tr("nav_index"))]
+    prefix = f"/{slug or load_config()['SLUG']}" if abs_links else ""
+    idx_href = f"{prefix}/" if abs_links else slug_index_rel
+    prev_href = f"{prefix}/{issue.kind}/{prev.label}" if (abs_links and prev) else (prev.label if prev else "")
+    nxt_href = f"{prefix}/{issue.kind}/{nxt.label}" if (abs_links and nxt) else (nxt.label if nxt else "")
+
+    parts = [link(idx_href, tr("nav_index"))]
     parts.append('<span class="sep" aria-hidden="true"></span>')
-    parts.append(link(prev.label, tr("nav_prev")) if prev else gone(tr("nav_prev")))
-    parts.append(link(nxt.label, tr("nav_next")) if nxt else gone(tr("nav_next")))
+    parts.append(link(prev_href, tr("nav_prev")) if prev else gone(tr("nav_prev")))
+    parts.append(link(nxt_href, tr("nav_next")) if nxt else gone(tr("nav_next")))
 
     if issue.kind == "daily":
         weeklies = [
@@ -720,8 +754,9 @@ def nav_html(
         ]
         weeklies.sort(key=lambda w: (w.end, w.start), reverse=True)
         if weeklies:
+            wk_href = f"{prefix}/weekly/{weeklies[0].label}" if abs_links else f"../weekly/{weeklies[0].label}"
             parts.append(
-                link(f"../weekly/{weeklies[0].label}", tr("nav_week"), "week-link")
+                link(wk_href, tr("nav_week"), "week-link")
             )
 
     if which == "top":
@@ -729,7 +764,8 @@ def nav_html(
             w.kind == "weekly" and w.start <= issue.start <= w.end for w in issues
         ):
             parts.append('<span class="week-link"></span>')
-        parts.append(lang_switch_link(f"{issue.kind}/{issue.label}"))
+        switch_rel = lang_rel if lang_rel is not None else f"{issue.kind}/{issue.label}"
+        parts.append(lang_switch_link(switch_rel))
         parts.append(f'<button type="button" class="lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>')
     return (
         f'<nav class="issue-nav {which}" aria-label="{_esc(tr("nav_aria"))}">'
@@ -744,15 +780,18 @@ def _inject_nav_into_fragment(
     issues: list[Issue],
     *,
     lang: str | None = None,
+    slug: str | None = None,
+    abs_links: bool = False,
+    lang_rel: str | None = None,
 ) -> str:
     top = (
         f"{NAV_TOP_START}\n"
-        f"{nav_html(issue, issues, '../', 'top', lang=lang)}\n"
+        f"{nav_html(issue, issues, '../', 'top', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel)}\n"
         f"{NAV_TOP_END}"
     )
     bot = (
         f"{NAV_BOT_START}\n"
-        f"{nav_html(issue, issues, '../', 'bottom', lang=lang)}\n"
+        f"{nav_html(issue, issues, '../', 'bottom', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel)}\n"
         f"{NAV_BOT_END}"
     )
     if "</header>" not in fragment.lower():
@@ -769,7 +808,15 @@ def _inject_nav_into_fragment(
     return fragment
 
 
-def inject_nav(html: str, issue: Issue, issues: list[Issue]) -> str:
+def inject_nav(
+    html: str,
+    issue: Issue,
+    issues: list[Issue],
+    *,
+    slug: str | None = None,
+    abs_links: bool = False,
+    lang_rel: str | None = None,
+) -> str:
     html = strip_marked(html, NAV_TOP_START, NAV_TOP_END)
     html = strip_marked(html, NAV_BOT_START, NAV_BOT_END)
     zh_m = _LANG_ZH_RE.search(html)
@@ -778,10 +825,14 @@ def inject_nav(html: str, issue: Issue, issues: list[Issue]) -> str:
         first_m, second_m = (zh_m, en_m) if zh_m.start() < en_m.start() else (en_m, zh_m)
         first_lang = "zh-CN" if first_m is zh_m else "en"
         second_lang = "en" if first_m is zh_m else "zh-CN"
-        part1 = _inject_nav_into_fragment(html[: second_m.start()], issue, issues, lang=first_lang)
-        part2 = _inject_nav_into_fragment(html[second_m.start():], issue, issues, lang=second_lang)
+        part1 = _inject_nav_into_fragment(
+            html[: second_m.start()], issue, issues, lang=first_lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel
+        )
+        part2 = _inject_nav_into_fragment(
+            html[second_m.start():], issue, issues, lang=second_lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel
+        )
         return part1 + part2
-    return _inject_nav_into_fragment(html, issue, issues)
+    return _inject_nav_into_fragment(html, issue, issues, slug=slug, abs_links=abs_links, lang_rel=lang_rel)
 
 
 def list_sources() -> list[Issue]:
@@ -830,7 +881,7 @@ _ROOT_LATEST_HEADERS = (
 
 
 def _slug_cache_headers(slug: str) -> str:
-    """Per-slug Cache-Control rules; latest redirect aliases detach wildcard caching."""
+    """Per-slug Cache-Control rules; static latest pages detach wildcard caching."""
     return (
         f"/{slug}/\n"
         "  Cache-Control: public, max-age=60, stale-while-revalidate=604800\n"
@@ -857,6 +908,9 @@ def _slug_cache_headers(slug: str) -> str:
     )
 
 
+_ROOT_LATEST_RELS = ("latest.html", "daily/latest.html", "weekly/latest.html")
+
+
 def _latest_issues(issues: Iterable[Issue]) -> tuple[Issue | None, Issue | None, Issue | None]:
     """Return (latest_daily, latest_weekly, latest_any) ordered by Issue.sort_key."""
     dailies = [i for i in issues if i.kind == "daily"]
@@ -867,41 +921,42 @@ def _latest_issues(issues: Iterable[Issue]) -> tuple[Issue | None, Issue | None,
     return latest_daily, latest_weekly, latest_any
 
 
-def _latest_redirect_rules(
+def _latest_alias_specs(
     slug: str,
     issues: Iterable[Issue],
     *,
     include_root: bool = False,
-) -> list[str]:
-    """Build pure-static Cloudflare Pages 302 redirect lines for latest issues."""
+) -> list[tuple[str, Issue, str, bool]]:
+    """Return static encrypted latest alias pages: (rel_path, issue, lang_rel, is_root)."""
     latest_daily, latest_weekly, latest_any = _latest_issues(issues)
-    rules: list[str] = []
+    specs: list[tuple[str, Issue, str, bool]] = []
     if latest_daily:
-        target = f"/{slug}/daily/{latest_daily.label}"
-        rules.append(f"/{slug}/daily/latest {target} 302")
-        rules.append(f"/{slug}/daily/latest/ {target} 302")
+        specs.append((f"{slug}/daily/latest.html", latest_daily, "daily/latest", False))
     if latest_weekly:
-        target = f"/{slug}/weekly/{latest_weekly.label}"
-        rules.append(f"/{slug}/weekly/latest {target} 302")
-        rules.append(f"/{slug}/weekly/latest/ {target} 302")
+        specs.append((f"{slug}/weekly/latest.html", latest_weekly, "weekly/latest", False))
     if latest_any:
-        target = f"/{slug}/{latest_any.kind}/{latest_any.label}"
-        rules.append(f"/{slug}/latest {target} 302")
-        rules.append(f"/{slug}/latest/ {target} 302")
+        specs.append((f"{slug}/latest.html", latest_any, "latest", False))
     if include_root:
         if latest_daily:
-            target = f"/{slug}/daily/{latest_daily.label}"
-            rules.append(f"/daily/latest {target} 302")
-            rules.append(f"/daily/latest/ {target} 302")
+            specs.append(("daily/latest.html", latest_daily, "daily/latest", True))
         if latest_weekly:
-            target = f"/{slug}/weekly/{latest_weekly.label}"
-            rules.append(f"/weekly/latest {target} 302")
-            rules.append(f"/weekly/latest/ {target} 302")
+            specs.append(("weekly/latest.html", latest_weekly, "weekly/latest", True))
         if latest_any:
-            target = f"/{slug}/{latest_any.kind}/{latest_any.label}"
-            rules.append(f"/latest {target} 302")
-            rules.append(f"/latest/ {target} 302")
-    return rules
+            specs.append(("latest.html", latest_any, "latest", True))
+    return specs
+
+
+def _active_latest_slug_paths(issues: Iterable[Issue]) -> set[str]:
+    """Return slug-relative extensionless paths served as static latest pages."""
+    latest_daily, latest_weekly, latest_any = _latest_issues(issues)
+    active: set[str] = set()
+    if latest_daily:
+        active.add("daily/latest")
+    if latest_weekly:
+        active.add("weekly/latest")
+    if latest_any:
+        active.add("latest")
+    return active
 
 
 def write_static_root(
@@ -929,7 +984,7 @@ def write_static_root(
         issues = list_sources() if SOURCES.is_dir() else []
     # HTML only changes when an issue is (re)published; short max-age +
     # long stale-while-revalidate makes back/forward and prefetched clicks
-    # instant while a publish shows up within minutes. Latest redirect paths
+    # instant while a publish shows up within minutes. Static latest pages
     # come after daily/* and weekly/* and detach inherited Cache-Control so
     # they are never cached stale.
     headers_text = SECURITY_HEADERS + _slug_cache_headers(slug)
@@ -949,8 +1004,10 @@ def write_static_root(
         encoding="utf-8",
     )
     # Intentionally no index.html at the site root.
-    # Static 302 redirects: latest issue aliases first, then removed issues
-    # (sending old URLs to the index to override stale caches), deduplicated by source.
+    # Latest aliases are served directly as static encrypted HTML pages (HTTP 200,
+    # keeping the browser URL on /.../latest); _redirects is only used for removed
+    # issues (sending old URLs to the index to override stale caches).
+    active_latest = _active_latest_slug_paths(issues)
     rules: list[str] = []
     seen_sources: set[str] = set()
 
@@ -960,15 +1017,17 @@ def write_static_root(
             seen_sources.add(src)
             rules.append(rule)
 
-    for r in _latest_redirect_rules(slug, issues, include_root=bool(root_latest)):
-        _add_rule(r)
     removed = SITE / "removed-paths.txt"
     if removed.is_file():
         for line in removed.read_text(encoding="utf-8").split():
             line = line.strip().strip("/")
-            if line:
-                _add_rule(f"/{slug}/{line} /{slug}/ 302")
-                _add_rule(f"/{slug}/{line}.html /{slug}/ 302")
+            if not line:
+                continue
+            norm = line[:-5] if line.endswith(".html") else line
+            if norm in active_latest:
+                continue
+            _add_rule(f"/{slug}/{norm} /{slug}/ 302")
+            _add_rule(f"/{slug}/{norm}.html /{slug}/ 302")
     rp = PUBLIC / "_redirects"
     if rules:
         rp.write_text("\n".join(rules) + "\n", encoding="utf-8")
@@ -1632,6 +1691,38 @@ def _clear_files(root: Path) -> None:
             p.unlink()
 
 
+def _clear_root_latest(base: Path) -> None:
+    """Remove any generated root-level latest alias files (and empty daily/weekly dirs)."""
+    for rel in _ROOT_LATEST_RELS:
+        p = base / rel
+        if p.is_file():
+            p.unlink()
+    for sub in ("daily", "weekly"):
+        d = base / sub
+        if d.is_dir():
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+
+def _render_issue_page(
+    issue: Issue,
+    issues: list[Issue],
+    *,
+    slug: str,
+    alias_rel: str | None = None,
+) -> str:
+    abs_links = alias_rel is not None
+    html = issue.source.read_text(encoding="utf-8")
+    html = strip_injections(html)
+    html = ensure_noindex(html)
+    html = ensure_nav_css(html)
+    html = inject_nav(html, issue, issues, slug=slug, abs_links=abs_links, lang_rel=alias_rel)
+    html = inject_perf_and_lock(html, issue, issues, slug=slug, abs_links=abs_links)
+    return minify_css(html)
+
+
 def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
     """Build plaintext (nav already injected) under site/plain/.
 
@@ -1639,30 +1730,35 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
     Root files (robots.txt, 404, _headers, _redirects) are written unencrypted to public/.
     """
     slug = cfg["SLUG"]
+    root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
     issues = list_sources()
     write_static_root(
         slug=slug,
         issues=issues,
-        root_latest=_parse_bool(cfg.get("ROOT_LATEST")),
+        root_latest=root_latest,
     )
     plain_dir = PLAIN / slug
     _clear_files(plain_dir)
+    _clear_root_latest(PLAIN)
     # public/<slug> is NOT cleared: unchanged encrypted pages are reused
     # (see encrypt_all_pages cache); stale ones are pruned after encryption.
     (plain_dir / "daily").mkdir(parents=True, exist_ok=True)
     (plain_dir / "weekly").mkdir(parents=True, exist_ok=True)
 
     for issue in issues:
-        html = issue.source.read_text(encoding="utf-8")
-        html = strip_injections(html)
-        html = ensure_noindex(html)
-        html = ensure_nav_css(html)
-        html = inject_nav(html, issue, issues)
-        html = inject_perf_and_lock(html, issue, issues, slug=slug)
-        html = minify_css(html)
+        html = _render_issue_page(issue, issues, slug=slug)
         dest = plain_dir / issue.kind / f"{issue.label}.html"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(html, encoding="utf-8")
+
+    # Static latest alias pages keep the URL on /.../latest (HTTP 200) instead of
+    # 302-redirecting to a dated issue URL, using root-absolute /{slug}/... links.
+    for rel_path, issue, lang_rel, _is_root in _latest_alias_specs(
+        slug, issues, include_root=root_latest
+    ):
+        dest = PLAIN / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_render_issue_page(issue, issues, slug=slug, alias_rel=lang_rel), encoding="utf-8")
 
     index_path = plain_dir / "index.html"
     index_path.write_text(minify_css(index_html(cfg, issues)), encoding="utf-8")
@@ -2180,9 +2276,9 @@ def localize_template(tmpl: str, lang: str | None = None, extras: dict[str, str]
     return re.sub(r"\{\{(js:)?(\w+)\}\}", sub, tmpl)
 
 
-def shell_extras(rel: str = "") -> dict[str, str]:
+def shell_extras(rel: str = "", *, allow_lang_switch: bool = True) -> dict[str, str]:
     """Extra HTML for the password shell of the page at `rel` (e.g. daily/2026-01-15.html)."""
-    extras = {"lang_switch": lang_switch_link(rel, "lang-alt")}
+    extras = {"lang_switch": lang_switch_link(rel, "lang-alt") if allow_lang_switch else ""}
     if _PASSWORD_OVERRIDE is not None:  # demo builds only: the demo password is public by design
         extras["demo_hint"] = (
             '<p class="demo-hint">'
@@ -2192,7 +2288,15 @@ def shell_extras(rel: str = "") -> dict[str, str]:
     return extras
 
 
-def wrap_encrypted(plaintext: str, key: bytes, salt: bytes, tmpl: str, rel: str = "") -> str:
+def wrap_encrypted(
+    plaintext: str,
+    key: bytes,
+    salt: bytes,
+    tmpl: str,
+    rel: str = "",
+    *,
+    allow_lang_switch: bool = True,
+) -> str:
     nonce = os.urandom(NONCE_LEN)
     # v2: gzip before encrypting (ciphertext is incompressible, so the CDN's
     # brotli cannot help); the page inflates with DecompressionStream.
@@ -2208,7 +2312,7 @@ def wrap_encrypted(plaintext: str, key: bytes, salt: bytes, tmpl: str, rel: str 
     }
     if "__ENCRYPT_CFG_JSON__" not in tmpl:
         die("password template is missing the __ENCRYPT_CFG_JSON__ placeholder")
-    tmpl = localize_template(tmpl, extras=shell_extras(rel))
+    tmpl = localize_template(tmpl, extras=shell_extras(rel, allow_lang_switch=allow_lang_switch))
     return tmpl.replace(
         "__ENCRYPT_CFG_JSON__",
         json.dumps(cfg, separators=(",", ":")),
@@ -2233,8 +2337,17 @@ def _distinctive_snippets(plain: str, tmpl: str) -> list[str]:
     return out[:30]
 
 
-def _assert_no_plaintext_leak(plain: str, wrapped: str, rel: Path, tmpl: str) -> None:
-    tmpl = localize_template(tmpl, extras=shell_extras(rel.as_posix()))  # the shell's own (localized) words are not a leak
+def _assert_no_plaintext_leak(
+    plain: str,
+    wrapped: str,
+    rel: Path,
+    tmpl: str,
+    *,
+    allow_lang_switch: bool = True,
+) -> None:
+    tmpl = localize_template(
+        tmpl, extras=shell_extras(rel.as_posix(), allow_lang_switch=allow_lang_switch)
+    )  # the shell's own (localized) words are not a leak
     for snip in _distinctive_snippets(plain, tmpl):
         if snip in wrapped:
             die(f"plaintext leak in encrypted {rel}: {snip!r}")
@@ -2250,7 +2363,7 @@ def _assert_no_plaintext_leak(plain: str, wrapped: str, rel: Path, tmpl: str) ->
 
 
 def encrypt_all_pages(cfg: dict[str, str]) -> None:
-    """Encrypt every HTML page under site/plain/<slug>/ into public/<slug>/."""
+    """Encrypt every HTML page under site/plain/<slug>/ (and opt-in root latest aliases) into public/."""
     if not TEMPLATE_PATH.is_file():
         die(f"password template not found: {TEMPLATE_PATH}")
     tmpl = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -2280,26 +2393,41 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
     new_cache: dict[str, str] = {}
     n = skipped = 0
     CHANGED_PAGES.clear()
-    for src in html_files:
-        rel = src.relative_to(src_root)
+
+    def _encrypt_one(
+        src: Path,
+        dest: Path,
+        rel: Path,
+        cache_key: str,
+        change_name: str,
+        *,
+        allow_lang_switch: bool = True,
+    ) -> None:
+        nonlocal n, skipped
         plain = src.read_text(encoding="utf-8")
-        alt_fp = hashlib.sha256((lang_switch_href(rel.as_posix()) or "").encode()).hexdigest()[:8]
+        alt_href = lang_switch_href(rel.as_posix()) if allow_lang_switch else ""
+        alt_fp = hashlib.sha256((alt_href or "").encode()).hexdigest()[:8]
         fp = f"{hashlib.sha256(plain.encode('utf-8')).hexdigest()}:{salt_fp}:{key_fp}:{tmpl_fp}:{alt_fp}:{LANG}"
-        dest = dst_root / rel
-        key_rel = rel.as_posix()
-        if cache.get(key_rel) == fp and dest.is_file():
+        if cache.get(cache_key) == fp and dest.is_file():
             body = dest.read_text(encoding="utf-8")
             if PROMPT_MARK in body and '"ct":' in body:
-                new_cache[key_rel] = fp
+                new_cache[cache_key] = fp
                 skipped += 1
-                continue
-        wrapped = wrap_encrypted(plain, key, salt, tmpl, key_rel)
-        _assert_no_plaintext_leak(plain, wrapped, rel, tmpl)
+                return
+        wrapped = wrap_encrypted(
+            plain, key, salt, tmpl, rel.as_posix(), allow_lang_switch=allow_lang_switch
+        )
+        _assert_no_plaintext_leak(plain, wrapped, rel, tmpl, allow_lang_switch=allow_lang_switch)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(wrapped, encoding="utf-8")
-        new_cache[key_rel] = fp
-        CHANGED_PAGES.append(key_rel)
+        new_cache[cache_key] = fp
+        CHANGED_PAGES.append(change_name)
         n += 1
+
+    for src in html_files:
+        rel = src.relative_to(src_root)
+        key_rel = rel.as_posix()
+        _encrypt_one(src, dst_root / rel, rel, key_rel, key_rel, allow_lang_switch=True)
     # Prune encrypted pages whose plaintext no longer exists (removed issues).
     keep = {s.relative_to(src_root).as_posix() for s in html_files}
     for pub in sorted(dst_root.rglob("*.html")):
@@ -2307,6 +2435,30 @@ def encrypt_all_pages(cfg: dict[str, str]) -> None:
         if r not in keep:
             pub.unlink()
             CHANGED_PAGES.append(f"-{r}")
+    # Opt-in root latest aliases (ROOT_LATEST=1): omit unencrypted lang_switch from
+    # the root password shell so companion slugs stay hidden before unlock.
+    for rel_str in _ROOT_LATEST_RELS:
+        src = PLAIN / rel_str
+        dest = PUBLIC / rel_str
+        if src.is_file():
+            _encrypt_one(
+                src,
+                dest,
+                Path(rel_str),
+                f"__root__/{rel_str}",
+                f"/{rel_str}",
+                allow_lang_switch=False,
+            )
+        elif dest.is_file():
+            dest.unlink()
+            CHANGED_PAGES.append(f"-/{rel_str}")
+    for sub in ("daily", "weekly"):
+        d = PUBLIC / sub
+        if d.is_dir():
+            try:
+                d.rmdir()
+            except OSError:
+                pass
     _save_enc_cache(new_cache)
     print(
         f"encrypted {n} HTML page(s), reused {skipped} unchanged, with AES-256-GCM / "
@@ -2334,25 +2486,38 @@ def _save_enc_cache(cache: dict[str, str]) -> None:
 
 
 def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
-    """Refuse to deploy if issue/index HTML under the slug is still plaintext."""
+    """Refuse to deploy if issue/index/latest HTML is still plaintext."""
     slug_dir = PUBLIC / cfg["SLUG"]
     pages = sorted(slug_dir.rglob("*.html")) if slug_dir.exists() else []
     if not pages:
         die("no published HTML under public/<slug>; run a rebuild first")
     tmpl = TEMPLATE_PATH.read_text(encoding="utf-8") if TEMPLATE_PATH.is_file() else ""
-    for path in pages:
+    checked = 0
+
+    def _check_page(path: Path, rel: Path, plain_path: Path, *, allow_lang_switch: bool) -> None:
+        nonlocal checked
         text = path.read_text(encoding="utf-8")
         if PROMPT_MARK not in text or _t("pw_title") not in text:
             die(f"{path.relative_to(PUBLIC)} does not look encrypted; run --rebuild")
         if "__ENCRYPT_CFG_JSON__" in text:
             die(f"{path.relative_to(PUBLIC)} has an unreplaced placeholder")
-        # If we still have plaintext copies, confirm they did not leak.
-        rel = path.relative_to(slug_dir)
-        plain_path = (PLAIN / cfg["SLUG"] / rel)
         if plain_path.is_file():
             _assert_no_plaintext_leak(
-                plain_path.read_text(encoding="utf-8"), text, rel, tmpl
+                plain_path.read_text(encoding="utf-8"),
+                text,
+                rel,
+                tmpl,
+                allow_lang_switch=allow_lang_switch,
             )
+        checked += 1
+
+    for path in pages:
+        rel = path.relative_to(slug_dir)
+        _check_page(path, rel, PLAIN / cfg["SLUG"] / rel, allow_lang_switch=True)
+    for rel_str in _ROOT_LATEST_RELS:
+        path = PUBLIC / rel_str
+        if path.is_file():
+            _check_page(path, Path(rel_str), PLAIN / rel_str, allow_lang_switch=False)
     # Root files must remain unencrypted and must not be prompt pages.
     for name in ("robots.txt", "_headers", "404.html"):
         path = PUBLIC / name
@@ -2366,7 +2531,7 @@ def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
         body = redirects_path.read_text(encoding="utf-8")
         if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
             die("_redirects must stay unencrypted")
-    print(f"encryption check: {len(pages)} page(s) look encrypted", file=sys.stderr)
+    print(f"encryption check: {checked} page(s) look encrypted", file=sys.stderr)
 
 
 def print_urls(cfg: dict[str, str], issues: list[Issue]) -> None:
@@ -2530,7 +2695,6 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
 
         slugs = {lg: (lg if multi else (saved_slug or "demo")) for lg in langs}
         total_issues = total_pages = 0
-        demo_latest_rules: list[str] = []
         for lg in langs:
             CLI_LANG = lg  # beats $DIGEST_LANG inside load_config()
             set_lang(lg)
@@ -2561,16 +2725,15 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                 save_source(h, kind, label)
             cfg = load_config()
             issues = rebuild_all(cfg)
-            demo_latest_rules.extend(_latest_redirect_rules(slugs[lg], issues))
             privacy_scan(iter_plain_files() + iter_unencrypted_public())
             encrypt_all_pages(cfg)
             assert_public_is_encrypted(cfg)
             total_pages += _verify_demo_pages(PUBLIC / slugs[lg], PLAIN / slugs[lg], key)
             total_issues += len(issues)
         entry = slugs[langs[0]]
-        # Pages: send the site root to the (first language's) index plus per-language latest aliases; the demo has no Worker.
-        demo_redirects = [f"/ /{entry}/ 302", *demo_latest_rules]
-        (PUBLIC / "_redirects").write_text("\n".join(demo_redirects) + "\n", encoding="utf-8")
+        # Pages: send the site root to the (first language's) index; per-language latest aliases
+        # are static encrypted HTML pages served directly at HTTP 200 (URL stays on latest).
+        (PUBLIC / "_redirects").write_text(f"/ /{entry}/ 302\n", encoding="utf-8")
         if multi:  # one _headers with cache rules for every language prefix
             rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
             (PUBLIC / "_headers").write_text(SECURITY_HEADERS + rules, encoding="utf-8")
