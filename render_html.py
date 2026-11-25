@@ -2813,13 +2813,13 @@ def _render_pane_body(
     if issue_tags_list:
         chips = [
             f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{html.escape(i18n.t(lang, "filter_all"))}</button>'
-        ] + [
-            f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">'
-            f'{html.escape(tg)}'
-            f'{f"<span class=\"ft-cnt num\">{tag_counts[tg]}</span>" if tag_counts[tg] > 1 else ""}'
-            "</button>"
-            for tg in issue_tags_list
         ]
+        for tg in issue_tags_list:
+            cnt_html = f'<span class="ft-cnt num">{tag_counts[tg]}</span>' if tag_counts[tg] > 1 else ""
+            chips.append(
+                f'<button type="button" class="filter-tag" data-tag="{html.escape(tg, quote=True)}" aria-pressed="false">'
+                f"{html.escape(tg)}{cnt_html}</button>"
+            )
         tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
     filter_id = f"{id_prefix}digestFilterBar"
     filter_drawer_html = (

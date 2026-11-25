@@ -1521,13 +1521,13 @@ def index_html(
     if top_tags:
         chips = [
             f'<button type="button" class="filter-tag" data-tag="" aria-pressed="true">{_esc(tr("filter_all"))}</button>'
-        ] + [
-            f'<button type="button" class="filter-tag" data-tag="{_esc(tg)}" aria-pressed="false">'
-            f'{_esc(tg)}'
-            f'{f"<span class=\"ft-cnt num\">{tag_counts[tg]}</span>" if tag_counts[tg] > 1 else ""}'
-            "</button>"
-            for tg in top_tags
         ]
+        for tg in top_tags:
+            cnt_html = f'<span class="ft-cnt num">{tag_counts[tg]}</span>' if tag_counts[tg] > 1 else ""
+            chips.append(
+                f'<button type="button" class="filter-tag" data-tag="{_esc(tg)}" aria-pressed="false">'
+                f"{_esc(tg)}{cnt_html}</button>"
+            )
         tag_chips = '<div class="filter-tags" role="group">' + "".join(chips) + "</div>"
     latest_daily, latest_weekly, _ = _latest_issues(issues)
     quick_bits: list[str] = []
