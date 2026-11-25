@@ -18,15 +18,31 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+import secrets
+from urllib.parse import quote as _url_quote, urlsplit as _urlsplit
+
 import i18n
 from version import __version__
+
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="8" fill="#b85432"/>'
+    '<path d="M16 6.5 9.2 25h3.5l1.4-4.1h3.8L19.3 25h3.5L16 6.5Zm-1.1 11.4 1.1-3.6 1.1 3.6h-2.2Z" fill="#faf8f4"/>'
+    '<circle cx="24.2" cy="8.2" r="2.3" fill="#f3c6a5"/>'
+    "</svg>"
+)
+FAVICON_DATA_URI = "data:image/svg+xml," + _url_quote(FAVICON_SVG, safe="")
 
 try:
     import markdown as mdlib
 
     _MD = mdlib.Markdown(extensions=["nl2br", "sane_lists"])
     _MD.preprocessors.deregister("html_block")
-    _MD.inlinePatterns.deregister("html")
+    for _pat in ("html", "automail", "image_link", "image_reference", "short_image_ref"):
+        try:
+            _MD.inlinePatterns.deregister(_pat)
+        except ValueError:
+            pass
     _HAS_MD = True
 except Exception:  # pragma: no cover - fallback when the library is absent
     _MD = None
@@ -802,6 +818,16 @@ code {
 }
 @media (min-width: 880px) { .mast-bar .np { font-size: 28px; } }
 .mast-bar .np .ai { color: var(--accent); }
+.mast-bar .np a.np-link {
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: baseline;
+  border-radius: 6px;
+  transition: opacity 150ms ease;
+}
+.mast-bar .np a.np-link:hover { opacity: 0.82; }
+.mast-bar .np a.np-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .mast-chip {
   display: inline-flex;
   align-items: baseline;
@@ -1449,24 +1475,37 @@ _URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
 _ANCHOR_RE = re.compile(r'<a\s[^>]*href="([^"]*)"[^>]*>(.*?)</a>', re.S | re.I)
 
 
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_TITLE_ATTR_RE = re.compile(r'\btitle="([^"]*)"', re.I)
+
+
 def _is_safe_url(url: str) -> bool:
-    cleaned = _CTRL_WS_RE.sub("", html.unescape(url or "")).strip()
-    if not cleaned or cleaned.startswith("//"):
+    raw = html.unescape(url or "")
+    if any(ord(c) < 32 or ord(c) == 127 for c in raw):
+        return False
+    cleaned = _CTRL_WS_RE.sub("", raw).strip()
+    if not cleaned or cleaned.startswith(("//", "/\\", "\\")):
+        return False
+    if "\\" in cleaned.split("?", 1)[0].split("#", 1)[0]:
         return False
     if cleaned.startswith("#"):
         return True
     m = _URL_SCHEME_RE.match(cleaned)
     if not m:
         return True
-    return m.group(1).lower() in ("http", "https")
+    if m.group(1).lower() not in ("http", "https"):
+        return False
+    parsed = _urlsplit(cleaned)
+    return bool(parsed.netloc)
 
 
 def _fallback_markdown(text: str) -> str:
     placeholders: list[str] = []
+    nonce = secrets.token_hex(6)
 
     def stash(chunk: str) -> str:
         placeholders.append(chunk)
-        return f"\x00PH{len(placeholders) - 1}\x00"
+        return f"\x00PH{nonce}_{len(placeholders) - 1}\x00"
 
     def codes(m: re.Match) -> str:
         return stash(f"<code>{html.escape(m.group(1))}</code>")
@@ -1485,7 +1524,7 @@ def _fallback_markdown(text: str) -> str:
     work = html.escape(work)
     work = BOLD_RE.sub(r"<strong>\1</strong>", work)
     for i, chunk in enumerate(placeholders):
-        work = work.replace(f"\x00PH{i}\x00", chunk)
+        work = work.replace(f"\x00PH{nonce}_{i}\x00", chunk)
     parts = re.split(r"\n\s*\n", work.strip())
     out = []
     for part in parts:
@@ -1494,14 +1533,16 @@ def _fallback_markdown(text: str) -> str:
 
 
 def _decorate_links(src: str) -> str:
+    src = _IMG_TAG_RE.sub("", src)
+
     def repl(m: re.Match) -> str:
         full, href, inner = m.group(0), m.group(1), m.group(2)
         if not _is_safe_url(href):
             return inner
         open_tag = full[: full.index(">") + 1]
-        if "target=" in open_tag:
-            return full
-        return open_tag[:-1] + ' target="_blank" rel="noopener noreferrer">' + inner + "</a>"
+        tm = _TITLE_ATTR_RE.search(open_tag)
+        title_attr = f' title="{tm.group(1)}"' if tm else ""
+        return f'<a href="{href}"{title_attr} target="_blank" rel="noopener noreferrer">{inner}</a>'
 
     return _ANCHOR_RE.sub(repl, src)
 
@@ -2408,7 +2449,8 @@ _FOOTER_SCRIPT = """<script>
         }
         const anc=e.target.closest('a[href^="#"]');
         if(anc&&(finp.value||curTag)){
-          const tid=decodeURIComponent(anc.getAttribute('href').slice(1));
+          const raw=anc.getAttribute('href').slice(1);
+          let tid=raw;try{tid=decodeURIComponent(raw);}catch(e){}
           const tel=document.getElementById(tid);
           if(tel&&tel.closest('[hidden]'))resetFilter();
         }
@@ -2514,7 +2556,7 @@ _FOOTER_SCRIPT = """<script>
       const ref=fp?anchorOf(fp):null;
       const off=ref?ref.getBoundingClientRect().top:0;
       const key=ref?ref.id.replace(/^en-/,''):null;
-      de.dataset.lang=l;de.lang=(l==='en'?'en':'zh-CN');document.title=titles[l];
+      de.dataset.lang=l;de.lang=(l==='en'?'en':'zh-CN');document.title='AI Digest';
       try{localStorage.setItem(LK,l);}catch(e){}
       setups.forEach(s=>{s.close();s.reset();});
       paintLang(true);
@@ -2527,7 +2569,7 @@ _FOOTER_SCRIPT = """<script>
     }
     toggleLang=()=>setLang(curLang()==='en'?'zh':'en');
     lbtns.forEach(b=>b.addEventListener('click',toggleLang));
-    document.title=titles[curLang()];paintLang(false);
+    document.title='AI Digest';paintLang(false);
   }
 
   /* Reader keyboard shortcuts: j/k stories, t theme, l lang, [/] prev/next issue */
@@ -2692,7 +2734,7 @@ def _render_pane_body(
         f'<a class="skip" href="#{id_prefix}content">{html.escape(i18n.t(lang, "skip"))}</a>',
         '<header class="mast">',
         '<div class="mast-bar">',
-        f'<h1 id="{id_prefix}report-start" class="np">{_nameplate_html(digest.title)}</h1>',
+        f'<h1 id="{id_prefix}report-start" class="np"><a class="np-link" href="./" data-brand-home><span class="ai">AI</span> Digest</a></h1>',
         f'<span class="mast-chip"><span class="mark-kicker">{html.escape(info["kicker"])}</span><span class="mark-figure num">{html.escape(info["figure"])}</span></span>',
         f'<span class="mast-meta"><span class="num">{html.escape(info["line"])}</span><span class="num">{html.escape(i18n.count_items(lang, len(digest.items)))} · {html.escape(read_str)}</span><span class="motto">{html.escape(info["motto"])}</span></span>',
         '<span class="mast-tools">',
@@ -2760,7 +2802,9 @@ def _html_head(title: str, html_lang: str, *, bilingual: bool = False) -> list[s
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
         '<meta name="theme-color" content="#faf8f4">',
-        f"<title>{html.escape(title)}</title>",
+        f'<meta name="digest-title" content="{html.escape(title, quote=True)}">',
+        f'<link rel="icon" type="image/svg+xml" href="{FAVICON_DATA_URI}">',
+        "<title>AI Digest</title>",
         "<script>(function(){try{var t=localStorage.getItem('digest-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);var dk=t==='dark'||(t!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);var m=document.querySelector('meta[name=\"theme-color\"]');if(m)m.setAttribute('content',dk?'#141311':'#faf8f4');}catch(e){}})();</script>",
     ]
     if bilingual:

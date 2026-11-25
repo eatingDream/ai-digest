@@ -41,7 +41,19 @@ function loadConfigFlags() {
     const m = text.match(/^SLUG=(.*)$/m);
     slug = m ? m[1].trim() : "";
   }
-  if (slug && (/<[^>]*>|\{\{.*?\}\}|[<>]/.test(slug) || !/^[A-Za-z0-9._~-]+$/.test(slug))) {
+  const RESERVED_SLUGS = new Set([
+    ".", "..", "_headers", "_redirects", "_worker.js", "_routes.json",
+    "robots.txt", "404.html", "favicon.svg", "zh", "en", "daily", "weekly", "latest",
+  ]);
+  if (
+    slug &&
+    (
+      /<[^>]*>|\{\{.*?\}\}|[<>]/.test(slug) ||
+      !/^[A-Za-z0-9._~-]+$/.test(slug) ||
+      slug.startsWith(".") ||
+      RESERVED_SLUGS.has(slug.toLowerCase())
+    )
+  ) {
     throw new Error(`invalid or unreplaced SLUG (${slug}); run python3 publish.py --init or edit site/CONFIG`);
   }
   const envEnc = process.env.DIGEST_ENCRYPT !== undefined ? process.env.DIGEST_ENCRYPT.trim() : "";
