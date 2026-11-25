@@ -304,11 +304,6 @@ button { cursor: pointer; font-family: inherit; }
 .mark-top { margin-top: 8px; font-size: 11.5px; color: var(--ink-2); }
 .mark-bottom { font-size: 11.5px; color: var(--ink-4); }
 
-.mast-rule {
-  border: 0;
-  border-top: 1px solid var(--line-strong);
-  margin: 0;
-}
 
 /* Kickers */
 .kicker {
@@ -786,14 +781,14 @@ code {
   .front-stack .front-lead .themes { columns: 2; column-gap: 48px; column-rule: 1px solid var(--line); }
   .front-stack .theme-item:first-child { padding-top: 0; }
 }
-/* Compact masthead (2026-11-16): one row, ~1/4 of the old height */
-.paper { padding-top: 10px; }
-@media (min-width: 700px) { .paper { padding-top: 14px; } }
+/* Compact masthead: full-bleed topbar sits above .paper */
+.paper { padding-top: 16px; }
+@media (min-width: 700px) { .paper { padding-top: 22px; } }
 .mast-bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 0 10px;
+  padding: 9px 0 8px;
   min-width: 0;
 }
 .mast-bar .np {
@@ -956,51 +951,60 @@ body.toc-open .toc-side-backdrop { display: block; opacity: 1; pointer-events: a
 }
 @media print { .toc-side, .toc-side-toggle, .toc-side-backdrop, .filter-bar, .filter-empty { display: none !important; } .layout { display: block; } .sec[hidden], .story[hidden], .front[hidden] { display: block !important; } }
 
-/* Sticky auto-hide TopBar + physics-spring tactile buttons + reading perf */
+/* Full-bleed sticky auto-hide TopBar (Zhihu-style) + physics-spring buttons + reading perf */
 .mast {
   position: sticky;
   top: 0;
   z-index: 30;
-  margin: 0 -12px;
-  padding: 0 12px;
-  background: color-mix(in srgb, var(--bg) 84%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
-  border-radius: 0 0 var(--radius-card) var(--radius-card);
-  border-bottom: 1px solid transparent;
+  width: 100%;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  border-bottom: 1px solid var(--line-soft);
   transition: transform 280ms var(--ease-out), background-color 180ms ease,
               box-shadow 200ms ease, border-color 200ms ease;
   will-change: transform;
 }
+.mast > .mast-bar,
+.mast > .issue-nav.top {
+  width: min(var(--paper-max), calc(100% - 2 * max(var(--gutter), 5vw)));
+  margin-inline: auto;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mast {
+    background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
+  }
+}
+:root[data-theme="dark"] .mast {
+  background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
+}
 .mast.is-scrolled {
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   border-bottom-color: var(--line);
-  box-shadow: 0 6px 24px rgba(20, 30, 36, 0.08);
+  box-shadow: 0 2px 14px rgba(20, 30, 36, 0.08);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .mast.is-scrolled {
-    background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+    background: color-mix(in srgb, var(--bg-sunk) 92%, transparent);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
   }
 }
 :root[data-theme="dark"] .mast.is-scrolled {
-  background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+  background: color-mix(in srgb, var(--bg-sunk) 92%, transparent);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
 }
-.mast.is-scrolled .mast-rule { opacity: 0; }
 .mast.is-hidden {
-  transform: translateY(calc(-100% - 8px));
+  transform: translateY(calc(-100% - 2px));
+  box-shadow: none !important;
   pointer-events: none;
 }
-.mast-rule { transition: opacity 160ms ease; }
 .read-prog {
   position: absolute;
-  left: 12px;
-  right: 12px;
+  left: 0;
+  right: 0;
   bottom: -1px;
   height: 2px;
   overflow: hidden;
-  border-radius: 999px;
   pointer-events: none;
   opacity: 0;
   transition: opacity 180ms ease;
@@ -1196,17 +1200,12 @@ article.story:hover .copy-link,
 .copy-link.is-copied .copy-tip { display: inline; }
 @media (hover: none) { .copy-link { opacity: 0.72; } }
 
-/* Scroll offsets & sticky TOC coordination with TopBar */
-.sec, .story, [id^="item-"], [id^="en-item-"] { scroll-margin-top: calc(var(--mast-h, 58px) + 20px); }
+/* Scroll offsets & calm desktop TOC sidebar (never squeezed by TopBar) */
+.sec, .story, [id^="item-"], [id^="en-item-"] { scroll-margin-top: calc(var(--mast-h, 76px) + 16px); }
 @media (min-width: 1024px) {
   .toc-side {
-    top: calc(var(--mast-h, 58px) + 14px);
-    max-height: calc(100vh - var(--mast-h, 58px) - 28px);
-    transition: top 260ms var(--ease-out), max-height 260ms var(--ease-out);
-  }
-  body.mast-hidden .toc-side {
-    top: 16px;
-    max-height: calc(100vh - 32px);
+    top: 18px;
+    max-height: calc(100vh - 36px);
   }
 }
 .toc-side-toggle {
@@ -2189,9 +2188,23 @@ _FOOTER_SCRIPT = """<script>
   const isVisible=s=>s===document||getComputedStyle(s).display!=='none';
   const activeScope=()=>scopes.find(isVisible)||scopes[0];
 
-  /* Unified single-rAF scroll coordinator: TopBar hide-on-scroll / show-on-stop,
-     GPU reading progress bar, cached binary-search TOC sync, and Back-to-Top. */
-  const setups=scopes.map(function(scope){
+  /* Zhihu-style TopBar scroll state: hide on scroll down, reveal on scroll up or 3s idle */
+  let lastY=Math.max(0,scrollY),sRaf=0,stopTimer=0,accDown=0,accUp=0,barHidden=false;
+  let setups=[];
+  function setBarHidden(hide){
+    const s=setups.find(x=>isVisible(x.scope));
+    if(!s||!s.mast)return;
+    const h=Boolean(hide&&!s.pinned()&&scrollY>64);
+    barHidden=h;
+    s.mast.classList.toggle('is-hidden',h);
+    if(!h){clearTimeout(stopTimer);stopTimer=0;}
+  }
+  function armIdleReveal(){
+    clearTimeout(stopTimer);
+    stopTimer=setTimeout(()=>{stopTimer=0;if(barHidden)setBarHidden(false);},3000);
+  }
+
+  setups=scopes.map(function(scope){
     const mast=scope.querySelector('header.mast');
     const progFill=mast?mast.querySelector('.read-prog-fill'):null;
     const side=scope.querySelector('.toc-side');
@@ -2202,10 +2215,10 @@ _FOOTER_SCRIPT = """<script>
     let mastHover=false,mastFocus=false;
 
     if(mast){
-      mast.addEventListener('pointerenter',()=>{mastHover=true;mast.classList.remove('is-hidden');document.body.classList.remove('mast-hidden');});
-      mast.addEventListener('pointerleave',()=>{mastHover=false;});
-      mast.addEventListener('focusin',()=>{mastFocus=true;mast.classList.remove('is-hidden');document.body.classList.remove('mast-hidden');});
-      mast.addEventListener('focusout',()=>{mastFocus=false;});
+      mast.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'){mastHover=true;setBarHidden(false);}});
+      mast.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'){mastHover=false;}});
+      mast.addEventListener('focusin',e=>{let kv=false;try{kv=Boolean(e.target&&e.target.matches&&e.target.matches(':focus-visible'));}catch(_){}if(kv){mastFocus=true;setBarHidden(false);}});
+      mast.addEventListener('focusout',e=>{if(!mast.contains(e.relatedTarget))mastFocus=false;});
     }
 
     function syncMastH(){
@@ -2227,7 +2240,7 @@ _FOOTER_SCRIPT = """<script>
       }
     }
 
-    function reset(){mastHover=false;mastFocus=false;if(cur>=0&&links[cur])links[cur].classList.remove('cur');cur=-1;}
+    function reset(){mastHover=false;mastFocus=false;if(mast)mast.classList.remove('is-hidden');if(cur>=0&&links[cur])links[cur].classList.remove('cur');cur=-1;}
 
     function syncToc(sy){
       if(!side||!isVisible(scope))return;
@@ -2266,7 +2279,7 @@ _FOOTER_SCRIPT = """<script>
       const setOpen=o=>{
         document.body.classList.toggle('toc-open',o);
         if(tg)tg.setAttribute('aria-expanded',o?'true':'false');
-        if(o&&mast){mast.classList.remove('is-hidden');document.body.classList.remove('mast-hidden');}
+        if(o)setBarHidden(false);
       };
       close=()=>setOpen(false);
       if(tg)tg.addEventListener('click',()=>setOpen(true));
@@ -2409,31 +2422,32 @@ _FOOTER_SCRIPT = """<script>
     };
   });
 
-  /* Single scroll loop: hide TopBar while scrolling, reveal smoothly on stop/top/hover */
-  let lastY=scrollY,sRaf=0,stopTimer=0;
-  function setBarHidden(hide){
-    const s=setups.find(x=>isVisible(x.scope));
-    if(!s||!s.mast)return;
-    const h=Boolean(hide&&!s.pinned()&&scrollY>56);
-    s.mast.classList.toggle('is-hidden',h);
-    document.body.classList.toggle('mast-hidden',h);
-  }
+  /* Single scroll loop: hide on scroll down, reveal immediately on scroll up or after 3s idle */
   function onScrollFrame(){
     sRaf=0;
-    const y=scrollY,dy=y-lastY;
+    const y=Math.max(0,scrollY),dy=y-lastY;
     lastY=y;
     setups.forEach(s=>s.syncChrome(y));
-    if(y<=48){
+    if(y<=64){
+      accDown=0;accUp=0;
       setBarHidden(false);
-    }else if(Math.abs(dy)>3){
-      setBarHidden(true);
+      return;
     }
-    clearTimeout(stopTimer);
-    stopTimer=setTimeout(()=>setBarHidden(false),220);
+    if(dy>0){
+      accDown+=dy;accUp=0;
+      if(accDown>=14){setBarHidden(true);accDown=0;}
+      if(barHidden)armIdleReveal();
+    }else if(dy<0){
+      accUp+=-dy;accDown=0;
+      if(accUp>=12){setBarHidden(false);accUp=0;}
+      else if(barHidden)armIdleReveal();
+    }else if(barHidden){
+      armIdleReveal();
+    }
   }
   addEventListener('scroll',()=>{if(!sRaf)sRaf=requestAnimationFrame(onScrollFrame);},{passive:true});
   addEventListener('resize',()=>{setups.forEach(s=>{s.syncMastH();s.rebuildOffsets();s.syncChrome(scrollY);});},{passive:true});
-  addEventListener('pointermove',e=>{if(e.clientY<=14)setBarHidden(false);},{passive:true});
+  addEventListener('pointermove',e=>{if(e.clientY<=12)setBarHidden(false);},{passive:true});
 
   /* Single merged Language toggle button (bilingual pages) */
   let toggleLang=null;
@@ -2471,11 +2485,11 @@ _FOOTER_SCRIPT = """<script>
       try{localStorage.setItem(LK,l);}catch(e){}
       setups.forEach(s=>{s.close();s.reset();});
       paintLang(true);
-      setBarHidden(false);
       if(key){
         const tp=document.getElementById((l==='en'?'en-':'')+key);
         if(tp&&!tp.closest('[hidden]'))scrollTo({top:scrollY+tp.getBoundingClientRect().top-off,behavior:'instant'});
       }else if(scrollY<60){scrollTo({top:0,behavior:'instant'});}
+      lastY=Math.max(0,scrollY);accDown=0;accUp=0;setBarHidden(false);
       setups.forEach(s=>{s.syncMastH();s.rebuildOffsets();s.syncChrome(scrollY);});
     }
     toggleLang=()=>setLang(curLang()==='en'?'zh':'en');
@@ -2637,7 +2651,6 @@ def _render_pane_body(
     )
     parts = [
         f'<a class="skip" href="#{id_prefix}content">{html.escape(i18n.t(lang, "skip"))}</a>',
-        '<article class="paper">',
         '<header class="mast">',
         '<div class="mast-bar">',
         f'<h1 id="{id_prefix}report-start" class="np">{_nameplate_html(digest.title)}</h1>',
@@ -2652,9 +2665,9 @@ def _render_pane_body(
         _theme_toggle_html(lang),
         "</span>",
         "</div>",
-        '<hr class="mast-rule">',
         '<div class="read-prog" aria-hidden="true"><span class="read-prog-fill"></span></div>',
         "</header>",
+        '<article class="paper">',
         '<div class="layout">',
         sidebar,
         '<div class="layout-body">',
