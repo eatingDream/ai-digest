@@ -220,7 +220,7 @@ NAV_CSS = """
   letter-spacing: 0.03em;
   color: var(--ink-4);
 }
-.issue-nav.top { border-top: 1px solid var(--line-soft); }
+.issue-nav.top { border-top: 1px solid var(--line-soft); padding: 4px 0 7px; font-size: 12px; }
 .issue-nav.bottom {
   border-top: 1px solid var(--line);
   margin-top: 28px;
@@ -1400,7 +1400,6 @@ button {{ cursor: pointer; font-family: inherit; }}
 @media (min-width: 880px) {{ .mark-figure {{ font-size: 36px; }} }}
 .mark-top {{ margin-top: 8px; font-size: 11.5px; color: var(--ink-2); }}
 .mark-bottom {{ font-size: 11.5px; color: var(--ink-4); }}
-.mast-rule {{ border: 0; border-top: 1px solid var(--line-strong); margin: 0; }}
 .kicker {{
   display: flex; align-items: center; gap: 10px;
   margin: 32px 0 14px;
@@ -1477,14 +1476,14 @@ button {{ cursor: pointer; font-family: inherit; }}
 .colophon .end {{
   font-size: 13px; font-weight: 600; letter-spacing: 0.6em; color: var(--ink-4);
 }}
-/* Compact masthead (2026-11-16): one row, ~1/4 of the old height */
-.paper {{ padding-top: 10px; }}
-@media (min-width: 700px) {{ .paper {{ padding-top: 14px; }} }}
+/* Compact masthead: full-bleed topbar sits above .paper */
+.paper {{ padding-top: 16px; }}
+@media (min-width: 700px) {{ .paper {{ padding-top: 22px; }} }}
 .mast-bar {{
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 0 10px;
+  padding: 10px 0 9px;
   min-width: 0;
 }}
 .mast-bar .np {{
@@ -1613,33 +1612,42 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 @keyframes ctrlPop {{ 0% {{ transform: scale(0.92); }} 55% {{ transform: scale(1.045); }} 100% {{ transform: scale(1); }} }}
 .mast {{
   position: sticky; top: 0; z-index: 30;
-  margin: 0 -12px; padding: 0 12px;
-  background: color-mix(in srgb, var(--bg) 84%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
-  border-radius: 0 0 12px 12px;
-  border-bottom: 1px solid transparent;
+  width: 100%;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  border-bottom: 1px solid var(--line-soft);
   transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease, box-shadow 200ms ease, border-color 200ms ease;
   will-change: transform;
 }}
+.mast > .mast-bar {{
+  width: min(var(--paper-max), calc(100% - 2 * max(var(--gutter), 5vw)));
+  margin-inline: auto;
+}}
+@media (prefers-color-scheme: dark) {{
+  :root:not([data-theme="light"]) .mast {{
+    background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
+  }}
+}}
+:root[data-theme="dark"] .mast {{
+  background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
+}}
 .mast.is-scrolled {{
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   border-bottom-color: var(--line);
-  box-shadow: 0 6px 24px rgba(20, 30, 36, 0.08);
+  box-shadow: 0 2px 14px rgba(20, 30, 36, 0.08);
 }}
 @media (prefers-color-scheme: dark) {{
   :root:not([data-theme="light"]) .mast.is-scrolled {{
-    background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+    background: color-mix(in srgb, var(--bg-sunk) 92%, transparent);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
   }}
 }}
 :root[data-theme="dark"] .mast.is-scrolled {{
-  background: color-mix(in srgb, var(--bg-sunk) 88%, transparent);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+  background: color-mix(in srgb, var(--bg-sunk) 92%, transparent);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
 }}
-.mast.is-scrolled .mast-rule {{ opacity: 0; }}
-.mast.is-hidden {{ transform: translateY(calc(-100% - 8px)); pointer-events: none; }}
-.mast-rule {{ transition: opacity 160ms ease; }}
+.mast.is-hidden {{ transform: translateY(calc(-100% - 2px)); box-shadow: none !important; pointer-events: none; }}
 .ctrl-btn {{
   position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
@@ -1692,7 +1700,6 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 </style>
 </head>
 <body>
-<article class="paper">
 <header class="mast">
 <div class="mast-bar">
 <h1 class="np"><span class="ai">AI</span>{_esc(_t("brand_tail"))}</h1>
@@ -1704,8 +1711,8 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
 <button type="button" class="ctrl-btn lock" data-lock title="{_esc(_t("lock_title"))}">{_esc(_t("lock"))}</button>
 </span>
 </div>
-<hr class="mast-rule">
 </header>
+<article class="paper">
 {quick_bar}
 {filter_bar}
 <section class="archive-sec">
@@ -1759,23 +1766,43 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
   if(tbtn)tbtn.addEventListener('click',cycleTheme);
 
   const mast=document.querySelector('header.mast');
+  let showMast=function(){{}};
   if(mast){{
-    let lastY=scrollY,sRaf=0,stopTimer=0,pin=false;
-    mast.addEventListener('pointerenter',()=>{{pin=true;mast.classList.remove('is-hidden');}});
-    mast.addEventListener('pointerleave',()=>{{pin=false;}});
-    mast.addEventListener('focusin',()=>{{pin=true;mast.classList.remove('is-hidden');}});
-    mast.addEventListener('focusout',()=>{{pin=false;}});
-    function setHide(h){{mast.classList.toggle('is-hidden',Boolean(h&&!pin&&scrollY>56));}}
+    let lastY=Math.max(0,scrollY),sRaf=0,stopTimer=0,accDown=0,accUp=0,mastHover=false,mastFocus=false,barHidden=false;
+    function setHide(h){{
+      const nh=Boolean(h&&!(mastHover||mastFocus)&&scrollY>64);
+      barHidden=nh;
+      mast.classList.toggle('is-hidden',nh);
+      if(!nh){{clearTimeout(stopTimer);stopTimer=0;}}
+    }}
+    showMast=()=>setHide(false);
+    function armIdle(){{
+      clearTimeout(stopTimer);
+      stopTimer=setTimeout(()=>{{stopTimer=0;if(barHidden)setHide(false);}},3000);
+    }}
+    mast.addEventListener('pointerenter',e=>{{if(e.pointerType==='mouse'){{mastHover=true;setHide(false);}}}});
+    mast.addEventListener('pointerleave',e=>{{if(e.pointerType==='mouse'){{mastHover=false;}}}});
+    mast.addEventListener('focusin',e=>{{let kv=false;try{{kv=Boolean(e.target&&e.target.matches&&e.target.matches(':focus-visible'));}}catch(_){{}}if(kv){{mastFocus=true;setHide(false);}}}});
+    mast.addEventListener('focusout',e=>{{if(!mast.contains(e.relatedTarget))mastFocus=false;}});
     function onFrame(){{
       sRaf=0;
-      const y=scrollY,dy=y-lastY;lastY=y;
+      const y=Math.max(0,scrollY),dy=y-lastY;lastY=y;
       mast.classList.toggle('is-scrolled',y>20);
-      if(y<=48)setHide(false);else if(Math.abs(dy)>3)setHide(true);
-      clearTimeout(stopTimer);
-      stopTimer=setTimeout(()=>setHide(false),220);
+      if(y<=64){{accDown=0;accUp=0;setHide(false);return;}}
+      if(dy>0){{
+        accDown+=dy;accUp=0;
+        if(accDown>=14){{setHide(true);accDown=0;}}
+        if(barHidden)armIdle();
+      }}else if(dy<0){{
+        accUp+=-dy;accDown=0;
+        if(accUp>=12){{setHide(false);accUp=0;}}
+        else if(barHidden)armIdle();
+      }}else if(barHidden){{
+        armIdle();
+      }}
     }}
     addEventListener('scroll',()=>{{if(!sRaf)sRaf=requestAnimationFrame(onFrame);}},{{passive:true}});
-    addEventListener('pointermove',e=>{{if(e.clientY<=14)setHide(false);}},{{passive:true}});
+    addEventListener('pointermove',e=>{{if(e.clientY<=12)setHide(false);}},{{passive:true}});
   }}
 
   const bar=document.getElementById('archiveFilterBar');
@@ -1840,7 +1867,7 @@ html[lang="en"] .kicker, html[lang="en"] .mark-kicker {{ text-transform: upperca
     if(e.metaKey||e.ctrlKey||e.altKey)return;
     if(/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||''))return;
     if(e.key==='/'){{const inp=document.getElementById('archiveFilterInput');if(inp){{e.preventDefault();inp.focus();}}}}
-    else if(e.key==='t'||e.key==='T'){{e.preventDefault();cycleTheme();if(mast)mast.classList.remove('is-hidden');}}
+    else if(e.key==='t'||e.key==='T'){{e.preventDefault();cycleTheme();showMast();}}
   }});
   if(location.hash.length>1){{
     let id=location.hash.slice(1);try{{id=decodeURIComponent(id);}}catch(e){{}}

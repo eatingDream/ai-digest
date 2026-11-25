@@ -392,7 +392,10 @@ def test_reader_ux_index_nav_and_unlock_shell_js_contracts(tmp_path):
     plain_idx = (work / "site/plain/uxslug1234/index.html").read_text(encoding="utf-8")
     shell15 = (work / "site/public/uxslug1234/daily/2026-01-15.html").read_text(encoding="utf-8")
 
-    # Top issue nav rides inside sticky <header class="mast"> with semantic data-nav links
+    # Full-bleed sticky <header class="mast"> sits outside/before <article class="paper"> with semantic data-nav
+    assert plain15.index('<header class="mast">') < plain15.index('<article class="paper">')
+    assert plain_idx.index('<header class="mast">') < plain_idx.index('<article class="paper">')
+    assert "mast-hidden" not in plain15 and "3000" in plain15 and "3000" in plain_idx
     m_hdr = re.search(r'<header class="mast"[^>]*>.*?</header>', plain15, re.S)
     assert m_hdr and 'class="issue-nav top"' in m_hdr.group(0)
     assert 'data-nav="index"' in m_hdr.group(0) and 'data-nav="prev"' in m_hdr.group(0)
