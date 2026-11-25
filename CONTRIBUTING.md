@@ -21,7 +21,7 @@ node --check verify_decrypt.mjs
 scripts/check_sanitized.sh         # must print "clean"
 ```
 
-Preview the demo site without secrets: `DIGEST_DEMO_PASSWORD=demo python3 publish.py --demo --out dist/`.
+Preview the demo site without secrets: `python3 publish.py --demo --out dist/` (set `DIGEST_DEMO_PASSWORD=demo` to preview encrypted mode).
 
 ## PR expectations
 

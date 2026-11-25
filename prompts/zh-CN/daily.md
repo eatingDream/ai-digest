@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | 工作目录 | 仓库根目录（下文路径都相对于它） |
-| 环境变量 | `DIGEST_LANG=zh-CN`（标签与页面语言）、`DIGEST_TZ=<IANA 时区>`（决定「自然日」，默认 UTC）；要部署还需 `site/CONFIG`、密码文件和 `CLOUDFLARE_API_TOKEN`（见 `site/README.md`） |
+| 环境变量 | `DIGEST_LANG=zh-CN`（标签与页面语言）、`DIGEST_TZ=<IANA 时区>`（决定「自然日」，默认 UTC）；要部署还需 `site/CONFIG` 和 `CLOUDFLARE_API_TOKEN`（仅 `ENCRYPT=1` 时需要密码文件，见 `site/README.md`） |
 | 工具 | Shell、文件读写；可选：X 只读检索（`search_posts_all`、`get_users_posts` 等）与网页抓取（多数核对用 `fetch/page.py` 即可） |
 | 输入 | `runs/P/fetch/`（`fetch/fetch.py` 产出）、`runs/P/paper-cands.md`（`papers.md` 产出，可缺）、`filter-notes.zh-CN.md`、经 `fetch/ledger.py` 访问的台账 |
 | 产出 | `digest-P.md`（本期成稿，格式见下）、`runs/P/filter-log.md`、台账更新、已发布的 `daily/P` 页面 |
@@ -145,18 +145,18 @@ fetch.py 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所�
 python3 publish.py --issue daily/P --md digest-P.md
 ```
 
-这条命令只渲染本期这一页（内部调用 `render_html.py`），自动重建导航和目录，只重新加密内容有变化的页面（本期、上一期的「下一期」链接、目录），部署后自动做 HTTP 和解密校验。成功时第一行是 `OK`，并给出 `url:`（无扩展名网址，HTTP 200）和 `decrypt check: OK`；不需要再单独运行 `render_html.py` 或 `verify_decrypt.mjs`。
+这条命令只渲染本期这一页（内部调用 `render_html.py`；有同目录 `*.en.md` 时自动生成 `/zh/` 与 `/en/`），自动重建导航和目录，只更新（或 `ENCRYPT=1` 时重加密）内容有变化的页面，部署后自动做 HTTP 和逐页校验。成功时第一行是 `OK`，并给出 `url:`（无扩展名网址，HTTP 200）和 `verify check: OK`（加密模式为 `decrypt check: OK`）；不需要再单独运行 `render_html.py` 或 `verify_decrypt.mjs`。
 - 第一行是 `ERROR` 时看它打印的日志末尾：隐私扫描命中就按提示改稿后重跑同一条命令；部署或校验失败可重跑一次，仍失败则推送时附上 `html/daily-P.html` 作为附件并说明站点更新失败。
-- 同一天改稿后重发，重跑同一条命令即可（未变化的页面不会重新加密）。
+- 同一天改稿后重发，重跑同一条命令即可（未变化的页面会自动跳过）。
 - 撤下某一期：`python3 publish.py --remove daily/P`（备份到 `backfill/removed/`，旧网址 302 到目录）。只在读者/运营者明确要求时使用。
 
-`publish.py` 会做隐私扫描（命中就失败：按提示改稿后重来）、导航、目录、加密和部署。不要打印或回显任何密码、token。不要改 Cloudflare 上的其他资源。不要改 render_html.py 的设计。
+`publish.py` 会做隐私扫描（命中就失败：按提示改稿后重来）、导航、目录、可选加密和部署。不要打印或回显任何密码、token。不要改 Cloudflare 上的其他资源。不要改 render_html.py 的设计。
 
 **省 token 规则**：
 - 只写本期这一个 markdown 文件，**一次写成**（先在脑子里/草稿里把入围条目和核对结果整理好再落笔，不要先写初稿再整篇重写）；发布失败或改稿才重写对应段落。不要读取、重写或重新生成其他期的 markdown/HTML（`html/`、`site/` 下的文件一律不要打开）。导航、目录、其他期页面的更新全部由 `publish.py` 自动完成。
 - 不要 `cat`/整份打印这些大文件：`ledger.json`、`candidates.jsonl`、`logs/*.log`、HTML、X 原始 JSON。`triage.md`、`x-raw.md`（若执行了 X 召回），以及论文这一路（`paper-cands.md`；回退时是 `triage-papers.md`）**必须读完且各读一遍**（第 3 步），用 Read 分页读，不要用 head/tail 截断后就停；省 token 只针对其他期的文件、日志和原始数据，不针对当天的候选。
 - 不要重跑 `fetch.py --daily`（完整抓取只在第 1 步跑一次）；arXiv 缺批次只按 `fetch/troubleshoot-arxiv.zh-CN.md` 用 `--only arxiv,hf_daily` 补查一次（输出在 `fetch-extra/`）。
-- 发布命令只打印约 6 行摘要；不要加 `--verbose`；成功（`OK` + `decrypt check: OK`）后**不要再单独验证网址、不要再 WebFetch 自己刚发布的页面**。失败时它会打印日志末尾 15 行，按提示处理即可。
+- 发布命令只打印约 6 行摘要；不要加 `--verbose`；成功（`OK` + `verify check: OK` / `decrypt check: OK`）后**不要再单独验证网址、不要再 WebFetch 自己刚发布的页面**。失败时它会打印日志末尾 15 行，按提示处理即可。
 - 推理保持克制：每个版面一次性决定入围名单，核对完再写，不要对同一条目反复权衡；没有新信息就不要换写法重复检索或重复抓取。
 
 ## 7. 记账（不推送给读者；全部在发布之后各一次性完成）
