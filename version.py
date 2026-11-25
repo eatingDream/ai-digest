@@ -1,2 +1,2 @@
 """Single source of truth for the release version (used by --version and the release notes)."""
-__version__ = "0.5.2"
+__version__ = "0.6.0"

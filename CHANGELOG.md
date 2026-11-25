@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.6.0](https://github.com/eatingDream/ai-digest/compare/v0.5.2...v0.6.0) (2026-11-25)
+
+
+### Features
+
+* warm charcoal/terracotta palette, symmetric /zh/ & /en/ paths, and password-free public default ([#28](https://github.com/eatingDream/ai-digest/issues/28)) ([37f6169](https://github.com/eatingDream/ai-digest/commit/37f6169b044ac6fd43297fb9d66ab73978db6347))
+
 ## [0.5.2](https://github.com/eatingDream/ai-digest/compare/v0.5.1...v0.5.2) (2026-11-25)
 
 
