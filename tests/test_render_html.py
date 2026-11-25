@@ -125,7 +125,7 @@ def test_render_bilingual_daily_and_weekly_zero_duplicate_ids(tmp_path):
         assert '<html lang="zh-CN">' in html and "localStorage.getItem('digest-lang')" in html
         assert html.count('class="ctrl-btn lang-btn lang-switch"') == 2 and html.count("data-lang-toggle") == 3
         assert 'data-lang="zh">' not in html.split("<header", 1)[1].split("</header>", 1)[0]
-        assert html.count("data-theme-toggle") == 3 and 'class="read-prog"' in html and 'class="copy-link"' in html and "content-visibility: auto" in html
+        assert html.count("data-theme-toggle") == 3 and 'class="read-prog"' in html and 'class="copy-link"' in html and "contain: layout style" in html and "content-visibility: auto" not in html
         assert '<div class="lang-pane lang-zh" data-lang="zh">' in html and '<div class="lang-pane lang-en" data-lang="en" lang="en" data-title="' in html
         assert 'aria-label="语言"' in html and 'aria-label="Language"' in html and 'aria-controls="en-tocSide"' in html
         assert all(f'id="{eid}"' in html for eid in ("content", "en-content", "tocSide", "en-tocSide", "sec-models", "en-sec-models",
