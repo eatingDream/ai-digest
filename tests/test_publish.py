@@ -641,3 +641,98 @@ def test_security_hardening_csp_hashes_privacy_and_brand_links(monkeypatch, tmp_
     r_dep = run_pub("--deploy-only", "--prepare-only")
     assert r_dep.returncode != 0 and "missing plaintext" in r_dep.stderr
 
+
+def test_site_context_isolation_dp5_lock_parity_and_dedup(monkeypatch, tmp_path):
+    import site_crypto
+
+    # 1. Single source of truth deduplication for FAVICON_SVG & _TAG_SPLIT_RE
+    assert publish.FAVICON_SVG is rh.FAVICON_SVG
+    assert publish._TAG_SPLIT_RE is rh._TAG_SPLIT_RE
+
+    # 2. build_demo never mutates publish module globals or os.environ, even mid-flight
+    monkeypatch.setenv("DIGEST_DEMO_PASSWORD", "demo-password-123")
+    monkeypatch.setenv("SITE_SLUG", "keep-env-slug")
+    monkeypatch.setenv("DIGEST_LANG_ALT", "en:/keep-alt/")
+    monkeypatch.setenv("DIGEST_ROOT_LATEST", "1")
+    monkeypatch.setenv("DIGEST_ENCRYPT", "0")
+
+    def snap():
+        return (
+            publish.SITE, publish.PUBLIC, publish.PLAIN, publish.SOURCES,
+            publish.CONFIG_PATH, publish.TEMPLATE_PATH, publish.ENC_CACHE_PATH,
+            publish.LANG, publish.CLI_LANG, publish.LANG_ALT,
+            publish._DEMO_MODE, publish._PASSWORD_OVERRIDE, publish._SALT_OVERRIDE,
+            list(publish.CHANGED_PAGES),
+            os.environ.get("SITE_SLUG"), os.environ.get("DIGEST_LANG_ALT"),
+            os.environ.get("DIGEST_ROOT_LATEST"), os.environ.get("DIGEST_ENCRYPT"),
+        )
+
+    before = snap()
+    mid_flight_snaps = []
+    orig_rebuild = publish.rebuild_all
+
+    def spy_rebuild(cfg, ctx=None):
+        mid_flight_snaps.append(snap())
+        return orig_rebuild(cfg, ctx=ctx)
+
+    monkeypatch.setattr(publish, "rebuild_all", spy_rebuild)
+    out = tmp_path / "demo_isolated"
+    assert publish.main(["--demo", "--out", str(out)]) == 0
+    assert mid_flight_snaps and all(s == before for s in mid_flight_snaps)
+    assert snap() == before
+
+    # 3. DP4 rebuild_all emits pure plaintext without lock UI or CSP; DP5 site_crypto injects lock UI + CSP idempotently
+    for k in ("SITE_SLUG", "DIGEST_LANG_ALT", "DIGEST_ROOT_LATEST", "DIGEST_ENCRYPT"):
+        monkeypatch.delenv(k, raising=False)
+    site = tmp_path / "dp4_dp5_site"
+    ctx = publish.SiteContext(
+        root=tmp_path,
+        site=site,
+        public=site / "public",
+        plain=site / "plain",
+        sources=site / "sources",
+        config_path=site / "CONFIG",
+        template_path=ROOT / "site" / "password_template.html",
+        enc_cache_path=site / "enc-cache.json",
+        lang="zh-CN",
+    )
+    publish.write_config({"SLUG": "dp4dp5slug1", "ENCRYPT": "1", "LANG": "zh-CN"}, ctx=ctx)
+    bi_html = tmp_path / "bi.html"
+    rh.render_file(ROOT / "examples" / "sample-digest.zh-CN.md", bi_html, "zh-CN", year=2026,
+                   en_md_path=ROOT / "examples" / "sample-digest.en.md")
+    publish.save_source(bi_html, "daily", "2026-01-15", ctx=ctx)
+    cfg = publish.load_config(ctx)
+    publish.rebuild_all(cfg, ctx=ctx)
+
+    plain_issue = (ctx.plain / "dp4dp5slug1" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+    plain_index = (ctx.plain / "dp4dp5slug1" / "index.html").read_text(encoding="utf-8")
+    base_headers = (ctx.public / "_headers").read_text(encoding="utf-8")
+    assert 'class="lock"' not in plain_issue and site_crypto.LOCK_MARK_START not in plain_issue
+    assert 'class="ctrl-btn lock"' not in plain_index and site_crypto.LOCK_MARK_START not in plain_index
+    assert "Content-Security-Policy:" not in base_headers
+
+    # Idempotent lock injection check on bilingual issue + index
+    locked_once = site_crypto.inject_lock_ui_html(plain_issue, "zh-CN")
+    assert locked_once == site_crypto.inject_lock_ui_html(locked_once, "zh-CN")
+    assert locked_once.count('class="lock" data-lock') == 2 and locked_once.count(site_crypto.LOCK_MARK_START) == 1
+
+    # Full DP5 downstream pass: encrypt_all_pages + finalize_csp_headers + assert_public_is_encrypted
+    pw_file, salt_file = tmp_path / "pw", tmp_path / "salt"
+    pw_file.write_text("synthetic-test-pass-dp5\n", encoding="utf-8")
+    monkeypatch.setenv("DIGEST_SITE_PASSWORD_FILE", str(pw_file))
+    monkeypatch.setenv("DIGEST_SITE_SALT_FILE", str(salt_file))
+    site_crypto.privacy_scan(publish.iter_plain_files(ctx) + publish.iter_unencrypted_public(ctx), site_dir=ctx.site)
+    site_crypto.encrypt_all_pages(
+        cfg, plain_dir=ctx.plain, public_dir=ctx.public, template_path=ctx.template_path,
+        enc_cache_path=ctx.enc_cache_path, default_lang=ctx.lang,
+    )
+    site_crypto.finalize_csp_headers(ctx.public, ctx.plain)
+    site_crypto.assert_public_is_encrypted(
+        cfg, plain_dir=ctx.plain, public_dir=ctx.public, template_path=ctx.template_path, default_lang=ctx.lang,
+    )
+    final_headers = (ctx.public / "_headers").read_text(encoding="utf-8")
+    assert "Content-Security-Policy:" in final_headers and "'unsafe-inline'" not in final_headers.split("script-src ", 1)[1].split(";", 1)[0]
+    dec_issue = _decrypt(ctx.public / "dp4dp5slug1" / "daily" / "2026-01-15.html", "synthetic-test-pass-dp5")[1]
+    assert 'data-lock' in dec_issue and dec_issue == (ctx.plain / "dp4dp5slug1" / "daily" / "2026-01-15.html").read_text(encoding="utf-8")
+
+

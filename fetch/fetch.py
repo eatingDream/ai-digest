@@ -38,7 +38,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
+from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import requests
@@ -49,6 +49,21 @@ ROOT = HERE.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 import i18n  # noqa: E402  (shared UI/label strings, see i18n.py)
+from common import (  # noqa: E402
+    ARXIV_ID_RE,
+    ARXIV_URL_RE,
+    HF_PAPER_RE,
+    TRACK_PARAMS,
+    atomic_write_text,
+    canon_url,
+    get_tz_local,
+    ledger_path as _common_ledger_path,
+    ledger_status,
+    load_ledger_keys as _common_load_ledger_keys,
+    norm_title,
+    state_dir as _common_state_dir,
+    work_root as _common_work_root,
+)
 from version import __version__  # noqa: E402
 
 # Output language of triage/report labels: --lang > $DIGEST_LANG > en.
@@ -60,7 +75,7 @@ def tr(key: str, **kw) -> str:
 
 
 # 本地时区（日界线/窗口所用）：环境变量 DIGEST_TZ（IANA 名，如 Asia/Shanghai），默认 UTC。
-TZ_LOCAL = ZoneInfo(os.environ.get("DIGEST_TZ") or "UTC")
+TZ_LOCAL = get_tz_local()
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
 
@@ -107,9 +122,6 @@ def _load_pref() -> dict:
 
 
 PREF = _load_pref()
-
-TRACK_PARAMS = {"utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "ref", "ref_src",
-                "source", "rss", "src", "fbclid", "gclid", "mc_cid", "mc_eid", "smid", "cmpid", "sr_share"}
 
 lock = threading.Lock()
 PRERELEASE_RE = re.compile(r"(?i)(alpha|beta|\brc\.?\d*\b|-rc|\.dev\d+|\bdev\d*\b|nightly|-pre\b|preview\.\d+|canary)")
@@ -252,29 +264,6 @@ def parse_dt(s: str | None) -> datetime | None:
 
 def iso(d: datetime | None) -> str | None:
     return d.astimezone(TZ_LOCAL).isoformat(timespec="minutes") if d else None
-
-
-def canon_url(u: str) -> str:
-    u = (u or "").strip()
-    if not u:
-        return u
-    m = re.search(r"arxiv\.org/(?:abs|pdf|html)/(\d{4}\.\d{4,5})", u)
-    if m:
-        return f"arxiv:{m.group(1)}"
-    m = re.search(r"huggingface\.co/papers/(\d{4}\.\d{4,5})", u)
-    if m:
-        return f"arxiv:{m.group(1)}"
-    p = urlparse(u)
-    q = [(k, v) for k, v in parse_qsl(p.query) if k.lower() not in TRACK_PARAMS and not k.lower().startswith("utm_")]
-    host = p.netloc.lower().removeprefix("www.").removeprefix("m.")
-    path = re.sub(r"/+$", "", p.path) or "/"
-    return urlunparse(("https", host, path, "", urlencode(q), ""))
-
-
-def norm_title(t: str) -> str:
-    t = t.lower()
-    t = re.sub(r"[^\w\u4e00-\u9fff]+", "", t)
-    return t[:80]
 
 
 def tag(c: Cand):
@@ -1040,39 +1029,20 @@ FETCHERS = {
 
 # ───────────────────────── 去重 / 账本 / 输出 ─────────────────────────
 def _work_root() -> Path:
-    env = os.environ.get("DIGEST_ROOT", "").strip()
-    return Path(env) if env else ROOT
+    return _common_work_root(ROOT)
 
 
 def _state_dir() -> Path:
-    env = os.environ.get("DIGEST_ROOT", "").strip()
-    return (Path(env) / "state") if env else (HERE / "state")
+    return _common_state_dir(ROOT, HERE)
 
 
 def _ledger_path() -> Path:
-    env = os.environ.get("LEDGER_PATH", "").strip()
-    return Path(env) if env else (_work_root() / "ledger.json")
+    return _common_ledger_path(ROOT)
 
 
 def load_ledger_keys() -> dict[str, str]:
     """ledger.json → {key: 'pushed' | 'seen'}；category/status 含 seen 的是「看过未推」。"""
-    keys: dict[str, str] = {}
-    p = _ledger_path()
-    try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        for it in d.get("items", []):
-            st = "seen" if "seen" in f"{it.get('status') or ''} {it.get('category') or ''}" else "pushed"
-            ks = [canon_url(u) for u in it.get("urls", []) or []]
-            if it.get("id") and re.match(r"^\d{4}\.\d{4,5}$", str(it["id"])):
-                ks.append(f"arxiv:{it['id']}")
-            if it.get("name"):
-                ks.append("t:" + norm_title(it["name"]))
-            for k in ks:
-                if keys.get(k) != "pushed":
-                    keys[k] = st
-    except Exception:
-        pass
-    return keys
+    return _common_load_ledger_keys(_ledger_path())
 
 
 KIND_RANK = {"lab_post": 0, "paper": 1, "model": 2, "release": 3, "repo": 4, "policy": 5, "essay": 6, "podcast": 7, "video": 8, "news": 9, "dataset": 10, "discussion": 11}
@@ -1138,8 +1108,7 @@ def save_triage_seen(cands, label: str, seen: dict[str, str]):
     cut = (datetime.strptime(label, "%Y-%m-%d") - timedelta(days=45)).strftime("%Y-%m-%d")
     new = {k: v for k, v in new.items() if v >= cut}
     sp = _triage_seen_path()
-    sp.parent.mkdir(parents=True, exist_ok=True)
-    sp.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(sp, json.dumps(new, ensure_ascii=False))
 
 
 SEC_KEYS = ["lab", "model", "tooling", "repo", "research_blog", "newsletter", "podcast",
@@ -1154,7 +1123,6 @@ SNIP_CH = {"news", "news_zh", "community", "chips_infra"}   # 这些频道权重
 
 
 # ── 论文「其余」档折叠：无任何信号的方向外论文只留一行计数 + 全量标题文件；有信号的保留标题 ──
-ARXIV_ID_RE = re.compile(r"(?<!\d)(\d{4}\.\d{4,5})(?!\d)")
 # 大结果/前沿类关键词（只扫「其余」档的标题+摘要；刻意收紧，避免 interpretability/benchmark 这类泛词把折叠档又撑回去）
 BIG_KW = [
     ("big_tech_report", r"technical report|tech report"),
@@ -1603,8 +1571,7 @@ def main(argv=None):
         if ctx.triage_v2 and not a.no_state and not a.only:
             save_triage_seen(cands, label, ctx.seen_prior)
         if not a.no_state:
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            state_path.write_text(json.dumps(ctx.state, ensure_ascii=False, indent=0), encoding="utf-8")
+            atomic_write_text(state_path, json.dumps(ctx.state, ensure_ascii=False, indent=0))
         errs = [r for r in report if r["status"] != "ok"]
         print(f"done in {elapsed:.1f}s: raw={len(allc)} dedup={len(cands)} errors={len(errs)} → {outdir}/candidates.jsonl", file=sys.stderr)
         for e in errs:
