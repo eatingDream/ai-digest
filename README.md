@@ -30,7 +30,7 @@ English | [简体中文](README.zh-CN.md)
 
 - **Warm editorial reader (`render_html.py`)** — single-file HTML with warm paper Light Mode & obsidian-charcoal/terracotta Dark Mode, full-bleed auto-hide TopBar (hides on scroll down, reveals on scroll up or 3 s pause), collapsible TopBar search drawer (`/` shortcut, zero body bloat) with frequency-sorted atomic tag chips, smooth live-tracked full-title sidebar TOC, copy-permalink anchors, clickable `AI Digest` brand home, and built-in `/favicon.svg`.
 - **Native bilingual routes & static `latest`** — auto-pairs sibling `<stem>.en.md` files into symmetric `/zh/` and `/en/` site trees (or single-file `--md-en` bilingual pages / `LANG_ALT` companion links), plus direct HTTP 200 `/daily/latest`, `/weekly/latest`, `/zh/daily/latest`, and `/en/daily/latest` pages served with `no-store`.
-- **Hardened public-first static publishing (`publish.py`)** — publishes a clean, password-free root site by default (`ENCRYPT=0`, `SLUG=`) with build-time SHA-256 hash-locked CSP (zero `'unsafe-inline'` scripts), HSTS/COOP/CORP/Permissions-Policy, Markdown XSS & raw `<img>` neutralization, and entity-aware privacy scanning. Opt-in client-side AES-256-GCM encryption + private random `SLUG` stays one flag away (`--init --encrypt` / `ENCRYPT=1`).
+- **Hardened public-first static publishing & GEO (`publish.py`, `geo.py`)** — publishes a clean, password-free root site by default (`ENCRYPT=0`, `SLUG=`) with build-time SHA-256 hash-locked CSP (zero `'unsafe-inline'` scripts), HSTS/COOP/CORP/Permissions-Policy, Markdown XSS & raw `<img>` neutralization, entity-aware privacy scanning, and built-in **GEO / Agent Readiness** (`robots.txt` Content Signals & AI bot rules, `sitemap.xml` with `hreflang`, `llms.txt`/`llms-full.txt`, Atom feeds, JSON-LD, per-page `.md` mirrors, Agent Skills discovery, and a zero-dependency Cloudflare Pages `_worker.js` for `Accept: text/markdown` and `/.well-known/search` via `GET`/`QUERY`). Opt-in client-side AES-256-GCM encryption + private random `SLUG` stays one flag away (`--init --encrypt` / `ENCRYPT=1`, disabling public GEO and keeping `Disallow: /`).
 - **Wide open recall + safe optional X sources (`fetch/`)** — pulls ~155 zero-key RSS/Atom/arXiv/HF/GitHub/blog/HN/Reddit sources in 10–40 s with `ledger.py` history deduplication (`★` pushed / `☆` seen). Optional X/Twitter recall works **without a Grok Bot** via free or paid safe APIs (see [Safe X recall without a Grok Bot](#safe-x-recall-without-a-grok-bot)).
 
 ## Architecture
@@ -115,7 +115,9 @@ Environment variables take precedence over `site/CONFIG`.
 |---|---|---|---|
 | `SITE_DOMAIN` | `DOMAIN` | Site domain | `digest.example.com` |
 | `SITE_SLUG` | `SLUG` | Optional path prefix (empty = root `/`; non-empty requires `>= 8` URL-safe chars) | empty (`--init --encrypt` generates random) |
-| `DIGEST_ENCRYPT` | `ENCRYPT` | Opt-in client-side AES-256-GCM password encryption (`1`/`true`/`yes`/`on`) | `0` (public) |
+| `DIGEST_ENCRYPT` | `ENCRYPT` | Opt-in client-side AES-256-GCM password encryption (`1`/`true`/`yes`/`on`; disables public GEO) | `0` (public) |
+| `DIGEST_GEO_AI_TRAIN` | `GEO_AI_TRAIN` | Public `Content-Signal` & training-crawler policy (`yes` or `no`; `ENCRYPT=0` only) | `yes` |
+| `DIGEST_GEO_WORKER` | `GEO_WORKER` | Emit Pages `_worker.js` for `Accept: text/markdown` & `/.well-known/search` (`1`/`0`; `ENCRYPT=0` only) | `1` (on) |
 | `CF_ACCOUNT_ID` | `ACCOUNT_ID` | Cloudflare account ID | — |
 | `CF_ZONE_ID` | `ZONE_ID` | Zone of the domain (optional) | — |
 | `CF_PAGES_PROJECT` | `PROJECT` | Cloudflare Pages project name | `ai-digest` |
