@@ -20,10 +20,14 @@ import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 import i18n  # noqa: E402
+from common import work_root  # noqa: E402
 
 FL = i18n.resolve_lang()
 
@@ -49,7 +53,7 @@ def main():
     if not os.path.isfile(path):
         print(f"error: file not found: {path}", file=sys.stderr)
         return 1
-    root = os.environ.get("DIGEST_ROOT") or ROOT
+    root = str(work_root())
     m = re.search(r"runs/(\d{4}-\d{2}-\d{2})/", path)
     dirs = a.dir or ([os.path.join(root, "runs", m.group(1), "fetch"), os.path.join(root, "runs", m.group(1), "fetch-extra")] if m else [])
     known = {}
@@ -73,7 +77,7 @@ def main():
             mm = re.match(r"^- (?:[★☆] )?(\d{4}\.\d{4,5})\b", ln)
             if mm:
                 ids.append(mm.group(1))
-                if any(w in tier.lower() for w in ("强", "必看", "strong", "must")):
+                if any(w in tier.lower() for w in i18n.CHECK_CANDS_STRONG_TIER_WORDS):
                     strong += 1
                 else:
                     weak += 1

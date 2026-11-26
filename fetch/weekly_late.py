@@ -20,19 +20,24 @@ Selection (always: not "pushed" in the ledger):
   filter: HF late/same-day papers are listed only with weight >= 2 or a top institution (--all lists everything).
 One line per item; fetch abstracts with `python3 fetch/cand.py --since <Monday> <arXiv id>`.
 """
-import argparse, glob, importlib.util, json, os, re, sys
+import argparse, glob, json, os, re, sys
 from datetime import datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.environ.get("DIGEST_ROOT") or os.path.dirname(HERE)
-spec = importlib.util.spec_from_file_location("fetchmod", os.path.join(HERE, "fetch.py"))
-fx = importlib.util.module_from_spec(spec)
-sys.modules["fetchmod"] = fx
-spec.loader.exec_module(fx)
+CODE_ROOT = os.path.dirname(HERE)
+if CODE_ROOT not in sys.path:
+    sys.path.insert(0, CODE_ROOT)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import i18n  # noqa: E402
+from common import ARXIV_ID_RE, canon_url, get_tz_local, load_ledger_keys, norm_title  # noqa: E402
+
+ROOT = os.environ.get("DIGEST_ROOT") or CODE_ROOT
+FL = i18n.resolve_lang()
 
 
 def tr(key, **kw):
-    return fx.i18n.ft(fx.FL, key, **kw)
+    return i18n.ft(FL, key, **kw)
 
 
 NONPAPER_CH = {"lab", "policy", "tooling", "research_blog", "newsletter", "podcast"}
@@ -46,7 +51,7 @@ def week_days(a):
         s = datetime.strptime(a.start, "%Y-%m-%d").date()
         e = datetime.strptime(a.end, "%Y-%m-%d").date()
     else:
-        d0 = datetime.strptime(a.day, "%Y-%m-%d").date() if a.day else (datetime.now(fx.TZ_LOCAL).date() - timedelta(days=7))
+        d0 = datetime.strptime(a.day, "%Y-%m-%d").date() if a.day else (datetime.now(get_tz_local()).date() - timedelta(days=7))
         s = d0 - timedelta(days=d0.weekday())
         e = s + timedelta(days=6)
     out, d = [], s
@@ -75,9 +80,10 @@ def main():
     ap.add_argument("--all", action="store_true", help="no filtering: list every HF-late paper (default: weight >=2 or a top institution only) and every non-paper item")
     ap.add_argument("--lang", help="en | zh-CN (default: $DIGEST_LANG, else en)")
     a = ap.parse_args()
+    global FL
     if a.lang:
         try:
-            fx.FL = fx.i18n.resolve_lang(a.lang)
+            FL = i18n.resolve_lang(a.lang)
         except ValueError as e:
             ap.error(str(e))
     root = os.environ.get("DIGEST_ROOT") or ROOT
@@ -103,12 +109,12 @@ def main():
             have.append(f"{S}-weekly({tr('wl_gap', start=meta['window_start'][5:16], end=meta['window_end'][5:16])})")
     except Exception:
         pass
-    ledger = fx.load_ledger_keys()
+    ledger = load_ledger_keys()
 
     def lstat(r):
         aid = (r.get("extra") or {}).get("arxiv_id")
-        k = f"arxiv:{aid}" if aid else fx.canon_url(r["url"])
-        return ledger.get(k) or ledger.get("t:" + fx.norm_title(r["title"])) or ""
+        k = f"arxiv:{aid}" if aid else canon_url(r["url"])
+        return ledger.get(k) or ledger.get("t:" + norm_title(r["title"])) or ""
 
     items, xref = {}, {}
     for day, p in srcs:
@@ -116,14 +122,14 @@ def main():
             ex = r.get("extra") or {}
             aid = ex.get("arxiv_id")
             if r["channel"] != "paper":
-                for m in fx.ARXIV_ID_RE.finditer(f"{r['url']} {r['title']} {r.get('summary') or ''}"):
+                for m in ARXIV_ID_RE.finditer(f"{r['url']} {r['title']} {r.get('summary') or ''}"):
                     xref.setdefault(m.group(1), []).append((day, r["source"], r["title"][:40]))
                 if r["channel"] in NONPAPER_CH:
-                    k = fx.canon_url(r["url"])
+                    k = canon_url(r["url"])
                     items.setdefault(k, {"kind": "np", "title": r["title"], "url": r["url"], "source": r["source"], "channel": r["channel"],
                                          "day": day, "pref": r.get("pref", 0), "pub": (r.get("published") or "")[5:16].replace("T", " "), "led": lstat(r)})
                 continue
-            k = f"arxiv:{aid}" if aid else fx.canon_url(r["url"])
+            k = f"arxiv:{aid}" if aid else canon_url(r["url"])
             it = items.setdefault(k, {"kind": "paper", "id": aid or r["url"], "title": r["title"], "first": day, "pref": 0, "hf_days": set(),
                                       "others": set(), "led": "", "org": "", "sid": r["id"][:6], "days": set(), "summary": ""})
             it["days"].add(day)

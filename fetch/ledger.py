@@ -27,12 +27,15 @@ import re
 import shutil
 import sys
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+CODE_ROOT = os.path.dirname(HERE)
 if CODE_ROOT not in sys.path:
     sys.path.insert(0, CODE_ROOT)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 import i18n  # noqa: E402
+from common import atomic_write_text, canon_url, get_tz_local, ledger_status as st  # noqa: E402
 
 FL = i18n.resolve_lang()
 
@@ -41,7 +44,7 @@ def tr(key, **kw):
     return i18n.ft(FL, key, **kw)
 
 
-TZ_LOCAL = ZoneInfo(os.environ.get("DIGEST_TZ") or "UTC")
+TZ_LOCAL = get_tz_local()
 ROOT = os.environ.get("DIGEST_ROOT", "").strip() or CODE_ROOT
 P = os.environ.get("LEDGER_PATH", "").strip() or os.path.join(ROOT, "ledger.json")
 
@@ -58,11 +61,6 @@ def load():
     except (OSError, ValueError) as e:
         print(f"error: cannot read ledger {P}: {e}", file=sys.stderr)
         sys.exit(2)
-
-
-def st(it):
-    s = f"{it.get('status') or ''} {it.get('category') or ''}"
-    return "seen" if "seen" in s else "pushed"
 
 
 def line(it):
@@ -141,8 +139,16 @@ def main():
             kind, name, iid, cat, urls, note = p[:6]
             (logP if kind.upper() == "P" else logS).append(f"- {name}{tr('lg_colon')}{note}" if note else f"- {name}")
             urls = urls.split()
+            canon_urls = {canon_url(u) for u in urls if u}
             iid = iid or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
-            hit = next((it for it in items if it.get("id") == iid or (urls and set(urls) & set(it.get("urls") or []))), None)
+            hit = next(
+                (
+                    it for it in items
+                    if it.get("id") == iid
+                    or (canon_urls and (canon_urls & {canon_url(u) for u in (it.get("urls") or []) if u}))
+                ),
+                None,
+            )
             status = "pushed" if kind.upper() == "P" else "seen-not-pushed"
             if hit:
                 if kind.upper() == "P":
@@ -154,15 +160,25 @@ def main():
                     hit["status"] = status
                 if urls:
                     existing_urls = list(hit.get("urls") or [])
+                    existing_canon = {canon_url(eu) for eu in existing_urls if eu}
                     for u in urls:
-                        if u not in existing_urls:
+                        cu = canon_url(u)
+                        if u not in existing_urls and cu not in existing_canon:
                             existing_urls.append(u)
+                            existing_canon.add(cu)
                     hit["urls"] = existing_urls
                 if note:
                     hit["notes"] = note
                 upd += 1
             else:
-                it = {"day": a.day, "name": name, "id": iid, "urls": urls, "first_seen": a.day, "category": cat or "other", "status": status}
+                dedup_urls = []
+                seen_canon = set()
+                for u in urls:
+                    cu = canon_url(u)
+                    if cu not in seen_canon:
+                        seen_canon.add(cu)
+                        dedup_urls.append(u)
+                it = {"day": a.day, "name": name, "id": iid, "urls": dedup_urls, "first_seen": a.day, "category": cat or "other", "status": status}
                 if kind.upper() == "P":
                     it["pushed"] = a.day
                 if note:
@@ -171,10 +187,7 @@ def main():
                 added += 1
         d["item_count"] = len(items)
         d["previous_digest_at"] = datetime.now(TZ_LOCAL).isoformat(timespec="minutes")
-        tmp = P + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(d, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, P)
+        atomic_write_text(P, json.dumps(d, ensure_ascii=False, indent=1))
         if a.json:
             print(json.dumps({"added": added, "updated": upd, "total": len(items)}))
         else:
