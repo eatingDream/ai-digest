@@ -358,7 +358,7 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(readerCss).toContain("min(1320px,88vw)");
     expect(readerCss).toContain("clamp(290px,22vw,330px) minmax(0,880px)");
     expect(readerCss).toContain(".folio-sections{display:none}");
-    expect(readerCss).toContain("scrollbar-color:#0000 #0000");
+    expect(readerCss).toContain("scrollbar-color:var(");
     expect(readerCss).toContain("max-width:760px");
     expect(readerCss).not.toContain("grid-column:3/6");
     expect(readerCss).not.toContain("text-wrap:balance");

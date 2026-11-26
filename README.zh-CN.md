@@ -30,7 +30,7 @@
 ## 核心特性
 
 - **零依赖单文件 Rust 二进制** — 内置异步信源召回（`fetch`）、去重账本（`ledger`）、精选辅助（`cand`、`page`、`xparse`）、单文件渲染（`render`）、静态站与 GEO 发布（`publish`）及双运行时回测（`verify`），无需 Python 或 Node 运行时。
-- **宽幅高质感编辑阅读器** — 暖纸浅色与暖炭黑深色双主题（零白屏闪烁）、微浮层资讯卡片、默认全展开支持 `Cmd+F` 检索的侧栏目录、距离自适应瞬达跳转、中英切换锚点锁定防跳动、统一胶囊搜索抽屉（`/`）、键盘导航（`j`/`k`/`[`/`]`）与构建期行内 LaTeX 数学公式。
+- **宽幅高质感编辑阅读器** — 暖纸浅色与暖炭黑深色双主题（零白屏闪烁）、清爽编辑流与头条高亮、默认全展开支持 `Cmd+F` 检索的侧栏目录、距离自适应瞬达跳转、中英切换锚点锁定防跳动、统一胶囊搜索抽屉（`/`）、键盘导航（`j`/`k`/`[`/`]`）与构建期行内 LaTeX 数学公式。
 - **原生双语路由与静态 `latest`** — 自动配对 `<同名>.en.md` 生成对称 `/zh/` 与 `/en/` 站点目录（亦支持 `--md-en` 单页双语），直接提供 HTTP 200 `/daily/latest` 与 `/weekly/latest`。
 - **默认公开的 Level 5/5 GEO 与 Agent 就绪** — 自动输出 `robots.txt` Content Signals、`sitemap.xml`、`llms.txt`/`llms-full.txt`、Atom 订阅、JSON-LD、全站 `.md` 镜像、Agent Skills 索引与 Cloudflare Pages `_worker.js`（支持 `Accept: text/markdown` 与 `GET`/`HEAD`/`QUERY` `/.well-known/search`）。
 - **纵深安全与可选客户端加密** — 构建期 SHA-256 哈希锁定 CSP（零 `'unsafe-inline'` 脚本）、严格安全响应头、Markdown XSS 净化、HTML5 实体解码隐私扫描，以及一条参数即可开启的客户端 AES-256-GCM 加密（`--init --encrypt`）。

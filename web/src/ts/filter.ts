@@ -33,6 +33,7 @@ export function initFilter(opts: FilterOptions): FilterController {
   const drawer =
     scope.querySelector<HTMLElement>(".filter-drawer") ??
     scope.querySelector<HTMLElement>("#digestFilterBar");
+  const inner = drawer?.querySelector<HTMLElement>(".filter-inner") ?? null;
   const input = drawer?.querySelector<HTMLInputElement>(".filter-input") ?? null;
   const countEl = drawer?.querySelector<HTMLElement>(".filter-count") ?? null;
   const clearBtns = Array.from(
@@ -52,10 +53,15 @@ export function initFilter(opts: FilterOptions): FilterController {
 
   const syncFilterHeight = (): void => {
     if (!isActive()) return;
-    const h =
+    const rawH =
       isDrawerOpen() && drawer
-        ? Math.round(drawer.getBoundingClientRect().height)
+        ? Math.max(
+            Math.round(drawer.getBoundingClientRect().height),
+            inner?.scrollHeight ?? 0
+          )
         : 0;
+    const maxH = Math.max(0, window.innerHeight - mast.getMastHeight());
+    const h = Math.min(rawH, maxH);
     document.documentElement.style.setProperty("--filter-h", `${h}px`);
     opts.onResize?.();
   };

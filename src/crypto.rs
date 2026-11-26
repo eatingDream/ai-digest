@@ -620,6 +620,8 @@ const KNOWN_PREVIOUS_RELEASE_HASHES: &[&str] = &[
     "'sha256-ULWcGE48zLdDVllI0EYBwq+iTR3kAcDbzv+3QVUarYQ='", // v1.0.1 boot.js
     "'sha256-2Ivlf0XJIcWpuKux6MsYqWgB57xkKsnxmYqoT9r6D4g='", // v1.0.1 reader.js
     "'sha256-aXNfRvBaL19OMemVpb9AUUGmEbb1BwKS6xDxb4Pb5HU='", // v1.0.1 index.js
+    "'sha256-9HqZwpsqf7FMp1SP40jMRJ6HOhL5ezGD/GcJa+n99Qw='", // v1.0.0/v1.0.1 unlock.js
+    "'sha256-bAOgKqYwVOp7VK1g8OY7p0/ZwTM83IkvpUD6b66i2Qw='", // v1.0.0/v1.0.1 lock.js
 ];
 
 #[derive(Clone, Debug)]

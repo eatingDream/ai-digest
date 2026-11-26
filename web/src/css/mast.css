@@ -1,5 +1,5 @@
 :root{
-  --bg-muted:light-dark(#e6dfd3,#26231f);--ink-2:light-dark(#35302a,#d8d1c7);--ink-4:light-dark(#786f63,#8a8175);
+  --bg-muted:light-dark(#e6dfd3,#26231f);--ink-2:light-dark(#35302a,#d8d1c7);--ink-4:light-dark(#736a5e,#8a8175);
   --accent-soft:light-dark(#b8543216,#df7d5620);--mast-bg:light-dark(#f6f3ecf0,#121110f0);
   --mast-h:56px;--mast-offset:56px;--mo:var(--mast-offset);--top:calc(var(--mo) + var(--filter-h,0px));--ls:.1em;--tt:none;
   --tm:.18s var(--ease);--shell-max:min(1320px,88vw);
@@ -28,7 +28,7 @@ a,button,.mast{transition:var(--tm)}
 .lang-btn{min-width:42px}
 .search-btn :is(span,kbd),.lang-seg [aria-current=page]{display:none}
 
-.folio{padding:20px 0 18px;border-bottom:var(--b);margin:0 0 16px;& h1{font:700 clamp(22px,2.2vw,30px)/1.25 var(--font-display)}}
+.folio{padding:20px 0;border-bottom:var(--b);margin:0 0 16px;& h1{font:700 clamp(22px,2.2vw,30px)/1.25 var(--font-display)}}
 .folio-kicker{margin:0 0 4px;font:600 11px var(--font-ui);letter-spacing:var(--ls);text-transform:var(--tt);color:var(--accent-ink)}
 .folio-dek{margin-top:6px;color:var(--ink-2)}
 .colophon{margin:24px 0;font-size:12.5px;color:var(--ink-4)}

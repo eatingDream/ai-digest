@@ -1,9 +1,9 @@
 .mast,.filter-drawer{background:var(--mast-bg);backdrop-filter:blur(12px)}
 .filter-drawer,.filter-input-wrap{transition:var(--tm)}
-.filter-drawer{display:grid;grid:0fr/1fr;position:fixed;inset:var(--mast-h) 0 auto;z-index:39;visibility:hidden;&.is-open{grid-template-rows:1fr;border-bottom:var(--b);box-shadow:var(--shadow-1);visibility:visible}}
+.filter-drawer{display:grid;grid:0fr/1fr;position:fixed;inset:var(--mast-h) 0 auto;z-index:39;visibility:hidden;&.is-open{grid-template-rows:1fr;max-height:calc(100dvh - var(--mast-h));overflow:auto;overscroll-behavior:contain;border-bottom:var(--b);box-shadow:var(--shadow-1);visibility:visible}}
 .filter-inner{min-height:0;overflow:hidden;width:100%;max-width:760px;margin:auto;padding:0 var(--pad-x)}
 .filter-input-wrap,.filter-tags{display:flex;align-items:center}
-.filter-input-wrap{gap:8px;height:40px;margin-top:12px;padding:0 10px 0 14px;background:var(--well);border:var(--b);border-radius:10px;&>svg{color:var(--ink-4)}&:focus-within{border-color:var(--line-strong)}}
+.filter-input-wrap{gap:8px;height:40px;margin-top:12px;padding:0 10px 0 14px;background:var(--well);border:var(--b);border-radius:10px;&>svg{color:var(--ink-4)}&:focus-within{border-color:var(--accent)}}
 .filter-input{flex:1;min-width:0;font-size:14px;outline:0;&::-webkit-search-cancel-button,&::-webkit-search-decoration{-webkit-appearance:none;appearance:none}}
 .filter-count,.filter-clear,.filter-close,.filter-tag{border-radius:9em}
 .filter-count,.filter-clear,.filter-tag{white-space:nowrap}
@@ -13,7 +13,7 @@
 .filter-count{padding:2px 8px}
 .filter-clear{padding:3px 9px;color:var(--accent-ink);&:hover{background:var(--accent-soft)}}
 .filter-close{display:grid;place-items:center;width:26px;height:26px;&:hover{background:var(--bg-muted);color:var(--ink)}}
-.filter-tags{flex-wrap:wrap;gap:7px;margin:12px 0;&.is-expanded{max-height:40vh;overflow:auto;overscroll-behavior:contain}}
+.filter-tags{flex-wrap:wrap;gap:7px;margin:12px 0}
 .search-btn[aria-expanded=true],.filter-tag:is(:hover,.is-active){background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
 .filter-tag{position:relative;display:inline-flex;align-items:center;height:28px;padding:0 11px;font-size:12.5px;color:var(--ink-2);&:active{scale:.98}&.is-active::after{content:"×";margin-left:5px}}
 .tag-cnt{color:var(--ink-4);font-size:11px;margin-left:5px}

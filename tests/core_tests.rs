@@ -1989,6 +1989,8 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
         "'sha256-ULWcGE48zLdDVllI0EYBwq+iTR3kAcDbzv+3QVUarYQ='",
         "'sha256-2Ivlf0XJIcWpuKux6MsYqWgB57xkKsnxmYqoT9r6D4g='",
         "'sha256-aXNfRvBaL19OMemVpb9AUUGmEbb1BwKS6xDxb4Pb5HU='",
+        "'sha256-9HqZwpsqf7FMp1SP40jMRJ6HOhL5ezGD/GcJa+n99Qw='",
+        "'sha256-bAOgKqYwVOp7VK1g8OY7p0/ZwTM83IkvpUD6b66i2Qw='",
     ] {
         assert!(
             allowlist.contains_hash(h),
