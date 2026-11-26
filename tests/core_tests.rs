@@ -1664,24 +1664,68 @@ fn reader_toc_collapsed_table_alignment_classes_and_bilingual_pane_hooks() {
     let en = fixture(DAILY_EN, Lang::En);
     let single = render::render_digest_html(&en, Lang::En, &RenderOptions::default());
 
-    // Section 0 expanded, sections 1..N collapsed with hidden <ol class="ts-items">
+    // User mandate: ALL TOC sections expanded by default on SSR regardless of item count (Cmd+F friendly)
+    assert_eq!(
+        single.matches(r#"data-open="true""#).count(),
+        en.sections.len()
+    );
     assert_eq!(
         single
             .matches(r#"class="ts-sec" aria-expanded="true""#)
             .count(),
-        1
-    );
-    assert_eq!(
-        single
-            .matches(r#"class="ts-sec" aria-expanded="false""#)
-            .count(),
-        en.sections.len() - 1
-    );
-    assert_eq!(
-        single.matches(r#"class="ts-items" id=""#).count(),
         en.sections.len()
     );
-    assert_eq!(single.matches(" hidden>\n").count(), en.sections.len() - 1);
+    assert_eq!(
+        single.matches(r#"class="ts-panel" id=""#).count(),
+        en.sections.len()
+    );
+    assert!(single.contains(r#"class="toc-expand-all" aria-expanded="true""#));
+
+    // Even large 25+ / 54-item issues render ALL TOC sections expanded by default on SSR
+    let mut big = en.clone();
+    while big.items().count() < 30 {
+        let next_n = big.items().count() + 1;
+        let mut extra = en.sections[0].entries[0].clone();
+        if let ai_digest::model::SectionEntry::Item(ref mut it) = extra {
+            it.id = format!("extra-{next_n}");
+            it.number = next_n.to_string();
+        }
+        big.sections[0].entries.push(extra);
+    }
+    let big_html = render::render_digest_html(&big, Lang::En, &RenderOptions::default());
+    assert_eq!(
+        big_html.matches(r#"data-open="true""#).count(),
+        big.sections.len()
+    );
+    assert_eq!(
+        big_html
+            .matches(r#"class="ts-sec" aria-expanded="true""#)
+            .count(),
+        big.sections.len()
+    );
+    assert_eq!(
+        big_html
+            .matches(r#"class="ts-sec" aria-expanded="false""#)
+            .count(),
+        0
+    );
+
+    // Leading 3D emojis stripped cleanly from rendered section headings & TOC
+    assert_eq!(render::strip_leading_emoji("🧠 模型与架构"), "模型与架构");
+    assert_eq!(render::strip_leading_emoji("🛠️ 工具与开源"), "工具与开源");
+    assert_eq!(render::strip_leading_emoji("⚡ 算力与芯片"), "算力与芯片");
+    assert_eq!(render::strip_leading_emoji("🛡️ 安全与治理"), "安全与治理");
+    assert_eq!(
+        render::strip_leading_emoji("Models & Benchmarks"),
+        "Models & Benchmarks"
+    );
+
+    assert!(single.contains(r#"<meta name="color-scheme" content="dark">"#));
+    assert!(single.contains(r#"<script type="speculationrules">"#));
+    assert!(single.contains(r#"<div class="filter-inner">"#));
+    assert!(single.contains(r#"class="ctrl-btn to-top" data-to-top"#));
+    assert!(single.contains(r#"class="ts-num num""#));
+    assert!(single.contains(r#"class="sec-cnt num""#));
 
     // Markdown table alignment uses CSS classes ta-l/ta-c/ta-r and zero inline style=
     let table_html = render::render_markdown(
@@ -1785,5 +1829,167 @@ fn reader_toc_collapsed_table_alignment_classes_and_bilingual_pane_hooks() {
         ] {
             assert!(pane.contains(hook), "missing {hook} in lang-pane");
         }
+    }
+}
+
+#[test]
+fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
+    // 1. Technical hyphen protection helper
+    assert_eq!(
+        render::protect_technical_hyphens("SWE-2.1"),
+        "SWE\u{2011}2.1"
+    );
+    assert_eq!(
+        render::protect_technical_hyphens("Orion-3 Mini and Nemotron-Labs-Image"),
+        "Orion\u{2011}3 Mini and Nemotron\u{2011}Labs\u{2011}Image"
+    );
+    assert_eq!(
+        render::protect_technical_hyphens("plain - spaced --flag"),
+        "plain - spaced --flag"
+    );
+
+    // 2. Rendered markdown preserves ASCII '-' in URLs, inline code, and code blocks
+    let md = "Check [SWE-2.1](https://example.com/swe-2-1) and `agentkit-lite` and Nemotron-Labs-Image.\n\n```sh\nrun-tool --dry-run\n```";
+    let html = render::render_markdown(md, false);
+    assert!(
+        html.contains(r#"href="https://example.com/swe-2-1""#),
+        "URL href must preserve ASCII hyphen: {html}"
+    );
+    assert!(
+        html.contains(">SWE\u{2011}2.1</a>"),
+        "Link text must protect technical hyphen: {html}"
+    );
+    assert!(
+        html.contains("<code>agentkit-lite</code>"),
+        "Inline code must preserve ASCII hyphen: {html}"
+    );
+    assert!(
+        html.contains("run-tool --dry-run"),
+        "Fenced code block must preserve ASCII hyphen: {html}"
+    );
+    assert!(
+        html.contains("Nemotron\u{2011}Labs\u{2011}Image"),
+        "Prose text must protect technical hyphen: {html}"
+    );
+
+    // 3. Empty section omitted from .folio-sections AND .filter-drawer placed outside fixed </header>
+    let md_with_empty = "\
+**AI精选日报 · 11/26**
+
+## 今日必读
+
+## 🧠 模型
+
+### 1. SWE-2.1：Nemotron-Labs-Image 联合发布
+`Acme Labs · 11/26 · 强化学习 / 代码`
+
+**一句话：** SWE-2.1 与 Orion-3 Mini 同步更新。
+
+**值得看：** 保持 `swe-2.1` 代码标识不变。
+
+🔗 [官方博客](https://example.com/swe-2-1)
+";
+    let digest = parser::parse_digest_md(md_with_empty, Lang::ZhCn, Some(2026)).unwrap();
+    let doc = render::render_digest_html(&digest, Lang::ZhCn, &RenderOptions::default());
+
+    let folio_nav = doc
+        .split_once(r#"<nav class="folio-sections""#)
+        .unwrap()
+        .1
+        .split_once("</nav>")
+        .unwrap()
+        .0;
+    assert!(
+        !folio_nav.contains("今日必读"),
+        "empty section must be omitted from .folio-sections: {folio_nav}"
+    );
+    assert!(
+        folio_nav.contains("模型"),
+        "non-empty section must appear in .folio-sections: {folio_nav}"
+    );
+
+    // Filter drawer sits in normal document flow AFTER fixed </header>, before .reader-shell
+    let mast_end = doc.find("</header>").expect("mast </header>");
+    let filter_pos = doc
+        .find(r#"class="filter-bar filter-drawer""#)
+        .expect("filter drawer");
+    let shell_pos = doc.find(r#"class="reader-shell""#).expect("reader shell");
+    assert!(
+        mast_end < filter_pos && filter_pos < shell_pos,
+        "filter-drawer must sit between </header> ({mast_end}) and .reader-shell ({shell_pos}), got {filter_pos}"
+    );
+
+    // TOC and story protect technical hyphens while href keeps ASCII '-'
+    assert!(doc.contains("SWE\u{2011}2.1"));
+    assert!(doc.contains("Nemotron\u{2011}Labs\u{2011}Image"));
+    assert!(doc.contains("Orion\u{2011}3 Mini"));
+    assert!(doc.contains(r#"href="https://example.com/swe-2-1""#));
+    assert!(doc.contains("<code>swe-2.1</code>"));
+
+    // 4. strip_leading_emoji removes pictographic emojis but preserves technical symbols (⌘, ①)
+    assert_eq!(render::strip_leading_emoji("🧠 模型"), "模型");
+    assert_eq!(render::strip_leading_emoji("⌘ 键快捷键"), "⌘ 键快捷键");
+    assert_eq!(render::strip_leading_emoji("① 核心结论"), "① 核心结论");
+
+    // 5. Privacy scan still detects hyphenated secrets & custom hyphen rules in rendered HTML
+    let fake_token = ["sk", "-", "1234567890abcdefghijklmnop"].concat();
+    let leak_md = format!(
+        "\
+**AI精选日报 · 11/26**
+
+## 🧠 模型
+
+### 1. Leak-Check
+`Lab · 11/26 · 安全`
+
+**一句话：** Token {fake_token} and corp-secret-token appeared in prose.
+
+🔗 [Note](https://example.com/note)
+"
+    );
+    let leak_digest = parser::parse_digest_md(&leak_md, Lang::ZhCn, Some(2026)).unwrap();
+    let leak_html = render::render_digest_html(&leak_digest, Lang::ZhCn, &RenderOptions::default());
+    assert!(leak_html.contains(&fake_token.replace('-', "\u{2011}")));
+    let td = tempfile::tempdir().unwrap();
+    let plain = td.path().join("plain");
+    let public = td.path().join("public");
+    fs::create_dir_all(&plain).unwrap();
+    fs::create_dir_all(&public).unwrap();
+    fs::write(plain.join("leak.html"), &leak_html).unwrap();
+    assert!(
+        crypto::privacy_scan_with_patterns(td.path(), &plain, &public, None).is_err(),
+        "privacy_scan must still catch hyphenated token secrets after U+2011 protection"
+    );
+    let custom_md = leak_md.replace(&fake_token, "benign-id");
+    let custom_digest = parser::parse_digest_md(&custom_md, Lang::ZhCn, Some(2026)).unwrap();
+    let custom_html =
+        render::render_digest_html(&custom_digest, Lang::ZhCn, &RenderOptions::default());
+    fs::write(plain.join("leak.html"), &custom_html).unwrap();
+    let rules_file = td.path().join("custom-rules.txt");
+    fs::write(&rules_file, "corp-secret-token\tcustom-corp\n").unwrap();
+    assert!(
+        crypto::privacy_scan_with_patterns(td.path(), &plain, &public, Some(&rules_file)).is_err(),
+        "privacy_scan must still catch custom hyphenated rules after U+2011 protection"
+    );
+
+    // 6. Incremental upgrade: previous v1.0.0 inline boot.js/reader.js hashes remain allowlisted
+    let allowlist = crypto::ScriptAllowlist::default();
+    let legacy_doc = format!(
+        "<!doctype html><html><head><script>{}</script></head><body></body></html>",
+        "alert('untrusted')"
+    );
+    assert!(
+        crypto::collect_script_hashes(&legacy_doc, &allowlist).is_err(),
+        "arbitrary inline scripts must remain rejected"
+    );
+    for h in [
+        "'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0='",
+        "'sha256-za2UDgPTC4kgNKKeVfbNEujaIgnNHJnzdVgff5jcG5o='",
+        "'sha256-2d1HlyBoJ0RTWBo1V8cJq5gqndqRo/+j5jGqg+hN+Vk='",
+    ] {
+        assert!(
+            allowlist.contains_hash(h),
+            "v1.0.0 script hash {h} must remain allowlisted for incremental publish upgrades"
+        );
     }
 }

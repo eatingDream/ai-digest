@@ -31,7 +31,7 @@ Prefer native Markdown and search endpoints over scraping HTML (~70% fewer token
 
 ## 2. Operating the Local `ai-digest` Pipeline
 
-Run commands with the compiled `ai-digest` binary (`target/release/ai-digest` or `ai-digest` on `PATH`; set `DIGEST_ROOT` for isolated working data):
+Run commands with the compiled `ai-digest` binary (`target/release/ai-digest` or `ai-digest` on `PATH`; set `DIGEST_ROOT` for isolated working data). See [`docs/ai-guide.md`](../../docs/ai-guide.md) for the full environment variable / `site/CONFIG` reference and safe optional X recall setup:
 
 | Step | Command | Notes |
 | --- | --- | --- |
