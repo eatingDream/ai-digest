@@ -1,0 +1,1 @@
+"use strict";(()=>{var e="aie.k";document.addEventListener("click",t=>{if(t.target?.closest?.("[data-lock]")){t.preventDefault();try{sessionStorage.removeItem(e)}catch{}try{localStorage.removeItem(e)}catch{}location.reload()}});})();

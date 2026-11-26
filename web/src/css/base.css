@@ -1,0 +1,17 @@
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--bg);color:var(--ink)}
+body,h1,h2,h3,h4,p,ol,ul{margin:0}
+body{font:16px/1.8 var(--font-ui);-webkit-font-smoothing:antialiased;text-size-adjust:100%}
+:lang(en) body{font:17px/1.62 var(--font-ui);overflow-wrap:break-word}
+ol,ul{padding:0;list-style:none}
+h1,h2,h3{text-wrap:balance}
+p{text-wrap:pretty}
+::selection{background:light-dark(#b854322e,#df7d5647)}
+a{color:var(--accent-ink);text-decoration:none}
+button,input{font:inherit;color:inherit;background:none;border:0;padding:0}
+button{cursor:pointer}
+svg{width:16px;height:16px;flex:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+.ta-l{text-align:left}.ta-c{text-align:center}.ta-r{text-align:right}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}

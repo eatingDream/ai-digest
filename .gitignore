@@ -9,9 +9,9 @@ fetch/preferences.json
 !.env.example
 secrets/
 *password*
-!site/password_template.html
 *salt*
 *token*
+!web/src/css/tokens.css
 x-sources.local.md
 
 # working data
@@ -28,19 +28,23 @@ weekly-*.md
 !examples/*.md
 fetch/state/
 
-# generated site output
+# generated site output (do NOT ignore web/dist/)
 site/plain/
 site/sources/
 site/public/*/
 site/public/_redirects
 site/enc-cache.json
 site/removed-paths.txt
-dist/
+/dist/
+dist-*/
 
-# tooling
+# tooling & build artifacts
+/target
+web/node_modules
 node_modules/
 .wrangler/
 .publish.lock
+.DS_Store
 __pycache__/
 *.pyc
 .pytest_cache/
