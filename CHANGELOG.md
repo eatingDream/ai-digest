@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.0.2](https://github.com/eatingDream/ai-digest/compare/v1.0.1...v1.0.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* editorial TOC rail, calm story stream, accessibility, and CI sanitization ([#63](https://github.com/eatingDream/ai-digest/issues/63)) ([21f3abf](https://github.com/eatingDream/ai-digest/commit/21f3abfc0e847b18ce85120b07d8b276bed3e38b))
+
 ## [1.0.1](https://github.com/eatingDream/ai-digest/compare/v1.0.0...v1.0.1) (2026-11-26)
 
 
