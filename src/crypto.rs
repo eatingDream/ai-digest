@@ -93,7 +93,7 @@ pub fn encrypt_payload_with_nonce(
     let compressed = encoder.finish()?;
     let cipher = Aes256Gcm::new(key.into());
     let ct = cipher
-        .encrypt(Nonce::from_slice(&nonce), compressed.as_slice())
+        .encrypt(&Nonce::from(nonce), compressed.as_slice())
         .map_err(|_| anyhow!("AES-GCM encryption failed"))?;
     Ok(Envelope {
         v: 2,
@@ -154,7 +154,7 @@ fn decrypt_payload(
     ct: &[u8],
 ) -> Result<Vec<u8>> {
     let packed = Aes256Gcm::new(key.into())
-        .decrypt(Nonce::from_slice(&iv), ct)
+        .decrypt(&Nonce::from(iv), ct)
         .map_err(|_| anyhow!("AES-GCM authentication failed"))?;
     if version == 1 {
         ensure!(

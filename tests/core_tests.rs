@@ -817,7 +817,7 @@ fn fixed_cross_runtime_vectors_cover_crypto_and_gzip_header() {
     );
     let packed = Aes256Gcm::new((&key).into())
         .decrypt(
-            Nonce::from_slice(&NONCE),
+            &Nonce::from(NONCE),
             STANDARD.decode(&rust.ct).unwrap().as_slice(),
         )
         .unwrap();

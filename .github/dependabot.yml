@@ -4,11 +4,28 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
+    ignore:
+      # aes >= 0.9.3 bumps MSRV to 1.89, above Cargo.toml rust-version = "1.88".
+      - dependency-name: aes
+        versions:
+          - ">= 0.9.3"
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
