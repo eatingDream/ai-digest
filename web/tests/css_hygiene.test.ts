@@ -38,22 +38,22 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
       <button type="button" class="ctrl-btn lock-btn" data-lock></button>
     </div>
   </div>
-  <div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
-    <div class="filter-inner">
-      <div class="filter-input-wrap">
-        <input type="search" class="filter-input">
-        <span class="filter-count">1</span>
-        <button type="button" class="filter-clear" hidden>Clear</button>
-        <button type="button" class="filter-close">Close</button>
-      </div>
-      <div class="filter-tags">
-        <button type="button" class="filter-tag" data-tag="llm">LLM<span class="tag-cnt num">1</span></button>
-        <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
-      </div>
-    </div>
-  </div>
 </header>
 <div class="read-prog"><div class="read-prog-fill"></div></div>
+<div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
+  <div class="filter-inner">
+    <div class="filter-input-wrap">
+      <input type="search" class="filter-input">
+      <span class="filter-count">1</span>
+      <button type="button" class="filter-clear" hidden>Clear</button>
+      <button type="button" class="filter-close">Close</button>
+    </div>
+    <div class="filter-tags">
+      <button type="button" class="filter-tag" data-tag="llm">LLM<span class="tag-cnt num">1</span></button>
+      <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
+    </div>
+  </div>
+</div>
 <div class="reader-shell">
   <nav class="toc-side" id="toc-sheet">
     <div class="toc-handle"></div>
@@ -131,21 +131,21 @@ const INDEX_FIXTURE_HTML = `<!DOCTYPE html>
       <button type="button" class="ctrl-btn lock-btn" data-lock></button>
     </div>
   </div>
-  <div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
-    <div class="filter-inner">
-      <div class="filter-input-wrap">
-        <input type="search" class="filter-input">
-        <span class="filter-count">19</span>
-        <button type="button" class="filter-clear" hidden>Clear</button>
-        <button type="button" class="filter-close">Close</button>
-      </div>
-      <div class="filter-tags">
-        <button type="button" class="filter-tag" data-tag="llm">LLM<span class="tag-cnt num">5</span></button>
-        <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
-      </div>
+</header>
+<div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
+  <div class="filter-inner">
+    <div class="filter-input-wrap">
+      <input type="search" class="filter-input">
+      <span class="filter-count">19</span>
+      <button type="button" class="filter-clear" hidden>Clear</button>
+      <button type="button" class="filter-close">Close</button>
+    </div>
+    <div class="filter-tags">
+      <button type="button" class="filter-tag" data-tag="llm">LLM<span class="tag-cnt num">5</span></button>
+      <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
     </div>
   </div>
-</header>
+</div>
 <main id="main" class="paper">
   <header class="folio">
     <p class="folio-kicker">ARCHIVE</p>
@@ -366,7 +366,9 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(readerCss).toContain("::view-transition-group(root){animation:none}");
     expect(readerCss).toContain("view-transition-name:mast");
     expect(readerCss).toContain(".ts-panel{display:grid;grid:0fr/1fr");
-    expect(readerCss).toContain(".filter-drawer{display:grid;grid:0fr/1fr");
+    expect(readerCss).toContain(".filter-drawer{display:grid;grid:0fr/1fr;position:sticky");
+    expect(readerCss).toContain(".sr-only{position:fixed;top:0;left:0");
+    expect(readerCss).toContain("::-webkit-search-cancel-button");
     expect(readerCss).toContain(".is-arrived{animation:");
     expect(readerCss).toContain(".to-top{position:fixed");
 

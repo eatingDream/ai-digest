@@ -16,7 +16,7 @@
 .quick-pill small{color:var(--ink-3)}
 
 .timeline{display:flex;flex-direction:column;gap:28px}
-.month{position:sticky;top:var(--mast-offset);z-index:5;padding:8px 0;background:var(--bg);border-bottom:var(--b);transition:top var(--tm)}
+.month{position:sticky;top:var(--top);z-index:5;padding:8px 0;background:var(--bg);border-bottom:var(--b);transition:top var(--tm)}
 .grp>summary{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 0;border-bottom:var(--b);list-style:none;cursor:pointer;color:var(--ink-2)}
 .grp>summary::-webkit-details-marker{display:none}
 .grp>summary::after{content:"\203a";margin-left:auto;color:var(--ink-4);transition:rotate .2s var(--ease)}

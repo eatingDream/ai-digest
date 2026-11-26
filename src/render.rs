@@ -24,7 +24,7 @@ const TOP_SLOT: &str = "<!-- digest-nav-slot -->";
 const BOTTOM_SLOT: &str = "<!-- digest-nav-bottom-slot -->";
 
 // Native pane selection also works before the reader script initializes.
-const BILINGUAL_CSS: &str = ".lang-en,#en-language:checked~.lang-zh,#language-zh:not(:checked)~.lang-zh:has(~.lang-en :target){display:none}#en-language:checked~.lang-en,#language-zh:not(:checked)~.lang-en:has(:target){display:block}.lang-seg label{cursor:pointer;padding:0 9px}.sr-only:focus-visible~.lang-pane .lang-seg{outline:2px solid var(--accent)}";
+const BILINGUAL_CSS: &str = ".lang-en,#en-language:checked~.lang-zh,#language-zh:not(:checked)~.lang-zh:has(~.lang-en :target){display:none}#en-language:checked~.lang-en,#language-zh:not(:checked)~.lang-en:has(:target){display:block}.lang-seg label{cursor:pointer}.sr-only:focus-visible~.lang-pane .lang-seg{outline:2px solid var(--accent)}";
 
 #[derive(Clone, Debug)]
 pub struct RenderOptions {
@@ -42,6 +42,33 @@ impl Default for RenderOptions {
             folio_dek: String::new(),
             edition_number: None,
         }
+    }
+}
+
+pub fn protect_technical_hyphens(text: &str) -> Cow<'_, str> {
+    if !text.contains('-') {
+        return Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    for i in 1..bytes.len().saturating_sub(1) {
+        if bytes[i] == b'-'
+            && bytes[i - 1].is_ascii_alphanumeric()
+            && bytes[i + 1].is_ascii_alphanumeric()
+        {
+            let buf = out.get_or_insert_with(|| String::with_capacity(text.len() + 8));
+            buf.push_str(&text[copied..i]);
+            buf.push('\u{2011}');
+            copied = i + 1;
+        }
+    }
+    match out {
+        Some(mut buf) => {
+            buf.push_str(&text[copied..]);
+            Cow::Owned(buf)
+        }
+        None => Cow::Borrowed(text),
     }
 }
 
@@ -64,6 +91,8 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
     let (prepared, formulas) = protect_math(text, options, slot);
     let mut events = Vec::new();
     let mut links = Vec::new();
+    let mut autolinks = Vec::new();
+    let mut in_code_block = false;
     let mut table_aligns: Vec<Vec<Alignment>> = Vec::new();
     let mut in_table_head = false;
     let mut cell_idx = 0usize;
@@ -86,13 +115,27 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                 },
             ) => skip += 1,
             Event::Html(_) | Event::InlineHtml(_) => {}
+            Event::Start(Tag::CodeBlock(_)) if inline => {
+                in_code_block = true;
+            }
+            Event::End(TagEnd::CodeBlock) if inline => {
+                in_code_block = false;
+                events.push(Event::Text(CowStr::Borrowed(" ")));
+            }
+            Event::Start(Tag::CodeBlock(kind)) => {
+                in_code_block = true;
+                events.push(Event::Start(Tag::CodeBlock(kind)));
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code_block = false;
+                events.push(Event::End(TagEnd::CodeBlock));
+            }
             Event::Start(
                 Tag::Paragraph
                 | Tag::Heading { .. }
                 | Tag::BlockQuote(_)
                 | Tag::List(_)
                 | Tag::Item
-                | Tag::CodeBlock(_)
                 | Tag::Table(_)
                 | Tag::TableHead
                 | Tag::TableRow
@@ -104,7 +147,6 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                 | TagEnd::BlockQuote(_)
                 | TagEnd::List(_)
                 | TagEnd::Item
-                | TagEnd::CodeBlock
                 | TagEnd::Table
                 | TagEnd::TableHead
                 | TagEnd::TableRow
@@ -159,20 +201,26 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                 })));
             }
             Event::Start(Tag::Link {
-                dest_url, title, ..
+                link_type,
+                dest_url,
+                title,
+                ..
             }) => {
                 let url = link_markup(&dest_url, &title, prefix, false);
                 links.push(url.is_some());
+                autolinks.push(matches!(link_type, LinkType::Autolink));
                 if let Some(markup) = url {
                     events.push(Event::InlineHtml(CowStr::from(markup)));
                 }
             }
             Event::End(TagEnd::Link) => {
+                autolinks.pop();
                 if links.pop().unwrap_or(false) {
                     events.push(Event::InlineHtml(CowStr::Borrowed("</a>")));
                 }
             }
             Event::Text(s) if !formulas.is_empty() && s.contains(slot) => {
+                let protect = !in_code_block && !autolinks.last().copied().unwrap_or(false);
                 let mut rest = s.as_ref();
                 while let Some((before, tail)) = rest.split_once(slot) {
                     let Some((key, after)) = tail.split_once('\u{e001}') else {
@@ -182,11 +230,27 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                     else {
                         break;
                     };
-                    events.push(Event::Text(CowStr::from(before.to_owned())));
+                    let before_txt = if protect {
+                        protect_technical_hyphens(before).into_owned()
+                    } else {
+                        before.to_owned()
+                    };
+                    events.push(Event::Text(CowStr::from(before_txt)));
                     events.push(Event::InlineHtml(CowStr::from(html.as_str())));
                     rest = after;
                 }
-                events.push(Event::Text(CowStr::from(rest.to_owned())));
+                let rest_txt = if protect {
+                    protect_technical_hyphens(rest).into_owned()
+                } else {
+                    rest.to_owned()
+                };
+                events.push(Event::Text(CowStr::from(rest_txt)));
+            }
+            Event::Text(s) if !in_code_block && !autolinks.last().copied().unwrap_or(false) => {
+                match protect_technical_hyphens(&s) {
+                    Cow::Borrowed(_) => events.push(Event::Text(s)),
+                    Cow::Owned(protected) => events.push(Event::Text(CowStr::from(protected))),
+                }
             }
             other => events.push(other),
         }
@@ -478,7 +542,7 @@ impl Reader<'_> {
             prefix,
             bilingual,
         } = *self;
-        let title = esc(&digest.full_title());
+        let title = esc(&protect_technical_hyphens(&digest.full_title()));
         let total = digest.items().count();
         let home = prefix_fragment(
             normalized_safe_url(&opts.home_href).unwrap_or_else(|| "./".into()),
@@ -505,7 +569,7 @@ impl Reader<'_> {
         };
         writeln!(out, r#"<header class="mast"><div class="mast-row"><h1 class="np"><a class="np-link" href="{}" data-brand-home><span class="ai">AI</span> Digest</a></h1><span class="edition" data-kind="{kind}">{edition}{}{date}</span><span class="mast-sep" aria-hidden="true"></span>{TOP_SLOT}"#, esc(&home), if date.is_empty() { "" } else { " · " }).unwrap();
         tools(out, lang, prefix, opts.lang_alt.as_ref(), bilingual);
-        out.push_str("</div>\n");
+        out.push_str("</div></header>\n<div class=\"read-prog\" aria-hidden=\"true\"><div class=\"read-prog-fill\"></div></div>\n");
         filter_panel(
             out,
             lang,
@@ -514,7 +578,7 @@ impl Reader<'_> {
             &tags_by_count(digest.items().flat_map(|it| &it.tags)),
             false,
         );
-        out.push_str("</header>\n<div class=\"read-prog\" aria-hidden=\"true\"><div class=\"read-prog-fill\"></div></div>\n<div class=\"reader-shell\">\n");
+        out.push_str("<div class=\"reader-shell\">\n");
         self.toc(out);
         writeln!(out, r#"<main id="{prefix}main" class="prose-col"><header class="folio"><p class="folio-kicker">{edition}{} </p><h1>{title}</h1>"#,
             opts.edition_number.map_or_else(String::new, |n| match lang { Lang::En => format!(" · No. {n}"), Lang::ZhCn => format!(" · 第 {n} 期") })).unwrap();
@@ -542,14 +606,18 @@ impl Reader<'_> {
         writeln!(out, r#"<span class="mast-meta"><span>{}</span><span>{} · {reading}</span><span class="motto">{}</span></span><nav class="folio-sections" aria-label="{}">"#,
             esc(&period), i18n::count_items(lang, total), t(lang, "motto"), esc(t(lang, "issue_sections"))).unwrap();
         for (i, sec) in digest.sections.iter().enumerate() {
-            writeln!(out, r##"<a href="#{prefix}{}"><span class="num">{:02}</span> {} <span class="num">{}</span></a>"##, esc(&sec.id), i + 1, esc(strip_leading_emoji(&sec.title)), sec.items().count()).unwrap();
+            let count = sec.items().count();
+            if count == 0 {
+                continue;
+            }
+            writeln!(out, r##"<a href="#{prefix}{}"><span class="num">{:02}</span> {} <span class="num">{count}</span></a>"##, esc(&sec.id), i + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&sec.title)))).unwrap();
         }
         out.push_str("</nav></header>\n");
         self.front(out);
         let mut lead = true;
         for (idx, section) in digest.sections.iter().enumerate() {
             writeln!(out, r#"<section class="sec" id="{prefix}{}"><div class="sec-head"><span class="sec-no num">{:02}</span><h2>{}</h2><span class="sec-cnt num">{}</span>"#,
-                esc(&section.id), idx + 1, esc(strip_leading_emoji(&section.title)), section.items().count()).unwrap();
+                esc(&section.id), idx + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&section.title))), section.items().count()).unwrap();
             if !section.note.is_empty() {
                 writeln!(
                     out,
@@ -561,9 +629,12 @@ impl Reader<'_> {
             out.push_str("</div>\n");
             for entry in &section.entries {
                 match entry {
-                    SectionEntry::Subheading(title) => {
-                        writeln!(out, r#"<h3 class="subhead">{}</h3>"#, esc(title)).unwrap()
-                    }
+                    SectionEntry::Subheading(title) => writeln!(
+                        out,
+                        r#"<h3 class="subhead">{}</h3>"#,
+                        esc(&protect_technical_hyphens(title))
+                    )
+                    .unwrap(),
                     SectionEntry::Item(item) => {
                         self.story(out, item, lead);
                         lead = false;
@@ -612,16 +683,17 @@ impl Reader<'_> {
         }
         for (idx, sec) in digest.sections.iter().enumerate() {
             let id = esc(&sec.id);
-            let title = esc(strip_leading_emoji(&sec.title));
+            let title = esc(&protect_technical_hyphens(strip_leading_emoji(&sec.title)));
             let count = sec.items().count();
             writeln!(out, r#"<div class="ts-group" data-sec="{prefix}{id}" data-open="true"><button type="button" class="ts-sec" aria-expanded="true" aria-controls="{prefix}ts-list-{id}"><span class="ts-no num">{:02}</span><span class="ts-title">{title}</span><span class="ts-cnt num" data-total="{count}">{count}</span></button><div class="ts-panel" id="{prefix}ts-list-{id}"><ol class="ts-items">"#,
                 idx + 1).unwrap();
             for item in sec.items() {
-                let title = esc(&item.title);
+                let raw_title = esc(&item.title);
+                let title = esc(&protect_technical_hyphens(&item.title));
                 let num = esc(&item.number);
                 writeln!(
                     out,
-                    r##"<li><a href="#{prefix}{}" title="{title}"><span class="ts-num num">{num}.</span><span>{title}{}</span></a></li>"##,
+                    r##"<li><a href="#{prefix}{}" title="{raw_title}"><span class="ts-num num">{num}.</span><span>{title}{}</span></a></li>"##,
                     esc(&item.id),
                     if item.is_new {
                         r#"<span class="dot-hot" aria-hidden="true"></span>"#
@@ -654,7 +726,7 @@ impl Reader<'_> {
                         Lang::ZhCn => format!("（{}）", esc(&must.when)),
                     }
                 };
-                let title = esc(&must.title);
+                let title = esc(&protect_technical_hyphens(&must.title));
                 write!(
                     out,
                     r#"<li><span class="must-n num">{:02}</span><div class="must-body">"#,
@@ -888,7 +960,7 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
     skip_link(&mut out, lang, "");
     write!(out, r#"<header class="mast"><div class="mast-row"><h1 class="np"><span class="ai">AI</span> Digest</h1><span class="mast-chip">{}</span>"#, i18n::count_issues(lang, issues.len())).unwrap();
     tools(&mut out, lang, "", opts.lang_alt.as_ref(), false);
-    out.push_str("</div>\n");
+    out.push_str("</div></header>\n");
     filter_panel(
         &mut out,
         lang,
@@ -902,8 +974,8 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
     } else {
         &opts.folio_dek
     };
-    writeln!(out, r#"</header><main id="main" class="paper"><header class="folio"><p class="folio-kicker">{}</p><h1>{}</h1><p class="folio-dek">{}</p></header><div class="quick-bar">"#,
-        lang.choose("Archive", "存档"), lang.choose("Daily & Weekly AI Briefings", "每日与每周 AI 简报"), esc(dek)).unwrap();
+    writeln!(out, r#"<main id="main" class="paper"><header class="folio"><p class="folio-kicker">{}</p><h1>{}</h1><p class="folio-dek">{}</p></header><div class="quick-bar">"#,
+        lang.choose("Archive", "存档"), lang.choose("Daily & Weekly AI Briefings", "每日与每周 AI 简报"), esc(&protect_technical_hyphens(dek))).unwrap();
     for (weekly, kind, key) in [
         (false, "daily", "latest_daily"),
         (true, "weekly", "latest_weekly"),
@@ -1008,7 +1080,7 @@ fn archive_row(out: &mut String, issue: &ArchiveIssue, lang: Lang) {
     };
     let href = normalized_safe_url(&issue.href).unwrap_or_else(|| "./".into());
     writeln!(out, r#"<li class="archive-item" data-kind="{kind}" data-tags="{}" data-search="{}"><a class="ai-row" href="{}"><span class="ai-date">{date}</span><span class="ai-wd">{}</span><span class="ai-title">{}</span><span class="ai-cnt num">{}</span></a></li>"#,
-        esc(&issue.tags.join("|")), esc(&search), esc(&href), i18n::weekday_short(lang, issue.date), esc(title), i18n::count_items(lang, issue.item_count)).unwrap();
+        esc(&issue.tags.join("|")), esc(&search), esc(&href), i18n::weekday_short(lang, issue.date), esc(&protect_technical_hyphens(title)), i18n::count_items(lang, issue.item_count)).unwrap();
 }
 
 pub fn render_404_html() -> String {

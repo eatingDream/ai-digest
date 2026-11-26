@@ -1831,3 +1831,98 @@ fn reader_toc_collapsed_table_alignment_classes_and_bilingual_pane_hooks() {
         }
     }
 }
+
+#[test]
+fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
+    // 1. Technical hyphen protection helper
+    assert_eq!(
+        render::protect_technical_hyphens("SWE-2.1"),
+        "SWE\u{2011}2.1"
+    );
+    assert_eq!(
+        render::protect_technical_hyphens("Orion-3 Mini and Nemotron-Labs-Image"),
+        "Orion\u{2011}3 Mini and Nemotron\u{2011}Labs\u{2011}Image"
+    );
+    assert_eq!(
+        render::protect_technical_hyphens("plain - spaced --flag"),
+        "plain - spaced --flag"
+    );
+
+    // 2. Rendered markdown preserves ASCII '-' in URLs, inline code, and code blocks
+    let md = "Check [SWE-2.1](https://example.com/swe-2-1) and `agentkit-lite` and Nemotron-Labs-Image.\n\n```sh\nrun-tool --dry-run\n```";
+    let html = render::render_markdown(md, false);
+    assert!(
+        html.contains(r#"href="https://example.com/swe-2-1""#),
+        "URL href must preserve ASCII hyphen: {html}"
+    );
+    assert!(
+        html.contains(">SWE\u{2011}2.1</a>"),
+        "Link text must protect technical hyphen: {html}"
+    );
+    assert!(
+        html.contains("<code>agentkit-lite</code>"),
+        "Inline code must preserve ASCII hyphen: {html}"
+    );
+    assert!(
+        html.contains("run-tool --dry-run"),
+        "Fenced code block must preserve ASCII hyphen: {html}"
+    );
+    assert!(
+        html.contains("Nemotron\u{2011}Labs\u{2011}Image"),
+        "Prose text must protect technical hyphen: {html}"
+    );
+
+    // 3. Empty section omitted from .folio-sections AND .filter-drawer placed outside fixed </header>
+    let md_with_empty = "\
+**AI精选日报 · 11/26**
+
+## 今日必读
+
+## 🧠 模型
+
+### 1. SWE-2.1：Nemotron-Labs-Image 联合发布
+`Acme Labs · 11/26 · 强化学习 / 代码`
+
+**一句话：** SWE-2.1 与 Orion-3 Mini 同步更新。
+
+**值得看：** 保持 `swe-2.1` 代码标识不变。
+
+🔗 [官方博客](https://example.com/swe-2-1)
+";
+    let digest = parser::parse_digest_md(md_with_empty, Lang::ZhCn, Some(2026)).unwrap();
+    let doc = render::render_digest_html(&digest, Lang::ZhCn, &RenderOptions::default());
+
+    let folio_nav = doc
+        .split_once(r#"<nav class="folio-sections""#)
+        .unwrap()
+        .1
+        .split_once("</nav>")
+        .unwrap()
+        .0;
+    assert!(
+        !folio_nav.contains("今日必读"),
+        "empty section must be omitted from .folio-sections: {folio_nav}"
+    );
+    assert!(
+        folio_nav.contains("模型"),
+        "non-empty section must appear in .folio-sections: {folio_nav}"
+    );
+
+    // Filter drawer sits in normal document flow AFTER fixed </header>, before .reader-shell
+    let mast_end = doc.find("</header>").expect("mast </header>");
+    let filter_pos = doc
+        .find(r#"class="filter-bar filter-drawer""#)
+        .expect("filter drawer");
+    let shell_pos = doc.find(r#"class="reader-shell""#).expect("reader shell");
+    assert!(
+        mast_end < filter_pos && filter_pos < shell_pos,
+        "filter-drawer must sit between </header> ({mast_end}) and .reader-shell ({shell_pos}), got {filter_pos}"
+    );
+
+    // TOC and story protect technical hyphens while href keeps ASCII '-'
+    assert!(doc.contains("SWE\u{2011}2.1"));
+    assert!(doc.contains("Nemotron\u{2011}Labs\u{2011}Image"));
+    assert!(doc.contains("Orion\u{2011}3 Mini"));
+    assert!(doc.contains(r#"href="https://example.com/swe-2-1""#));
+    assert!(doc.contains("<code>swe-2.1</code>"));
+}

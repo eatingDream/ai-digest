@@ -1,6 +1,6 @@
 *,*::before,*::after{box-sizing:border-box}
 html{background:var(--bg);color:var(--ink)}
-body,h1,h2,h3,h4,p,ol,ul{margin:0}
+body,h1,h2,h3,h4,p,ol,ul,input{margin:0}
 body{font:15.5px/1.66 var(--font-ui);overflow-wrap:break-word;-webkit-font-smoothing:antialiased;text-size-adjust:100%}
 ol,ul{padding:0;list-style:none}
 h1,h2,h3,p{text-wrap:pretty}

@@ -50,6 +50,7 @@ function byteLen(text) {
 const PRESERVED_CSS_VARS = new Set([
   "--mast-h",
   "--mast-offset",
+  "--filter-h",
   "--read-prog",
 ]);
 

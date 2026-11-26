@@ -49,6 +49,20 @@ export function initFilter(opts: FilterOptions): FilterController {
   const isDrawerOpen = (): boolean =>
     Boolean(drawer && !drawer.hidden && drawer.classList.contains("is-open"));
 
+  const syncFilterHeight = (): void => {
+    if (!isActive()) return;
+    const h =
+      isDrawerOpen() && drawer
+        ? Math.round(drawer.getBoundingClientRect().height)
+        : 0;
+    document.documentElement.style.setProperty("--filter-h", `${h}px`);
+  };
+
+  if (drawer && typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(syncFilterHeight);
+    ro.observe(drawer);
+  }
+
   // Ensure collapsed initial state syncs inert + aria-hidden without [hidden] snap
   if (drawer && !drawer.classList.contains("is-open")) {
     (drawer as HTMLElement & { inert: boolean }).inert = true;
@@ -184,6 +198,7 @@ export function initFilter(opts: FilterOptions): FilterController {
     toggleBtn?.setAttribute("aria-expanded", "true");
     mast.setPinned("filter", true);
     layoutTags();
+    syncFilterHeight();
     if (focusInput && input) {
       input.focus();
       input.select();
@@ -197,6 +212,7 @@ export function initFilter(opts: FilterOptions): FilterController {
     drawer.setAttribute("aria-hidden", "true");
     toggleBtn?.setAttribute("aria-expanded", "false");
     mast.setPinned("filter", false);
+    syncFilterHeight();
     if (restoreFocus) toggleBtn?.focus();
   };
 

@@ -83,6 +83,7 @@ function initReaderPane(
   const root = document.documentElement;
   const mainEl = scope.querySelector<HTMLElement>("main.prose-col, main");
   const mastEl = scope.querySelector<HTMLElement>("header.mast");
+  const filterDrawerEl = scope.querySelector<HTMLElement>(".filter-drawer");
   const tocEl = scope.querySelector<HTMLElement>("nav.toc-side");
   const dockEl = scope.querySelector<HTMLElement>("nav.dock");
   const dockTocBtn = scope.querySelector<HTMLButtonElement>("[data-sheet-open]");
@@ -205,8 +206,11 @@ function initReaderPane(
   // Mobile sheet open / close + inert + focus trap
   let sheetOpen = false;
   const setInert = (val: boolean): void => {
-    for (const el of [mainEl, mastEl, dockEl]) {
+    for (const el of [mainEl, mastEl, filterDrawerEl, dockEl]) {
       if (!el) continue;
+      if (el === filterDrawerEl && !val && !el.classList.contains("is-open")) {
+        continue;
+      }
       (el as HTMLElement & { inert: boolean }).inert = val;
     }
   };
@@ -551,9 +555,14 @@ function initReaderPane(
     const doScroll = (): void => {
       const targetY = el.getBoundingClientRect().top + window.scrollY;
       const goingDown = targetY > window.scrollY && !mast.isPinned();
-      const visibleHeaderH = mastEl
-        ? Math.round(mastEl.getBoundingClientRect().height)
-        : mast.getMastHeight();
+      const filterH =
+        filterDrawerEl && filterDrawerEl.classList.contains("is-open")
+          ? Math.round(filterDrawerEl.getBoundingClientRect().height)
+          : 0;
+      const visibleHeaderH =
+        (mastEl
+          ? Math.round(mastEl.getBoundingClientRect().height)
+          : mast.getMastHeight()) + filterH;
       const dest = goingDown
         ? targetY - 16
         : targetY - visibleHeaderH - 16;
@@ -952,6 +961,20 @@ function initReader(): void {
 
   zhRadio?.addEventListener("change", onRadioChange);
   enRadio?.addEventListener("change", onRadioChange);
+
+  // Intercept bilingual <label for="language-zh|en-language"> clicks so browser
+  // never focus-scrolls to the radio input; switch panes + restore anchor synchronously.
+  document.addEventListener("click", (e: MouseEvent) => {
+    const label = (e.target as Element | null)?.closest<HTMLLabelElement>(
+      'label[for="language-zh"], label[for="en-language"]'
+    );
+    if (!label) return;
+    const nextPane =
+      label.htmlFor === "en-language" ? paneForLang("en") : paneForLang("zh");
+    if (!nextPane) return;
+    e.preventDefault();
+    switchToPane(nextPane);
+  });
 
   window.addEventListener("hashchange", () => {
     const hash = window.location.hash;

@@ -36,22 +36,27 @@ export function captureVisibleAnchor(
     return { anchorId: "__top__", relTop: 0, ts: Date.now() };
   }
   const refY = mastHeight + 16;
-  const candidates = Array.from(
-    scope.querySelectorAll<HTMLElement>("article.story[id], section.sec[id]")
-  ).filter((el) => !el.hidden && el.offsetParent !== null);
-  let best: HTMLElement | null = null;
-  let bestDist = Infinity;
-  for (const el of candidates) {
-    const r = el.getBoundingClientRect();
-    if (r.height <= 0) continue;
-    if (r.bottom < mastHeight) continue;
-    const dist = Math.abs(r.top - refY);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = el;
+  const pickNearest = (selector: string): HTMLElement | null => {
+    const list = Array.from(scope.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => !el.hidden && el.offsetParent !== null
+    );
+    let best: HTMLElement | null = null;
+    let bestDist = Infinity;
+    for (const el of list) {
+      const r = el.getBoundingClientRect();
+      if (r.height <= 0 || r.bottom < mastHeight) continue;
+      const dist = Math.abs(r.top - refY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = el;
+      }
+      if (r.top > refY + 240) break;
     }
-    if (r.top > refY + 240) break;
-  }
+    return best;
+  };
+  const best =
+    pickNearest("article.story[id], section.front[id]") ||
+    pickNearest("section.sec[id]");
   if (!best) {
     return { anchorId: "__top__", relTop: 0, ts: Date.now() };
   }
