@@ -8,19 +8,19 @@ description = "AI news recall, static digest rendering, GEO generation, and encr
 repository = "https://github.com/eatingDream/ai-digest"
 
 [dependencies]
-clap = { version = "~4.5", features = ["derive", "wrap_help"] }
+clap = { version = "~4.6", features = ["derive", "wrap_help"] }
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "time", "sync", "net", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "gzip", "deflate", "brotli", "charset", "json", "multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
-toml = "0.8"
+toml = "1.2"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
-pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
-html5gum = "0.6"
-quick-xml = { version = "0.37", features = ["encoding"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+html5gum = "0.9"
+quick-xml = { version = "0.42", features = ["encoding"] }
 url = "2.5"
 percent-encoding = "2.3"
 regex = "1.11"
@@ -33,7 +33,7 @@ flate2 = { version = "1.0", default-features = false, features = ["rust_backend"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 base64 = "0.23"
 hex = "0.4"
-rand = "0.8"
+rand = "0.10"
 fs2 = "0.4"
 tempfile = "3.15"
 
