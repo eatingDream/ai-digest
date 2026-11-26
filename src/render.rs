@@ -695,7 +695,7 @@ impl Reader<'_> {
                 let num = esc(&item.number);
                 writeln!(
                     out,
-                    r##"<li><a href="#{prefix}{}" title="{raw_title}"><span class="ts-num num">{num}.</span><span>{title}{}</span></a></li>"##,
+                    r##"<li><a href="#{prefix}{}" title="{raw_title}"><span class="ts-num num">{num}.</span><span class="ts-title">{title}</span>{}</a></li>"##,
                     esc(&item.id),
                     if item.is_new {
                         r#"<span class="dot-hot" aria-hidden="true"></span>"#
@@ -786,12 +786,10 @@ impl Reader<'_> {
             esc(&item.tags.join("|"))
         )
         .unwrap();
-        write!(
-            out,
-            "<div class=\"story-meta\"><span class=\"source\">{}</span>",
-            esc(&item.source)
-        )
-        .unwrap();
+        out.push_str("<div class=\"story-meta\">");
+        if !item.source.is_empty() {
+            write!(out, "<span class=\"source\">{}</span>", esc(&item.source)).unwrap();
+        }
         for tag in &item.tags {
             let accent = if i18n::BADGE_ACCENT_TAGS.contains(&tag.as_str()) {
                 " badge-accent"
@@ -813,7 +811,15 @@ impl Reader<'_> {
             )
             .unwrap();
         }
-        write!(out, r#"<time class="when">{}</time><button type="button" class="copy-link" data-copy-anchor="{prefix}{id}" aria-label="{}">{}</button></div>
+        let hide_when = item.when.is_empty()
+            || (!self.digest.weekly
+                && self
+                    .digest
+                    .dates
+                    .last()
+                    .is_some_and(|d| same_short_date(&item.when, *d)));
+        let when_hidden = if hide_when { " hidden" } else { "" };
+        write!(out, r#"<time class="when"{when_hidden}>{}</time><button type="button" class="copy-link" data-copy-anchor="{prefix}{id}" aria-label="{}">{}</button></div>
 <div class="story-head"><h3><span class="story-no">{}.</span> {}</h3></div>
 "#, esc(&item.when), esc(t(lang, "copy_link")), icon("link"), esc(&item.number), markdown(&item.title, true, prefix)).unwrap();
         if !item.dek.is_empty() {
@@ -844,6 +850,13 @@ impl Reader<'_> {
         }
         out.push_str("</article>\n");
     }
+}
+
+fn same_short_date(when: &str, date: NaiveDate) -> bool {
+    let Some((m, d)) = when.trim().split_once(['.', '/', '-']) else {
+        return false;
+    };
+    m.parse::<u32>().ok() == Some(date.month()) && d.parse::<u32>().ok() == Some(date.day())
 }
 
 fn related_links(text: &str, digest: &Digest) -> String {

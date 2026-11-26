@@ -611,12 +611,15 @@ pub fn script_hash(script: &str) -> String {
     )
 }
 
-// Trusted inline script hashes from the previous v1.0.0 release so incremental
+// Trusted inline script hashes from previous v1.0.0 and v1.0.1 releases so incremental
 // `publish --issue` / `--rebuild` upgrades succeed without forcing --rerender-all.
 const KNOWN_PREVIOUS_RELEASE_HASHES: &[&str] = &[
     "'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0='", // v1.0.0 boot.js
     "'sha256-za2UDgPTC4kgNKKeVfbNEujaIgnNHJnzdVgff5jcG5o='", // v1.0.0 reader.js
     "'sha256-2d1HlyBoJ0RTWBo1V8cJq5gqndqRo/+j5jGqg+hN+Vk='", // v1.0.0 index.js
+    "'sha256-ULWcGE48zLdDVllI0EYBwq+iTR3kAcDbzv+3QVUarYQ='", // v1.0.1 boot.js
+    "'sha256-2Ivlf0XJIcWpuKux6MsYqWgB57xkKsnxmYqoT9r6D4g='", // v1.0.1 reader.js
+    "'sha256-aXNfRvBaL19OMemVpb9AUUGmEbb1BwKS6xDxb4Pb5HU='", // v1.0.1 index.js
 ];
 
 #[derive(Clone, Debug)]
