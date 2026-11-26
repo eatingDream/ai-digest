@@ -21,6 +21,19 @@ updates:
       - dependency-name: aes
         versions:
           - ">= 0.9.3"
+      # Major-version bumps with breaking API changes deferred to dedicated migrations.
+      - dependency-name: pulldown-cmark
+        versions:
+          - ">= 0.13"
+      - dependency-name: html5gum
+        versions:
+          - ">= 0.7"
+      - dependency-name: quick-xml
+        versions:
+          - ">= 0.38"
+      - dependency-name: rand
+        versions:
+          - ">= 0.9"
   - package-ecosystem: npm
     directory: /web
     schedule:

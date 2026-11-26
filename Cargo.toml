@@ -8,14 +8,14 @@ description = "AI news recall, static digest rendering, GEO generation, and encr
 repository = "https://github.com/eatingDream/ai-digest"
 
 [dependencies]
-clap = { version = "~4.5", features = ["derive", "wrap_help"] }
+clap = { version = "~4.6", features = ["derive", "wrap_help"] }
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "time", "sync", "net", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "gzip", "deflate", "brotli", "charset", "json", "multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
-toml = "0.8"
+toml = "1.2"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
