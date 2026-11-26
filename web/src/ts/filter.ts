@@ -9,6 +9,7 @@ export interface FilterOptions {
   mast: MastController;
   onFilter: (query: string, activeTags: Set<string>) => FilterResult;
   onFirstMatchScroll?: () => void;
+  onResize?: () => void;
   root?: ParentNode;
   isActive?: () => boolean;
 }
@@ -56,6 +57,7 @@ export function initFilter(opts: FilterOptions): FilterController {
         ? Math.round(drawer.getBoundingClientRect().height)
         : 0;
     document.documentElement.style.setProperty("--filter-h", `${h}px`);
+    opts.onResize?.();
   };
 
   if (drawer && typeof ResizeObserver !== "undefined") {

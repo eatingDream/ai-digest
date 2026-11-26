@@ -56,11 +56,7 @@ function findAnchorInScope(
 ): HTMLElement | null {
   if (!anchorId || anchorId === "__top__") return null;
   const escaped = CSS.escape(anchorId);
-  const direct = scope.querySelector<HTMLElement>(
-    `#${escaped}, #en-${escaped}`
-  );
-  if (direct) return direct;
-  return document.getElementById(anchorId) || document.getElementById(`en-${anchorId}`);
+  return scope.querySelector<HTMLElement>(`#${escaped}, #en-${escaped}`);
 }
 
 function readExpandAllPref(defaultAll: boolean): boolean {
@@ -243,8 +239,10 @@ function initReaderPane(
     setInert(true);
     mast.setPinned("sheet", true);
     dockTocBtn?.setAttribute("aria-expanded", "true");
+    const curLink = tocEl.querySelector<HTMLElement>("a.cur");
     const target =
-      tocEl.querySelector<HTMLElement>("a.cur") ||
+      (curLink && !curLink.closest("[inert]") ? curLink : null) ||
+      tocEl.querySelector<HTMLElement>(".ts-sec.cur") ||
       tocEl.querySelector<HTMLElement>(".ts-sec") ||
       tocCloseBtn;
     target?.focus();
@@ -519,7 +517,11 @@ function initReaderPane(
   const updateSpy = (): void => {
     if (!isActive() || spyLocked) return;
     if (spyEntries.length === 0) return;
-    const probeY = window.scrollY + mast.getMastOffset() + 32;
+    const filterH =
+      filterDrawerEl && filterDrawerEl.classList.contains("is-open")
+        ? Math.round(filterDrawerEl.getBoundingClientRect().height)
+        : 0;
+    const probeY = window.scrollY + mast.getMastOffset() + filterH + 32;
     let lo = 0;
     let hi = spyEntries.length - 1;
     let best = 0;
@@ -659,6 +661,7 @@ function initReaderPane(
   });
 
   // Filter integration (stories + sections + TOC mirror)
+  const normSearch = (s: string): string => s.replace(/\u2011/g, "-").toLowerCase();
   const storySearchCache = new Map<HTMLElement, { text: string; tags: Set<string> }>();
   for (const st of stories) {
     const rawTags = (st.dataset.tags || "")
@@ -666,7 +669,7 @@ function initReaderPane(
       .map((t) => t.trim())
       .filter(Boolean);
     storySearchCache.set(st, {
-      text: `${st.textContent || ""} ${rawTags.join(" ")}`.toLowerCase(),
+      text: normSearch(`${st.textContent || ""} ${rawTags.join(" ")}`),
       tags: new Set(rawTags),
     });
   }
@@ -675,8 +678,14 @@ function initReaderPane(
     mast,
     root: scope,
     isActive,
+    onResize: () => {
+      if (isActive()) {
+        rebuildSpyCache();
+        updateSpy();
+      }
+    },
     onFilter: (query, activeTags) => {
-      const qLow = query.toLowerCase();
+      const qLow = normSearch(query);
       const hasFilter = qLow.length > 0 || activeTags.size > 0;
       let matched = 0;
 

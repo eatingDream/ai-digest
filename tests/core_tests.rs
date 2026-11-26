@@ -1925,4 +1925,71 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
     assert!(doc.contains("Orion\u{2011}3 Mini"));
     assert!(doc.contains(r#"href="https://example.com/swe-2-1""#));
     assert!(doc.contains("<code>swe-2.1</code>"));
+
+    // 4. strip_leading_emoji removes pictographic emojis but preserves technical symbols (⌘, ①)
+    assert_eq!(render::strip_leading_emoji("🧠 模型"), "模型");
+    assert_eq!(render::strip_leading_emoji("⌘ 键快捷键"), "⌘ 键快捷键");
+    assert_eq!(render::strip_leading_emoji("① 核心结论"), "① 核心结论");
+
+    // 5. Privacy scan still detects hyphenated secrets & custom hyphen rules in rendered HTML
+    let fake_token = ["sk", "-", "1234567890abcdefghijklmnop"].concat();
+    let leak_md = format!(
+        "\
+**AI精选日报 · 11/26**
+
+## 🧠 模型
+
+### 1. Leak-Check
+`Lab · 11/26 · 安全`
+
+**一句话：** Token {fake_token} and corp-secret-token appeared in prose.
+
+🔗 [Note](https://example.com/note)
+"
+    );
+    let leak_digest = parser::parse_digest_md(&leak_md, Lang::ZhCn, Some(2026)).unwrap();
+    let leak_html = render::render_digest_html(&leak_digest, Lang::ZhCn, &RenderOptions::default());
+    assert!(leak_html.contains(&fake_token.replace('-', "\u{2011}")));
+    let td = tempfile::tempdir().unwrap();
+    let plain = td.path().join("plain");
+    let public = td.path().join("public");
+    fs::create_dir_all(&plain).unwrap();
+    fs::create_dir_all(&public).unwrap();
+    fs::write(plain.join("leak.html"), &leak_html).unwrap();
+    assert!(
+        crypto::privacy_scan_with_patterns(td.path(), &plain, &public, None).is_err(),
+        "privacy_scan must still catch hyphenated token secrets after U+2011 protection"
+    );
+    let custom_md = leak_md.replace(&fake_token, "benign-id");
+    let custom_digest = parser::parse_digest_md(&custom_md, Lang::ZhCn, Some(2026)).unwrap();
+    let custom_html =
+        render::render_digest_html(&custom_digest, Lang::ZhCn, &RenderOptions::default());
+    fs::write(plain.join("leak.html"), &custom_html).unwrap();
+    let rules_file = td.path().join("custom-rules.txt");
+    fs::write(&rules_file, "corp-secret-token\tcustom-corp\n").unwrap();
+    assert!(
+        crypto::privacy_scan_with_patterns(td.path(), &plain, &public, Some(&rules_file)).is_err(),
+        "privacy_scan must still catch custom hyphenated rules after U+2011 protection"
+    );
+
+    // 6. Incremental upgrade: previous v1.0.0 inline boot.js/reader.js hashes remain allowlisted
+    let allowlist = crypto::ScriptAllowlist::default();
+    let legacy_doc = format!(
+        "<!doctype html><html><head><script>{}</script></head><body></body></html>",
+        "alert('untrusted')"
+    );
+    assert!(
+        crypto::collect_script_hashes(&legacy_doc, &allowlist).is_err(),
+        "arbitrary inline scripts must remain rejected"
+    );
+    for h in [
+        "'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0='",
+        "'sha256-za2UDgPTC4kgNKKeVfbNEujaIgnNHJnzdVgff5jcG5o='",
+        "'sha256-2d1HlyBoJ0RTWBo1V8cJq5gqndqRo/+j5jGqg+hN+Vk='",
+    ] {
+        assert!(
+            allowlist.contains_hash(h),
+            "v1.0.0 script hash {h} must remain allowlisted for incremental publish upgrades"
+        );
+    }
 }

@@ -341,8 +341,11 @@ export function initMast(): MastController {
     if (curTheme === "system") syncThemeMeta("system");
   });
 
-  // Language link preserving ?q / ?tag + saving exact story-anchor lock (no #hash jump flash)
-  const buildLangHref = (link: HTMLAnchorElement, includeHash = false): string => {
+  // Language link preserving ?q / ?tag + saving exact story-anchor lock (with #anchor fallback)
+  const buildLangHref = (
+    link: HTMLAnchorElement,
+    fallbackHash?: string
+  ): string => {
     const raw = link.getAttribute("href") || "";
     if (!raw) return raw;
     try {
@@ -354,35 +357,41 @@ export function initMast(): MastController {
       else target.searchParams.delete("q");
       if (tag) target.searchParams.set("tag", tag);
       else target.searchParams.delete("tag");
-      target.hash = includeHash ? cur.hash : "";
+      target.hash =
+        fallbackHash !== undefined ? fallbackHash : cur.hash;
       return target.pathname + target.search + target.hash;
     } catch {
       return raw;
     }
   };
 
-  const saveLangAnchor = (): void => {
+  const saveLangAnchor = (): LangAnchorSnapshot => {
+    const snap = captureVisibleAnchor(document, mastH);
     try {
-      const snap = captureVisibleAnchor(document, mastH);
       sessionStorage.setItem(LANG_ANCHOR_KEY, JSON.stringify(snap));
     } catch {
       // Ignore storage restrictions.
     }
+    return snap;
   };
 
   const langLinks = Array.from(
     document.querySelectorAll<HTMLAnchorElement>("[data-lang-link], .lang-seg a[href]")
   );
   for (const link of langLinks) {
-    const update = (): void => {
-      const nextHref = buildLangHref(link, false);
+    const update = (hashOverride?: string): void => {
+      const nextHref = buildLangHref(link, hashOverride);
       if (nextHref) link.setAttribute("href", nextHref);
     };
-    link.addEventListener("mouseenter", update);
-    link.addEventListener("focus", update);
+    link.addEventListener("mouseenter", () => update());
+    link.addEventListener("focus", () => update());
     link.addEventListener("click", () => {
-      saveLangAnchor();
-      update();
+      const snap = saveLangAnchor();
+      const hashFallback =
+        snap.anchorId && snap.anchorId !== "__top__"
+          ? `#${snap.anchorId}`
+          : window.location.hash;
+      update(hashFallback);
     });
   }
 
@@ -396,9 +405,22 @@ export function initMast(): MastController {
       const link = langLinks[0];
       if (link) {
         e.preventDefault();
-        saveLangAnchor();
-        const nextHref = buildLangHref(link, false);
+        const snap = saveLangAnchor();
+        const hashFallback =
+          snap.anchorId && snap.anchorId !== "__top__"
+            ? `#${snap.anchorId}`
+            : window.location.hash;
+        const nextHref = buildLangHref(link, hashFallback);
         if (nextHref) window.location.assign(nextHref);
+        return;
+      }
+      const targetFor = isZh() ? "en-language" : "language-zh";
+      const label = document.querySelector<HTMLElement>(
+        `label[for="${targetFor}"]`
+      );
+      if (label) {
+        e.preventDefault();
+        label.click();
         return;
       }
       const zhRadio = document.getElementById("language-zh") as HTMLInputElement | null;

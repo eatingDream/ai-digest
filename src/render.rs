@@ -420,10 +420,12 @@ pub fn strip_leading_emoji(title: &str) -> &str {
             ch as u32,
             0x200D
                 | 0x20E3
-                | 0x2300..=0x27BF
-                | 0x2B00..=0x2BFF
+                | 0x23E9..=0x23FA
+                | 0x2600..=0x27BF
+                | 0x2B50
+                | 0x2B55
                 | 0xFE0E..=0xFE0F
-                | 0x1F000..=0x1FAFF
+                | 0x1F300..=0x1FAFF
         );
         if is_emoji_or_mod || ch.is_whitespace() {
             rest = &rest[ch.len_utf8()..];

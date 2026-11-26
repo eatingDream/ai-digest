@@ -18,20 +18,23 @@ function initArchive(): void {
     initialOpen.set(grp, grp.open);
   }
 
+  const normSearch = (s: string): string => s.replace(/\u2011/g, "-").toLowerCase();
   const cache = new Map<HTMLElement, { search: string; tags: Set<string> }>();
   for (const item of items) {
     const rawTags = (item.dataset.tags || "")
       .split("|")
       .map((t) => t.trim())
       .filter(Boolean);
-    const search = `${item.dataset.search || ""} ${item.textContent || ""} ${rawTags.join(" ")}`.toLowerCase();
+    const search = normSearch(
+      `${item.dataset.search || ""} ${item.textContent || ""} ${rawTags.join(" ")}`
+    );
     cache.set(item, { search, tags: new Set(rawTags) });
   }
 
   initFilter({
     mast,
     onFilter: (query, activeTags) => {
-      const qLow = query.toLowerCase();
+      const qLow = normSearch(query);
       const hasFilter = qLow.length > 0 || activeTags.size > 0;
       let matched = 0;
 

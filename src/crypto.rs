@@ -611,6 +611,14 @@ pub fn script_hash(script: &str) -> String {
     )
 }
 
+// Trusted inline script hashes from the previous v1.0.0 release so incremental
+// `publish --issue` / `--rebuild` upgrades succeed without forcing --rerender-all.
+const KNOWN_PREVIOUS_RELEASE_HASHES: &[&str] = &[
+    "'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0='", // v1.0.0 boot.js
+    "'sha256-za2UDgPTC4kgNKKeVfbNEujaIgnNHJnzdVgff5jcG5o='", // v1.0.0 reader.js
+    "'sha256-2d1HlyBoJ0RTWBo1V8cJq5gqndqRo/+j5jGqg+hN+Vk='", // v1.0.0 index.js
+];
+
 #[derive(Clone, Debug)]
 pub struct ScriptAllowlist {
     hashes: BTreeSet<String>,
@@ -618,13 +626,22 @@ pub struct ScriptAllowlist {
 
 impl Default for ScriptAllowlist {
     fn default() -> Self {
-        Self {
-            hashes: EXECUTABLE_ASSETS.iter().map(|s| script_hash(s)).collect(),
-        }
+        let mut hashes: BTreeSet<String> =
+            EXECUTABLE_ASSETS.iter().map(|s| script_hash(s)).collect();
+        hashes.extend(
+            KNOWN_PREVIOUS_RELEASE_HASHES
+                .iter()
+                .map(|h| (*h).to_owned()),
+        );
+        Self { hashes }
     }
 }
 
 impl ScriptAllowlist {
+    pub fn contains_hash(&self, hash: &str) -> bool {
+        self.hashes.contains(hash)
+    }
+
     pub(crate) fn allow_legacy_hash(&mut self, hash: &str) {
         self.hashes.insert(hash.to_owned());
     }
@@ -1058,11 +1075,12 @@ pub fn privacy_scan_with_patterns(
         } else {
             raw
         };
-        let visible = visible_text(&scannable);
-        let block_text = join_visible_text(&scannable, true);
+        let visible = visible_text(&scannable).replace('\u{2011}', "-");
+        let block_text = join_visible_text(&scannable, true).replace('\u{2011}', "-");
+        let normalized_raw = scannable.replace('\u{2011}', "-");
         for (pattern, label) in &patterns {
             ensure!(
-                !pattern.is_match(&scannable)
+                !pattern.is_match(&normalized_raw)
                     && !pattern.is_match(&visible)
                     && !pattern.is_match(&block_text),
                 "privacy scan failed ({label})"
