@@ -137,6 +137,11 @@ X/Twitter 召回是**完全可选的增强项**，不依赖 Grok Bot，也绝不
 
 信源清单在 `fetch/sources.toml`，筛选规则在 `filter-notes.zh-CN.md`。
 
+## AI Agent 接入指南
+
+- **安装通用 Agent Skill**：使用 [`skills/ai-digest/SKILL.md`](skills/ai-digest/SKILL.md)（或运行 `npx skills add eatingDream/ai-digest`），即可让 Claude Code、Codex、Cursor、OpenCode 与 Antigravity 直接检索已发布站点或驱动本地抓取、渲染与发布流水线。
+- **仓库与站点的机器可读入口**：本仓库提供 [`llms.txt`](llms.txt) 与 [`AGENTS.md`](AGENTS.md)；每个公开部署的站点（`ENCRYPT=0`）均自动提供 `/llms.txt`、`/llms-full.txt`、`/sitemap.xml`、`/feed.xml`、`/.well-known/agent-skills/index.json`、`Accept: text/markdown` 内容协商及支持 `GET`/`QUERY` 的 `/.well-known/search?q=<query>`。
+
 ## 参与贡献与许可
 
 欢迎提 PR（`main` 受保护，详见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) 与 [SECURITY.md](SECURITY.md)）。`render_html.py` 内嵌 CSS 的设计令牌改编自 [AIHOT](https://github.com/KKKKhazix/AIHOT)（MIT，© 2026 数字生命卡兹克；见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [licenses/AIHOT-MIT.txt](licenses/AIHOT-MIT.txt)）。项目采用 [MIT](LICENSE) 许可。
