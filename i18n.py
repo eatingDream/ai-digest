@@ -274,6 +274,7 @@ DROPPED_MARKERS = {"**本周剔除**", "🗑本周剔除", "## 本周剔除",
 
 RELATED_WORDS = ("相关", "Related")
 WEEKLY_TITLE_WORDS = ("周报", "weekly")
+CHECK_CANDS_STRONG_TIER_WORDS = ("强", "必看", "strong", "must")
 
 BADGE_ACCENT_TAGS = {"前沿发布", "开源权重", "一手", "重大", "RSI",
                      "Frontier release", "Open weights", "Primary source", "Major"}

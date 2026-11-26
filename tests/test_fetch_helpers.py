@@ -1,5 +1,5 @@
 import concurrent.futures as cf
-import json, socket, tomllib
+import json, os, socket, tomllib
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,3 +158,71 @@ def test_github_api_bearer_token_and_rate_limit_warning(monkeypatch):
     with pytest.raises(RuntimeError, match="403.*GITHUB_TOKEN|GITHUB_TOKEN.*403"):
         fx._gh_api(ctx_rl, "https://api.github.com/orgs/example/repos")
     assert any("GITHUB_TOKEN" in n and "5,000" in n for n in ctx_rl.notes)
+
+
+def test_common_decoupling_ledger_url_canon_and_atomic_writes(tmp_path, monkeypatch):
+    import ast
+    import importlib
+    import subprocess
+    import sys
+
+    import common
+    import i18n
+
+    root = Path(__file__).resolve().parents[1]
+    wl_src = (root / "fetch" / "weekly_late.py").read_text(encoding="utf-8")
+    tree = ast.parse(wl_src)
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert "importlib" not in imported and "importlib.util" not in imported and "fetch" not in imported
+    assert "fx.FL" not in wl_src
+
+    # Verify importing weekly_late in a fresh subprocess never loads fetch.py
+    probe = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, 'fetch'); import weekly_late; assert 'fetch' not in sys.modules"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+
+    # ledger.py add deduplicates tracking-param URLs and arXiv/HF equivalents via common.canon_url()
+    led = tmp_path / "ledger.json"
+    env = dict(os.environ, LEDGER_PATH=str(led), DIGEST_LANG="en")
+    r1 = subprocess.run(
+        [sys.executable, str(root / "fetch" / "ledger.py"), "add", "--day", "2026-01-15", "--json"],
+        input="S|Post A|post-a|news|https://www.example.com/post?utm_source=rss&id=7|First\n",
+        cwd=root, env=env, capture_output=True, text=True,
+    )
+    assert r1.returncode == 0 and json.loads(r1.stdout) == {"added": 1, "updated": 0, "total": 1}
+    r2 = subprocess.run(
+        [sys.executable, str(root / "fetch" / "ledger.py"), "add", "--day", "2026-01-16", "--json"],
+        input="P|Post A Variant||news|https://example.com/post/?id=7&ref=social|Updated\n",
+        cwd=root, env=env, capture_output=True, text=True,
+    )
+    assert r2.returncode == 0 and json.loads(r2.stdout) == {"added": 0, "updated": 1, "total": 1}
+    saved = json.loads(led.read_text(encoding="utf-8"))
+    assert len(saved["items"]) == 1 and saved["items"][0]["status"] == "pushed" and len(saved["items"][0]["urls"]) == 1
+
+    # atomic_write_text preserves old contents on failure and leaves no stray temp files
+    target = tmp_path / "state" / "state.json"
+    common.atomic_write_text(target, '{"ok":1}')
+    assert target.read_text(encoding="utf-8") == '{"ok":1}'
+    monkeypatch.setattr(common.os, "replace", lambda *_a, **_kw: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError, match="boom"):
+        common.atomic_write_text(target, '{"ok":2}')
+    assert target.read_text(encoding="utf-8") == '{"ok":1}'
+    assert [p.name for p in target.parent.iterdir()] == ["state.json"]
+
+    # check_cands.py uses centralized i18n.CHECK_CANDS_STRONG_TIER_WORDS
+    assert set(i18n.CHECK_CANDS_STRONG_TIER_WORDS) >= {"强", "必看", "strong", "must"}
+    assert "CHECK_CANDS_STRONG_TIER_WORDS" in (root / "fetch" / "check_cands.py").read_text(encoding="utf-8")
+

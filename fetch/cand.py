@@ -19,10 +19,14 @@ import json
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 import i18n  # noqa: E402
+from common import work_root  # noqa: E402
 
 FL = i18n.resolve_lang()
 
@@ -45,7 +49,7 @@ def main():
         FL = i18n.resolve_lang(a.lang)
     except ValueError as e:
         ap.error(str(e))
-    root = os.environ.get("DIGEST_ROOT") or ROOT
+    root = str(work_root())
     dirs = a.dir
     if a.since:
         dirs = []

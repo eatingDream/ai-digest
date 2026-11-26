@@ -93,7 +93,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import gzip
 import hashlib
 import html as htmlmod
 import json
@@ -101,21 +100,49 @@ import mimetypes
 import os
 import re
 import secrets
-import stat
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 import i18n
+from render_html import FAVICON_SVG, _TAG_SPLIT_RE
+import site_crypto
+from site_crypto import (
+    KEY_LEN,
+    LOCK_JS,
+    LOCK_JS_BLOCK,
+    LOCK_MARK_END,
+    LOCK_MARK_START,
+    NONCE_LEN,
+    PASSWORD_ALPHABET,
+    PASSWORD_FILE_DEFAULT,
+    PBKDF2_ITERATIONS,
+    PRIVACY_PATTERNS,
+    PROMPT_MARK,
+    SALT_FILE_DEFAULT,
+    SALT_LEN,
+    SECURITY_HEADERS,
+    STORE_KEY,
+    _SCRIPT_NONEXEC_RE,
+    _SCRIPT_SRC_RE,
+    _SCRIPT_TAG_RE,
+    _collect_inline_script_hashes,
+    _render_security_headers,
+    derive_key,
+    generate_and_save_password,
+    generate_and_save_salt,
+    password_file_path,
+    rotate_password_and_salt,
+    salt_file_path,
+    write_secret_file,
+)
 from version import __version__
 
 CODE_ROOT = Path(__file__).resolve().parent
@@ -127,13 +154,6 @@ SOURCES = SITE / "sources"
 CONFIG_PATH = SITE / "CONFIG"
 TEMPLATE_PATH = (SITE / "password_template.html") if (SITE / "password_template.html").is_file() else (CODE_ROOT / "site" / "password_template.html")
 TOKEN_FILE_DEFAULT = Path.home() / ".config/ai-digest/cloudflare_token"
-PASSWORD_FILE_DEFAULT = Path.home() / ".config/ai-digest/site-password"
-SALT_FILE_DEFAULT = Path.home() / ".config/ai-digest/site-salt"
-PASSWORD_ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # gitleaks:allow (character set, not a secret)
-PBKDF2_ITERATIONS = 600_000
-SALT_LEN = 16
-NONCE_LEN = 12
-KEY_LEN = 32
 
 # Defaults when optional keys are unset in site/CONFIG or env (see load_config).
 ACCOUNT_ID_DEFAULT = ""
@@ -143,88 +163,14 @@ DOMAIN_DEFAULT = "digest.example.com"
 PLATFORM = "pages"
 CF_API = "https://api.cloudflare.com/client/v4"
 WRANGLER_VERSION = os.environ.get("WRANGLER_VERSION", "4.166.0").strip() or "4.166.0"
-FAVICON_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-    '<rect width="32" height="32" rx="8" fill="#b85432"/>'
-    '<path d="M16 6.5 9.2 25h3.5l1.4-4.1h3.8L19.3 25h3.5L16 6.5Zm-1.1 11.4 1.1-3.6 1.1 3.6h-2.2Z" fill="#faf8f4"/>'
-    '<circle cx="24.2" cy="8.2" r="2.3" fill="#f3c6a5"/>'
-    "</svg>\n"
-)
 FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/favicon.svg">'
-_FAVICON_HEADER = "/favicon.svg\n  Cache-Control: public, max-age=86400\n"
-_SCRIPT_TAG_RE = re.compile(r"<script([^>]*)>(.*?)</script>", re.I | re.S)
-_SCRIPT_NONEXEC_RE = re.compile(
-    r"""\btype\s*=\s*["']?(?:application/json|speculationrules)\b""", re.I
-)
-_SCRIPT_SRC_RE = re.compile(r"\bsrc\s*=", re.I)
 
 
-def _render_security_headers(script_hashes: Iterable[str] = ()) -> str:
-    hashes = sorted(set(script_hashes))
-    script_src = (
-        " ".join(hashes) + " 'inline-speculation-rules'"
-        if hashes
-        else "'unsafe-inline'"
-    )
-    return (
-        "/*\n"
-        "  X-Robots-Tag: noindex, nofollow\n"
-        "  X-Content-Type-Options: nosniff\n"
-        "  Referrer-Policy: no-referrer\n"
-        "  X-Frame-Options: DENY\n"
-        "  Strict-Transport-Security: max-age=31536000; includeSubDomains\n"
-        "  Cross-Origin-Opener-Policy: same-origin\n"
-        "  Cross-Origin-Resource-Policy: same-origin\n"
-        "  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()\n"
-        f"  Content-Security-Policy: default-src 'none'; script-src {script_src}; "
-        "script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; "
-        "connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
-        "form-action 'none'; object-src 'none'; upgrade-insecure-requests\n"
-        + _FAVICON_HEADER
-    )
-
-
-def _collect_inline_script_hashes(paths: Iterable[Path]) -> list[str]:
-    hashes: set[str] = set()
-    for p in paths:
-        if not p.is_file() or p.suffix.lower() != ".html":
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        for attrs, body in _SCRIPT_TAG_RE.findall(text):
-            if _SCRIPT_SRC_RE.search(attrs) or _SCRIPT_NONEXEC_RE.search(attrs):
-                continue
-            norm = body.replace("\r\n", "\n").replace("\r", "\n")
-            digest = base64.b64encode(hashlib.sha256(norm.encode("utf-8")).digest()).decode("ascii")
-            hashes.add(f"'sha256-{digest}'")
-    return sorted(hashes)
-
-
-def _finalize_csp_headers() -> None:
+def _finalize_csp_headers(ctx: "SiteContext | None" = None) -> None:
     """Replace script-src 'unsafe-inline' in PUBLIC/_headers with exact build-time SHA-256 hashes."""
-    hp = PUBLIC / "_headers"
-    if not hp.is_file():
-        return
-    htmls = [p for p in iter_plain_files() if p.suffix.lower() == ".html"]
-    htmls.extend(p for p in iter_public_files() if p.suffix.lower() == ".html")
-    hashes = _collect_inline_script_hashes(htmls)
-    if not hashes:
-        return
-    script_src = " ".join(hashes) + " 'inline-speculation-rules'"
-    text = hp.read_text(encoding="utf-8")
-    updated = re.sub(
-        r"(Content-Security-Policy:[^\n]*?script-src )[^;]+;",
-        lambda m: m.group(1) + script_src + ";",
-        text,
-        count=1,
-    )
-    if updated != text:
-        hp.write_text(updated, encoding="utf-8")
+    c = ctx or _default_ctx()
+    site_crypto.finalize_csp_headers(c.public, c.plain)
 
-
-SECURITY_HEADERS = _render_security_headers()
 
 # Output language of the site (en | zh-CN); resolved by load_config() / --lang, see i18n.py.
 LANG = i18n.DEFAULT_LANG
@@ -233,6 +179,59 @@ _DEMO_MODE: bool = False
 # Companion site in the other language, e.g. {"code": "zh-CN", "base": "/zh-CN/"}.
 # Set via LANG_ALT in site/CONFIG (or DIGEST_LANG_ALT env), or automatically in --demo.
 LANG_ALT: dict[str, str] | None = None
+
+
+@dataclass
+class SiteContext:
+    """Explicit isolated build/publish paths and flags (replaces module globals for demo & callers)."""
+
+    root: Path
+    site: Path
+    public: Path
+    plain: Path
+    sources: Path
+    config_path: Path
+    template_path: Path
+    enc_cache_path: Path
+    lang: str = i18n.DEFAULT_LANG
+    cli_lang: str | None = None
+    lang_alt: dict[str, str] | None = None
+    demo_mode: bool = False
+    password_override: str | None = None
+    salt_override: bytes | None = None
+    changed_pages: list[str] = field(default_factory=list)
+    env_overrides: dict[str, str | None] | None = None
+
+    def env_get(self, key: str, default: str = "") -> str:
+        if self.env_overrides is not None and key in self.env_overrides:
+            val = self.env_overrides[key]
+            return "" if val is None else val
+        return os.environ.get(key, default)
+
+    def env_has(self, key: str) -> bool:
+        if self.env_overrides is not None and key in self.env_overrides:
+            return self.env_overrides[key] is not None
+        return key in os.environ
+
+
+def _default_ctx() -> SiteContext:
+    return SiteContext(
+        root=ROOT,
+        site=SITE,
+        public=PUBLIC,
+        plain=PLAIN,
+        sources=SOURCES,
+        config_path=CONFIG_PATH,
+        template_path=TEMPLATE_PATH,
+        enc_cache_path=ENC_CACHE_PATH,
+        lang=LANG,
+        cli_lang=CLI_LANG,
+        lang_alt=LANG_ALT,
+        demo_mode=_DEMO_MODE,
+        password_override=_PASSWORD_OVERRIDE,
+        salt_override=_SALT_OVERRIDE,
+        changed_pages=CHANGED_PAGES,
+    )
 
 # Markers used so republishing can replace nav without touching renderer output.
 CSS_MARK_START = "<!-- digest-nav-css:start -->"
@@ -249,41 +248,6 @@ LOCK_MARK_START = "<!-- digest-lock:start -->"
 LOCK_MARK_END = "<!-- digest-lock:end -->"
 LANG_BTN_START = "<!-- digest-lang-btn:start -->"
 LANG_BTN_END = "<!-- digest-lang-btn:end -->"
-# Text that every encrypted prompt shell must contain (used by sanity checks).
-PROMPT_MARK = 'id="rm"'  # the "remember this device" checkbox; language-neutral
-STORE_KEY = "aie.k"
-
-# Generic defaults. Add your own (names, handles, private ids, ...) one regex per
-# line in site/privacy-patterns.txt (or the file named by DIGEST_PRIVACY_PATTERNS_FILE);
-# that file is gitignored. Format: `regex` or `regex<TAB>label`; '#' = comment.
-PRIVACY_PATTERNS: list[tuple[str, str]] = [
-    (r"[\w.+-]+@[\w.-]+\.\w+", "email"),
-    (r"我(在)?(X|Twitter).{0,20}(关注|收藏|书签)", "x-circle"),
-    (r"(X|Twitter).{0,8}圈子", "x-circle"),
-    (r"我关注的人", "x-circle"),
-    (r"我的(关注|收藏|书签)", "x-circle"),
-    (r"\bI (follow|bookmarked|saved)\b.{0,30}\b(on )?(X|Twitter)\b", "x-circle"),
-    (r"\b(people|accounts) I follow\b", "x-circle"),
-    (r"\bmy (follows|bookmarks|likes|following list|X circle|Twitter circle)\b", "x-circle"),
-    (r"\b(your|my) (X|Twitter) (circle|following)\b", "x-circle"),
-    (r"(?:/Users/|/home/|C:\\Users\\)[A-Za-z0-9._-]+", "local-path"),
-    (r"\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{24,})\b", "token-secret"),
-    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "private-key"),
-]
-
-
-def _load_extra_privacy_patterns() -> list[tuple[str, str]]:
-    env = os.environ.get("DIGEST_PRIVACY_PATTERNS_FILE", "").strip()
-    path = Path(env) if env else SITE / "privacy-patterns.txt"
-    out: list[tuple[str, str]] = []
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.rstrip("\n")
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            pat, _, label = line.partition("\t")
-            out.append((pat.strip(), label.strip() or "custom"))
-    return out
 
 NAV_CSS = """
 .issue-nav {
@@ -338,17 +302,9 @@ NAV_CSS = """
 """.strip()
 
 
-LOCK_JS = (
-    "document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-lock]');"
-    "if(!b)return;e.preventDefault();try{sessionStorage.removeItem('" + STORE_KEY + "');"
-    "localStorage.removeItem('" + STORE_KEY + "')}catch(_){}location.reload()});"
-)
-LOCK_JS_BLOCK = f"{LOCK_MARK_START}\n<script>{LOCK_JS}</script>\n{LOCK_MARK_END}"
-
-
-def perf_head_html(hints: list[str], slug: str | None = None) -> str:
+def perf_head_html(hints: list[str], slug: str | None = None, *, ctx: SiteContext | None = None) -> str:
     """Prefetch hints + speculation rules (prerender same-site links on intent)."""
-    raw_slug = load_config()["SLUG"] if slug is None else slug
+    raw_slug = load_config(ctx)["SLUG"] if slug is None else slug
     s = raw_slug.strip("/")
     match_pat = f"/{s}/*" if s else "/*"
     seen: list[str] = []
@@ -435,6 +391,24 @@ def issue_prefetch_hints(
     return hints
 
 
+def inject_perf_hints(
+    html: str,
+    issue: "Issue",
+    issues: list["Issue"],
+    slug: str | None = None,
+    *,
+    abs_links: bool = False,
+    url_prefix: str | None = None,
+    ctx: SiteContext | None = None,
+) -> str:
+    head = perf_head_html(
+        issue_prefetch_hints(issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix),
+        slug=slug,
+        ctx=ctx,
+    )
+    return re.sub(r"(<meta charset=[^>]*>\s*)", lambda m: m.group(1) + head, html, count=1, flags=re.I)
+
+
 def inject_perf_and_lock(
     html: str,
     issue: "Issue",
@@ -444,12 +418,9 @@ def inject_perf_and_lock(
     abs_links: bool = False,
     url_prefix: str | None = None,
     encrypted: bool = False,
+    ctx: SiteContext | None = None,
 ) -> str:
-    head = perf_head_html(
-        issue_prefetch_hints(issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix),
-        slug=slug,
-    )
-    html = re.sub(r"(<meta charset=[^>]*>\s*)", lambda m: m.group(1) + head, html, count=1, flags=re.I)
+    html = inject_perf_hints(html, issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix, ctx=ctx)
     if encrypted:
         html = re.sub(r"</body>", lambda m: LOCK_JS_BLOCK + "\n</body>", html, count=1, flags=re.I)
     return html
@@ -516,10 +487,11 @@ def _parse_bool(raw: str | bool | None) -> bool:
     return (raw or "").strip().lower() in _TRUTHY_VALUES
 
 
-def _read_config_raw() -> dict[str, str]:
+def _read_config_raw(ctx: SiteContext | None = None) -> dict[str, str]:
+    c = ctx or _default_ctx()
     data: dict[str, str] = {}
-    if CONFIG_PATH.exists():
-        for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+    if c.config_path.exists():
+        for line in c.config_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -578,13 +550,15 @@ def set_lang(cli: str | None = None, config: str | None = None) -> str:
     return LANG
 
 
-def load_config() -> dict[str, str]:
+def load_config(ctx: SiteContext | None = None) -> dict[str, str]:
     """site/CONFIG (KEY=VALUE lines), overridden by env vars (SITE_DOMAIN,
     SITE_SLUG, CF_ACCOUNT_ID, CF_ZONE_ID, CF_PAGES_PROJECT, DIGEST_LANG,
     DIGEST_LANG_ALT, DIGEST_ROOT_LATEST, DIGEST_ENCRYPT)."""
-    global LANG_ALT
+    global LANG, LANG_ALT
+    is_default = ctx is None
+    c = _default_ctx() if is_default else ctx
     data: dict[str, str] = {"PLATFORM": PLATFORM}
-    data.update(_read_config_raw())
+    data.update(_read_config_raw(c))
     for alias, canonical in (
         ("CF_ACCOUNT_ID", "ACCOUNT_ID"),
         ("CF_PROJECT", "PROJECT"),
@@ -593,8 +567,8 @@ def load_config() -> dict[str, str]:
         if alias in data and canonical not in data:
             data[canonical] = data[alias]
     for env_k, key in _ENV_KEYS.items():
-        if env_k in os.environ:
-            v = os.environ.get(env_k, "").strip()
+        if c.env_has(env_k):
+            v = c.env_get(env_k, "").strip()
             if v or key == "SLUG":
                 data[key] = v
     data.setdefault("PROJECT", PROJECT_DEFAULT)
@@ -605,38 +579,47 @@ def load_config() -> dict[str, str]:
         if val and _PLACEHOLDER_RE.search(val):
             die(
                 f"{chk_key} contains an unreplaced placeholder ({val!r}); "
-                f"run python3 publish.py --init or edit {CONFIG_PATH}"
+                f"run python3 publish.py --init or edit {c.config_path}"
             )
-    set_lang(CLI_LANG, data.get("LANG"))
-    data["LANG"] = LANG
+    try:
+        resolved_lang = i18n.resolve_lang(c.cli_lang, data.get("LANG"))
+    except ValueError as e:
+        die(str(e))
+    c.lang = resolved_lang
+    data["LANG"] = resolved_lang
     slug = data.get("SLUG", "").strip()
     if slug:
         if (
             slug.startswith(".")
             or not _SLUG_SAFE_RE.fullmatch(slug)
-            or (not _DEMO_MODE and slug.lower() in _RESERVED_SLUGS)
+            or (not c.demo_mode and slug.lower() in _RESERVED_SLUGS)
         ):
             die(
                 f"invalid SLUG {slug!r}: must contain only URL-safe characters [A-Za-z0-9._~-] and not be a reserved root name; "
-                f"run python3 publish.py --init or edit {CONFIG_PATH}"
+                f"run python3 publish.py --init or edit {c.config_path}"
             )
-        if not _DEMO_MODE and len(slug) < 8:
+        if not c.demo_mode and len(slug) < 8:
             die(
                 f"SLUG {slug!r} is too short ({len(slug)} chars; must be >= 8 unless --demo or empty); "
-                f"run python3 publish.py --init or edit {CONFIG_PATH}"
+                f"run python3 publish.py --init or edit {c.config_path}"
             )
     data["SLUG"] = slug
     data["ENCRYPT"] = "1" if _parse_bool(data.get("ENCRYPT")) else "0"
     data["ROOT_LATEST"] = "1" if _parse_bool(data.get("ROOT_LATEST")) else "0"
     try:
-        LANG_ALT = _parse_lang_alt(data.get("LANG_ALT"), LANG)
+        parsed_alt = _parse_lang_alt(data.get("LANG_ALT"), resolved_lang)
     except ValueError as e:
-        die(f"{e}; run python3 publish.py --init or edit {CONFIG_PATH}")
+        die(f"{e}; run python3 publish.py --init or edit {c.config_path}")
+    c.lang_alt = parsed_alt
+    if is_default:
+        LANG = resolved_lang
+        LANG_ALT = parsed_alt
     return data
 
 
-def write_config(data: dict[str, str]) -> None:
-    SITE.mkdir(parents=True, exist_ok=True)
+def write_config(data: dict[str, str], ctx: SiteContext | None = None) -> None:
+    c = ctx or _default_ctx()
+    c.site.mkdir(parents=True, exist_ok=True)
     order = [
         "PLATFORM",
         "PROJECT",
@@ -661,29 +644,30 @@ def write_config(data: dict[str, str]) -> None:
     for k, v in data.items():
         if k not in seen:
             lines.append(f"{k}={v}")
-    CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    c.config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def init_config_if_needed(*, encrypt: bool = False) -> dict[str, str]:
-    if CONFIG_PATH.exists() or os.environ.get("SITE_SLUG", "").strip():
-        return load_config()
-    want_enc = encrypt or _parse_bool(os.environ.get("DIGEST_ENCRYPT"))
+def init_config_if_needed(*, encrypt: bool = False, ctx: SiteContext | None = None) -> dict[str, str]:
+    c = ctx or _default_ctx()
+    if c.config_path.exists() or c.env_get("SITE_SLUG", "").strip():
+        return load_config(ctx)
+    want_enc = encrypt or _parse_bool(c.env_get("DIGEST_ENCRYPT"))
     alphabet = "abcdefghijkmnopqrstuvwxyz23456789"
     slug = "".join(secrets.choice(alphabet) for _ in range(22)) if want_enc else ""
     data = {
         "PLATFORM": PLATFORM,
-        "PROJECT": os.environ.get("CF_PAGES_PROJECT") or PROJECT_DEFAULT,
-        "ACCOUNT_ID": os.environ.get("CF_ACCOUNT_ID") or ACCOUNT_ID_DEFAULT,
-        "ZONE_ID": os.environ.get("CF_ZONE_ID") or ZONE_ID_DEFAULT,
-        "DOMAIN": os.environ.get("SITE_DOMAIN") or DOMAIN_DEFAULT,
+        "PROJECT": c.env_get("CF_PAGES_PROJECT") or PROJECT_DEFAULT,
+        "ACCOUNT_ID": c.env_get("CF_ACCOUNT_ID") or ACCOUNT_ID_DEFAULT,
+        "ZONE_ID": c.env_get("CF_ZONE_ID") or ZONE_ID_DEFAULT,
+        "DOMAIN": c.env_get("SITE_DOMAIN") or DOMAIN_DEFAULT,
         "SLUG": slug,
         "ENCRYPT": "1" if want_enc else "0",
-        "LANG": i18n.resolve_lang(CLI_LANG),
+        "LANG": i18n.resolve_lang(c.cli_lang),
     }
-    write_config(data)
+    write_config(data, ctx=c)
     mode_msg = f"encrypted (slug {slug})" if want_enc else "public (root-mounted, ENCRYPT=0)"
-    print(f"created {CONFIG_PATH} [{mode_msg}]", file=sys.stderr)
-    return load_config()
+    print(f"created {c.config_path} [{mode_msg}]", file=sys.stderr)
+    return load_config(ctx)
 
 
 _DAILY_LABEL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -821,11 +805,12 @@ def ensure_nav_css(html: str) -> str:
     return re.sub(r"</head>", block + "</head>", html, count=1, flags=re.I)
 
 
-def lang_switch_href(rel: str = "") -> str | None:
+def lang_switch_href(rel: str = "", *, ctx: SiteContext | None = None) -> str | None:
     """URL of the same page in the other language (bilingual demo), or None."""
-    if not LANG_ALT:
+    c = ctx or _default_ctx()
+    if not c.lang_alt:
         return None
-    return LANG_ALT["base"] + rel.strip("/").removesuffix(".html").removesuffix("index")
+    return c.lang_alt["base"] + rel.strip("/").removesuffix(".html").removesuffix("index")
 
 
 def lang_pill_html(href: str, target_lang: str, *, cls: str = "ctrl-btn lang-btn lang-switch") -> str:
@@ -845,11 +830,12 @@ def lang_pill_html(href: str, target_lang: str, *, cls: str = "ctrl-btn lang-btn
     )
 
 
-def lang_switch_link(rel: str = "", cls: str = "lang-switch") -> str:
-    href = lang_switch_href(rel)
-    if href is None:
+def lang_switch_link(rel: str = "", cls: str = "lang-switch", *, ctx: SiteContext | None = None) -> str:
+    c = ctx or _default_ctx()
+    href = lang_switch_href(rel, ctx=c)
+    if href is None or not c.lang_alt:
         return ""
-    code = LANG_ALT["code"]  # type: ignore[index]
+    code = c.lang_alt["code"]
     if "ctrl-btn" in cls:
         return lang_pill_html(href, code, cls=cls)
     return (f'<a class="{cls}" href="{_esc(href)}" hreflang="{code}" lang="{code}">'
@@ -860,27 +846,29 @@ _LANG_ZH_RE = re.compile(r'<div\s+class="lang-pane\s+lang-zh"[^>]*>', re.I)
 _LANG_EN_RE = re.compile(r'<div\s+class="lang-pane\s+lang-en"[^>]*>', re.I)
 
 
-def _primary_pane_html(html: str) -> str:
+def _primary_pane_html(html: str, lang: str | None = None) -> str:
     """Return the pane matching the site's primary language on bilingual pages."""
+    lg = i18n.normalize_lang(lang) if lang is not None else LANG
     zh_m = _LANG_ZH_RE.search(html)
     en_m = _LANG_EN_RE.search(html)
     if not (zh_m and en_m):
         return html
     if zh_m.start() < en_m.start():
-        return html[en_m.start() :] if LANG == "en" else html[zh_m.start() : en_m.start()]
-    return html[en_m.start() : zh_m.start()] if LANG == "en" else html[zh_m.start() :]
+        return html[en_m.start() :] if lg == "en" else html[zh_m.start() : en_m.start()]
+    return html[en_m.start() : zh_m.start()] if lg == "en" else html[zh_m.start() :]
 
 
-def _discover_en_md(md_path: Path, explicit: Path | None = None) -> Path | None:
+def _discover_en_md(md_path: Path, explicit: Path | None = None, *, ctx: SiteContext | None = None) -> Path | None:
     """Resolve an explicit --md-en path, or auto-discover sibling <stem>.en.md for zh-CN sites."""
+    c = ctx or _default_ctx()
     if explicit is not None:
         p = Path(explicit)
         if not p.is_absolute() and not p.is_file():
-            p = ROOT / p
+            p = c.root / p
         if not p.is_file():
             die(f"English markdown not found: {p}")
         return p
-    if LANG == "zh-CN" and not md_path.name.endswith(".en.md"):
+    if c.lang == "zh-CN" and not md_path.name.endswith(".en.md"):
         cand = md_path.with_name(f"{md_path.stem}.en.md")
         if cand.is_file():
             return cand
@@ -901,9 +889,10 @@ def nav_html(
     skip_nav_lang: bool = False,
     lang_href: str | None = None,
     lang_code: str | None = None,
-    encrypted: bool = False,
+    ctx: SiteContext | None = None,
 ) -> str:
-    lg = i18n.normalize_lang(lang) if lang is not None else LANG
+    c = ctx or _default_ctx()
+    lg = i18n.normalize_lang(lang) if lang is not None else c.lang
 
     def tr(key: str, **kw) -> str:
         return i18n.t(lg, key, **kw)
@@ -924,7 +913,7 @@ def nav_html(
     def gone(text: str) -> str:
         return f'<span class="gone">{_esc(text)}</span>'
 
-    s = load_config()["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
+    s = load_config(c)["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
     prefix = (url_prefix if url_prefix is not None else _url_prefix(s)) if abs_links else ""
     idx_href = f"{prefix}/" if abs_links else slug_index_rel
     prev_href = f"{prefix}/{issue.kind}/{prev.label}" if (abs_links and prev) else (prev.label if prev else "")
@@ -962,9 +951,7 @@ def nav_html(
                 )
             else:
                 switch_rel = lang_rel if lang_rel is not None else f"{issue.kind}/{issue.label}"
-                parts.append(lang_switch_link(switch_rel))
-        if encrypted:
-            parts.append(f'<button type="button" class="lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>')
+                parts.append(lang_switch_link(switch_rel, ctx=c))
     return (
         f'<nav class="issue-nav {which}" aria-label="{_esc(tr("nav_aria"))}">'
         + "".join(parts)
@@ -984,15 +971,16 @@ def _inject_nav_into_fragment(
     url_prefix: str | None = None,
     lang_href: str | None = None,
     lang_code: str | None = None,
-    encrypted: bool = False,
+    ctx: SiteContext | None = None,
 ) -> str:
+    c = ctx or _default_ctx()
     skip_nav_lang = False
     btn_href = lang_href
     btn_code = lang_code
-    if not btn_href and LANG_ALT:
+    if not btn_href and c.lang_alt:
         switch_rel = lang_rel if lang_rel is not None else f"{issue.kind}/{issue.label}"
-        btn_href = lang_switch_href(switch_rel)
-        btn_code = LANG_ALT["code"]  # type: ignore[index]
+        btn_href = lang_switch_href(switch_rel, ctx=c)
+        btn_code = c.lang_alt["code"]
     if btn_href and btn_code and '<button type="button" class="ctrl-btn lang-btn' not in fragment:
         theme_marker = '<button type="button" class="ctrl-btn theme-btn'
         if theme_marker in fragment:
@@ -1000,7 +988,7 @@ def _inject_nav_into_fragment(
             fragment = fragment.replace(theme_marker, pill + theme_marker, 1)
             skip_nav_lang = True
 
-    s = load_config()["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
+    s = load_config(c)["SLUG"] if (abs_links and url_prefix is None and slug is None) else (slug or "")
     prefix = (url_prefix if url_prefix is not None else _url_prefix(s)) if abs_links else ""
     brand_href = f"{prefix}/" if abs_links else "../"
     fragment = re.sub(
@@ -1012,12 +1000,12 @@ def _inject_nav_into_fragment(
 
     top = (
         f"{NAV_TOP_START}\n"
-        f"{nav_html(issue, issues, '../', 'top', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel, url_prefix=url_prefix, skip_nav_lang=skip_nav_lang, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted)}\n"
+        f"{nav_html(issue, issues, '../', 'top', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel, url_prefix=url_prefix, skip_nav_lang=skip_nav_lang, lang_href=lang_href, lang_code=lang_code, ctx=c)}\n"
         f"{NAV_TOP_END}"
     )
     bot = (
         f"{NAV_BOT_START}\n"
-        f"{nav_html(issue, issues, '../', 'bottom', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel, url_prefix=url_prefix, encrypted=encrypted)}\n"
+        f"{nav_html(issue, issues, '../', 'bottom', lang=lang, slug=slug, abs_links=abs_links, lang_rel=lang_rel, url_prefix=url_prefix, ctx=c)}\n"
         f"{NAV_BOT_END}"
     )
     if "</header>" not in fragment.lower():
@@ -1051,7 +1039,7 @@ def inject_nav(
     url_prefix: str | None = None,
     lang_href: str | None = None,
     lang_code: str | None = None,
-    encrypted: bool = False,
+    ctx: SiteContext | None = None,
 ) -> str:
     html = strip_marked(html, NAV_TOP_START, NAV_TOP_END)
     html = strip_marked(html, NAV_BOT_START, NAV_BOT_END)
@@ -1064,22 +1052,23 @@ def inject_nav(
         second_lang = "en" if first_m is zh_m else "zh-CN"
         part1 = _inject_nav_into_fragment(
             html[: second_m.start()], issue, issues, lang=first_lang, slug=slug, abs_links=abs_links,
-            lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted,
+            lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, ctx=ctx,
         )
         part2 = _inject_nav_into_fragment(
             html[second_m.start():], issue, issues, lang=second_lang, slug=slug, abs_links=abs_links,
-            lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted,
+            lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, ctx=ctx,
         )
         return part1 + part2
     return _inject_nav_into_fragment(
         html, issue, issues, lang=lang, slug=slug, abs_links=abs_links,
-        lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, encrypted=encrypted,
+        lang_rel=lang_rel, url_prefix=url_prefix, lang_href=lang_href, lang_code=lang_code, ctx=ctx,
     )
 
 
-def list_sources(base: Path | None = None, *, lang: str | None = None) -> list[Issue]:
-    root_dir = base if base is not None else SOURCES
-    lg = i18n.normalize_lang(lang) if lang is not None else LANG
+def list_sources(base: Path | None = None, *, lang: str | None = None, ctx: SiteContext | None = None) -> list[Issue]:
+    c = ctx or _default_ctx()
+    root_dir = base if base is not None else c.sources
+    lg = i18n.normalize_lang(lang) if lang is not None else c.lang
     issues: list[Issue] = []
     if not root_dir.exists():
         return issues
@@ -1099,14 +1088,16 @@ def list_sources(base: Path | None = None, *, lang: str | None = None) -> list[I
     return issues
 
 
-def list_en_sources() -> list[Issue]:
-    return list_sources(SOURCES / "en", lang="en")
+def list_en_sources(ctx: SiteContext | None = None) -> list[Issue]:
+    c = ctx or _default_ctx()
+    return list_sources(c.sources / "en", lang="en", ctx=c)
 
 
-def save_source(html_path: Path, kind: str, label: str, *, lang_sub: str | None = None) -> Path:
+def save_source(html_path: Path, kind: str, label: str, *, lang_sub: str | None = None, ctx: SiteContext | None = None) -> Path:
+    c = ctx or _default_ctx()
     raw = html_path.read_text(encoding="utf-8")
     raw = strip_injections(raw)
-    root_dir = (SOURCES / lang_sub) if lang_sub else SOURCES
+    root_dir = (c.sources / lang_sub) if lang_sub else c.sources
     dest = root_dir / kind / f"{label}.html"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(raw, encoding="utf-8")
@@ -1264,38 +1255,36 @@ def write_static_root(
     *,
     root_latest: bool | None = None,
     has_lang_paths: bool | None = None,
+    ctx: SiteContext | None = None,
 ) -> None:
-    PUBLIC.mkdir(parents=True, exist_ok=True)
-    (PUBLIC / "robots.txt").write_text(
+    c = ctx or _default_ctx()
+    c.public.mkdir(parents=True, exist_ok=True)
+    (c.public / "robots.txt").write_text(
         "User-agent: *\nDisallow: /\n", encoding="utf-8"
     )
     if slug is None:
-        cfg = load_config()
+        cfg = load_config(ctx)
         slug = cfg["SLUG"]
         if root_latest is None:
             root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
     elif root_latest is None:
-        env_val = os.environ.get("DIGEST_ROOT_LATEST", "").strip()
+        env_val = c.env_get("DIGEST_ROOT_LATEST", "").strip()
         if env_val:
             root_latest = _parse_bool(env_val)
         else:
-            root_latest = _parse_bool(_read_config_raw().get("ROOT_LATEST"))
+            root_latest = _parse_bool(_read_config_raw(c).get("ROOT_LATEST"))
     if issues is None:
-        issues = list_sources() if SOURCES.is_dir() else []
+        issues = list_sources(ctx=c) if c.sources.is_dir() else []
     if has_lang_paths is None:
-        has_lang_paths = bool(list_en_sources()) and LANG == "zh-CN"
-    # HTML only changes when an issue is (re)published; short max-age +
-    # long stale-while-revalidate makes back/forward and prefetched clicks
-    # instant while a publish shows up within minutes. Static latest pages
-    # come after daily/* and weekly/* and detach inherited Cache-Control so
-    # they are never cached stale.
-    headers_text = SECURITY_HEADERS + _slug_cache_headers(slug, has_lang_paths=has_lang_paths)
+        has_lang_paths = bool(list_en_sources(ctx=c)) and c.lang == "zh-CN"
+    # Base cache headers only (DP5 site_crypto.finalize_csp_headers attaches security/CSP headers).
+    headers_text = _slug_cache_headers(slug, has_lang_paths=has_lang_paths)
     if root_latest and slug.strip("/"):
         headers_text += _ROOT_LATEST_HEADERS
         if has_lang_paths:
             headers_text += _ROOT_LANG_LATEST_HEADERS
-    (PUBLIC / "_headers").write_text(headers_text, encoding="utf-8")
-    (PUBLIC / "404.html").write_text(
+    (c.public / "_headers").write_text(headers_text, encoding="utf-8")
+    (c.public / "404.html").write_text(
         "<!DOCTYPE html>\n"
         "<html lang=\"en\">\n"
         "<head>\n"
@@ -1307,7 +1296,7 @@ def write_static_root(
         "</html>\n",
         encoding="utf-8",
     )
-    (PUBLIC / "favicon.svg").write_text(FAVICON_SVG, encoding="utf-8")
+    (c.public / "favicon.svg").write_text(FAVICON_SVG + "\n", encoding="utf-8")
     # Latest aliases are served directly as static HTML pages (HTTP 200,
     # keeping the browser URL on /.../latest); _redirects is only used for removed
     # issues (sending old URLs to the index to override stale caches).
@@ -1322,7 +1311,7 @@ def write_static_root(
             rules.append(rule)
 
     base_p = _url_prefix(slug)
-    removed = SITE / "removed-paths.txt"
+    removed = c.site / "removed-paths.txt"
     if removed.is_file():
         for raw_line in removed.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
@@ -1339,17 +1328,17 @@ def write_static_root(
                     lp_p = _url_prefix(slug, lp)
                     _add_rule(f"{lp_p}/{norm} {lp_p}/ 302")
                     _add_rule(f"{lp_p}/{norm}.html {lp_p}/ 302")
-    rp = PUBLIC / "_redirects"
+    rp = c.public / "_redirects"
     if rules:
         rp.write_text("\n".join(rules) + "\n", encoding="utf-8")
     elif rp.exists():
         rp.unlink()
 
 
-def issue_headlines(issue: Issue) -> list[str]:
+def issue_headlines(issue: Issue, *, lang: str | None = None) -> list[str]:
     """Item headlines of an issue, read from its clean source (TOC first)."""
     try:
-        html = _primary_pane_html(issue.source.read_text(encoding="utf-8"))
+        html = _primary_pane_html(issue.source.read_text(encoding="utf-8"), lang=lang)
     except OSError:
         return []
     m = re.search(r'<ol class="toc-items-list">(.*?)</ol>', html, flags=re.S)
@@ -1367,13 +1356,10 @@ def issue_headlines(issue: Issue) -> list[str]:
     return out
 
 
-_TAG_SPLIT_RE = re.compile(r"\s*[/／、｜|]\s*")
-
-
-def issue_tags(issue: Issue) -> list[str]:
+def issue_tags(issue: Issue, *, lang: str | None = None) -> list[str]:
     """Distinct atomic topic tags of an issue, extracted from its rendered story badges."""
     try:
-        html = _primary_pane_html(issue.source.read_text(encoding="utf-8"))
+        html = _primary_pane_html(issue.source.read_text(encoding="utf-8"), lang=lang)
     except OSError:
         return []
     out: list[str] = []
@@ -1401,10 +1387,10 @@ def index_html(
     lang: str | None = None,
     lang_href: str | None = None,
     lang_code: str | None = None,
-    encrypted: bool | None = None,
+    ctx: SiteContext | None = None,
 ) -> str:
-    lg = i18n.normalize_lang(lang) if lang is not None else LANG
-    is_enc = _parse_bool(cfg.get("ENCRYPT")) if encrypted is None else encrypted
+    c = ctx or _default_ctx()
+    lg = i18n.normalize_lang(lang) if lang is not None else c.lang
 
     def tr(key: str, **kw) -> str:
         return i18n.t(lg, key, **kw)
@@ -1424,8 +1410,8 @@ def index_html(
     tag_counts: dict[str, int] = {}
     for i in dailies + weeklies:
         k = (i.kind, i.label)
-        heads_by_key[k] = issue_headlines(i)
-        ts = issue_tags(i)
+        heads_by_key[k] = issue_headlines(i, lang=lg)
+        ts = issue_tags(i, lang=lg)
         tags_by_key[k] = ts
         for tg in ts:
             tag_counts[tg] = tag_counts.get(tg, 0) + 1
@@ -1509,7 +1495,7 @@ def index_html(
 
     # Warm the likely next clicks: newest daily + newest weekly.
     hints = [i.rel_url for i in (dailies[:2] + weeklies[:1])]
-    perf_head = perf_head_html(hints, slug=cfg["SLUG"])
+    perf_head = perf_head_html(hints, slug=cfg["SLUG"], ctx=c)
     tz_name = os.environ.get("DIGEST_TZ", "").strip()
     today = datetime.now(ZoneInfo(tz_name)).date() if tz_name else datetime.now().astimezone().date()
     today_line = (
@@ -1557,14 +1543,10 @@ def index_html(
     lang_btn = (
         lang_pill_html(lang_href, lang_code)
         if (lang_href and lang_code)
-        else lang_switch_link("", "ctrl-btn lang-btn lang-switch")
+        else lang_switch_link("", "ctrl-btn lang-btn lang-switch", ctx=c)
     )
-    lock_btn = (
-        f'<button type="button" class="ctrl-btn lock" data-lock title="{_esc(tr("lock_title"))}">{_esc(tr("lock"))}</button>'
-        if is_enc
-        else ""
-    )
-    lock_js = LOCK_JS_BLOCK if is_enc else ""
+    lock_btn = ""
+    lock_js = ""
     lbl_sys, lbl_light, lbl_dark = tr("theme_system"), tr("theme_light"), tr("theme_dark")
     theme_labels_json = _esc(f'{{"system":"{lbl_sys}","light":"{lbl_light}","dark":"{lbl_dark}"}}')
     theme_toggle_btn = (
@@ -2307,7 +2289,7 @@ def _render_issue_page(
     url_prefix: str | None = None,
     lang_href: str | None = None,
     lang_code: str | None = None,
-    encrypted: bool = False,
+    ctx: SiteContext | None = None,
 ) -> str:
     abs_links = alias_rel is not None
     html = issue.source.read_text(encoding="utf-8")
@@ -2326,36 +2308,37 @@ def _render_issue_page(
         url_prefix=url_prefix,
         lang_href=lang_href,
         lang_code=lang_code,
-        encrypted=encrypted,
+        ctx=ctx,
     )
-    html = inject_perf_and_lock(
-        html, issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix, encrypted=encrypted
+    html = inject_perf_hints(
+        html, issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix, ctx=ctx
     )
     return minify_css(html)
 
 
-def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
-    """Build plaintext (nav already injected) under site/plain/.
+def rebuild_all(cfg: dict[str, str], ctx: SiteContext | None = None) -> list[Issue]:
+    """Build pure plaintext (nav already injected, no encryption/lock logic) under site/plain/.
 
-    Does not write issue HTML into public/; publish_plain_pages or encrypt_all_pages does that.
-    Root files (robots.txt, 404, _headers, _redirects) are written unencrypted to public/.
+    Does not write issue HTML into public/; publish_plain_pages or site_crypto.encrypt_all_pages does that.
+    Root files (robots.txt, 404, base _headers, _redirects) are written unencrypted to public/.
     """
+    c = ctx or _default_ctx()
     slug = cfg["SLUG"]
-    encrypted = _parse_bool(cfg.get("ENCRYPT"))
     root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
-    issues = list_sources()
-    en_issues = list_en_sources()
-    has_lang_paths = bool(en_issues) and LANG == "zh-CN"
+    issues = list_sources(ctx=c)
+    en_issues = list_en_sources(ctx=c)
+    has_lang_paths = bool(en_issues) and c.lang == "zh-CN"
     write_static_root(
         slug=slug,
         issues=issues,
         root_latest=root_latest,
         has_lang_paths=has_lang_paths,
+        ctx=c,
     )
-    plain_dir = _site_dir(PLAIN, slug)
+    plain_dir = _site_dir(c.plain, slug)
     _clear_files(plain_dir)
-    if slug and not _DEMO_MODE:
-        _clear_root_latest(PLAIN)
+    if slug and not c.demo_mode:
+        _clear_root_latest(c.plain)
     (plain_dir / "daily").mkdir(parents=True, exist_ok=True)
     (plain_dir / "weekly").mkdir(parents=True, exist_ok=True)
 
@@ -2387,10 +2370,10 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
 
     # 1. Legacy unprefixed paths under plain_dir (root when SLUG='', or /{slug}/ when SLUG is set)
     for issue in issues:
-        leg_href = None if LANG_ALT else (_en_target_for(issue.kind, issue.label) if has_lang_paths else None)
+        leg_href = None if c.lang_alt else (_en_target_for(issue.kind, issue.label) if has_lang_paths else None)
         leg_code = "en" if leg_href else None
         html = _render_issue_page(
-            issue, issues, slug=slug, lang_href=leg_href, lang_code=leg_code, encrypted=encrypted
+            issue, issues, slug=slug, lang_href=leg_href, lang_code=leg_code, ctx=c
         )
         dest = plain_dir / issue.kind / f"{issue.label}.html"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2399,30 +2382,30 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
     for rel_path, issue, lang_rel, is_root in _latest_alias_specs(
         slug, issues, include_root=root_latest and bool(slug)
     ):
-        dest = PLAIN / rel_path
+        dest = c.plain / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         if is_root and has_lang_paths:
             lh = _en_latest_target(lang_rel, root_level=True)
             html = _render_issue_page(
                 issue, issues, slug=slug, alias_rel=lang_rel,
-                url_prefix=zh_base, lang_href=lh, lang_code="en", encrypted=encrypted,
+                url_prefix=zh_base, lang_href=lh, lang_code="en", ctx=c,
             )
-        elif not is_root and has_lang_paths and not LANG_ALT:
+        elif not is_root and has_lang_paths and not c.lang_alt:
             lh = _en_latest_target(lang_rel, root_level=False)
             html = _render_issue_page(
                 issue, issues, slug=slug, alias_rel=lang_rel,
-                lang_href=lh, lang_code="en", encrypted=encrypted,
+                lang_href=lh, lang_code="en", ctx=c,
             )
         else:
             html = _render_issue_page(
-                issue, issues, slug=slug, alias_rel=lang_rel, encrypted=encrypted
+                issue, issues, slug=slug, alias_rel=lang_rel, ctx=c
             )
         dest.write_text(html, encoding="utf-8")
 
-    leg_idx_href = None if LANG_ALT else (f"{en_base}/" if has_lang_paths else None)
+    leg_idx_href = None if c.lang_alt else (f"{en_base}/" if has_lang_paths else None)
     leg_idx_code = "en" if leg_idx_href else None
     (plain_dir / "index.html").write_text(
-        minify_css(index_html(cfg, issues, lang_href=leg_idx_href, lang_code=leg_idx_code, encrypted=encrypted)),
+        minify_css(index_html(cfg, issues, lang_href=leg_idx_href, lang_code=leg_idx_code, ctx=c)),
         encoding="utf-8",
     )
 
@@ -2436,11 +2419,11 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
         for issue in issues:
             html = _render_issue_page(
                 issue, issues, slug=slug, lang="zh-CN",
-                lang_href=_en_target_for(issue.kind, issue.label), lang_code="en", encrypted=encrypted,
+                lang_href=_en_target_for(issue.kind, issue.label), lang_code="en", ctx=c,
             )
             (zh_dir / issue.kind / f"{issue.label}.html").write_text(html, encoding="utf-8")
         (zh_dir / "index.html").write_text(
-            minify_css(index_html(cfg, issues, lang="zh-CN", lang_href=f"{en_base}/", lang_code="en", encrypted=encrypted)),
+            minify_css(index_html(cfg, issues, lang="zh-CN", lang_href=f"{en_base}/", lang_code="en", ctx=c)),
             encoding="utf-8",
         )
 
@@ -2449,7 +2432,7 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
                 continue
             html_slug = _render_issue_page(
                 issue, issues, slug=slug, alias_rel=alias_rel, lang="zh-CN",
-                url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=False), lang_code="en", encrypted=encrypted,
+                url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=False), lang_code="en", ctx=c,
             )
             p_slug = zh_dir / f"{alias_rel}.html"
             p_slug.parent.mkdir(parents=True, exist_ok=True)
@@ -2457,9 +2440,9 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
             if root_latest and slug:
                 html_root = _render_issue_page(
                     issue, issues, slug=slug, alias_rel=alias_rel, lang="zh-CN",
-                    url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=True), lang_code="en", encrypted=encrypted,
+                    url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=True), lang_code="en", ctx=c,
                 )
-                p_root = PLAIN / "zh" / f"{alias_rel}.html"
+                p_root = c.plain / "zh" / f"{alias_rel}.html"
                 p_root.parent.mkdir(parents=True, exist_ok=True)
                 p_root.write_text(html_root, encoding="utf-8")
 
@@ -2467,11 +2450,11 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
             zh_href = f"{zh_base}/{issue.kind}/{issue.label}" if (issue.kind, issue.label) in zh_keys else f"{zh_base}/"
             html = _render_issue_page(
                 issue, en_issues, slug=slug, lang="en",
-                lang_href=zh_href, lang_code="zh-CN", encrypted=encrypted,
+                lang_href=zh_href, lang_code="zh-CN", ctx=c,
             )
             (en_dir / issue.kind / f"{issue.label}.html").write_text(html, encoding="utf-8")
         (en_dir / "index.html").write_text(
-            minify_css(index_html(cfg, en_issues, lang="en", lang_href=f"{zh_base}/", lang_code="zh-CN", encrypted=encrypted)),
+            minify_css(index_html(cfg, en_issues, lang="en", lang_href=f"{zh_base}/", lang_code="zh-CN", ctx=c)),
             encoding="utf-8",
         )
 
@@ -2480,7 +2463,7 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
                 continue
             html_slug = _render_issue_page(
                 issue, en_issues, slug=slug, alias_rel=alias_rel, lang="en",
-                url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=False), lang_code="zh-CN", encrypted=encrypted,
+                url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=False), lang_code="zh-CN", ctx=c,
             )
             p_slug = en_dir / f"{alias_rel}.html"
             p_slug.parent.mkdir(parents=True, exist_ok=True)
@@ -2488,77 +2471,34 @@ def rebuild_all(cfg: dict[str, str]) -> list[Issue]:
             if root_latest and slug:
                 html_root = _render_issue_page(
                     issue, en_issues, slug=slug, alias_rel=alias_rel, lang="en",
-                    url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=True), lang_code="zh-CN", encrypted=encrypted,
+                    url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=True), lang_code="zh-CN", ctx=c,
                 )
-                p_root = PLAIN / "en" / f"{alias_rel}.html"
+                p_root = c.plain / "en" / f"{alias_rel}.html"
                 p_root.parent.mkdir(parents=True, exist_ok=True)
                 p_root.write_text(html_root, encoding="utf-8")
 
     return issues
 
 
-def privacy_scan(paths: Iterable[Path]) -> None:
-    from html import unescape as _unescape
-
-    hits: list[str] = []
-    compiled: list[tuple[re.Pattern[str], str]] = []
-    for pat, name in PRIVACY_PATTERNS + _load_extra_privacy_patterns():
-        try:
-            compiled.append((re.compile(pat, re.I | re.S), name))
-        except re.error as e:
-            die(f"invalid privacy pattern {pat!r} ({name}): {e}")
-    for path in paths:
-        if not path.is_file():
-            continue
-        # Skip binary just in case
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        # Scan both raw source and stripped+unescaped visible text so HTML entities
-        # or inline formatting tags cannot hide leaked emails or banned phrases.
-        visible = _unescape(re.sub(r"<[^>]+>", "", text))
-        views = (text, visible) if visible != text else (text,)
-        seen_hits: set[tuple[str, str]] = set()
-        for view in views:
-            for rx, name in compiled:
-                for m in rx.finditer(view):
-                    snippet = m.group(0).replace("\n", " ")
-                    if len(snippet) > 80:
-                        snippet = snippet[:80] + "…"
-                    key = (name, snippet)
-                    if key not in seen_hits:
-                        seen_hits.add(key)
-                        hits.append(f"{path}: [{name}] {snippet}")
-    if hits:
-        print("privacy scan FAILED:", file=sys.stderr)
-        for h in hits:
-            print(f"  {h}", file=sys.stderr)
-        die("refusing to publish; remove personal info and retry")
-    print("privacy scan: clean", file=sys.stderr)
+def privacy_scan(paths: Iterable[Path], *, ctx: SiteContext | None = None) -> None:
+    c = ctx or _default_ctx()
+    site_crypto.privacy_scan(paths, site_dir=c.site)
 
 
-def iter_public_files() -> list[Path]:
-    files = [p for p in PUBLIC.rglob("*") if p.is_file()]
-    files = [p for p in files if p.name != ".DS_Store"]
-    return sorted(files)
+def iter_public_files(ctx: SiteContext | None = None) -> list[Path]:
+    c = ctx or _default_ctx()
+    return site_crypto._iter_files(c.public)
 
 
-def iter_plain_files() -> list[Path]:
-    if not PLAIN.exists():
-        return []
-    files = [p for p in PLAIN.rglob("*") if p.is_file() and p.name != ".DS_Store"]
-    return sorted(files)
+def iter_plain_files(ctx: SiteContext | None = None) -> list[Path]:
+    c = ctx or _default_ctx()
+    return site_crypto._iter_files(c.plain)
 
 
-def iter_unencrypted_public() -> list[Path]:
+def iter_unencrypted_public(ctx: SiteContext | None = None) -> list[Path]:
     """Root files that stay in plaintext: robots.txt, 404.html, favicon.svg, _headers, _redirects."""
-    out: list[Path] = []
-    for name in ("robots.txt", "_headers", "404.html", "favicon.svg", "_redirects"):
-        p = PUBLIC / name
-        if p.is_file():
-            out.append(p)
-    return out
+    c = ctx or _default_ctx()
+    return site_crypto.iter_unencrypted_public(c.public)
 
 
 def pages_hash(content: bytes) -> str:
@@ -2886,9 +2826,10 @@ def bind_custom_domain(cfg: dict[str, str], token: str | None) -> dict | None:
     )
 
 
-def public_urls(cfg: dict[str, str], issues: list[Issue]) -> list[tuple[str, str]]:
+def public_urls(cfg: dict[str, str], issues: list[Issue], *, ctx: SiteContext | None = None) -> list[tuple[str, str]]:
+    c = ctx or _default_ctx()
     base = f"https://{cfg['DOMAIN']}{_url_prefix(cfg['SLUG'])}"
-    en_issues = list_en_sources() if LANG == "zh-CN" else []
+    en_issues = list_en_sources(ctx=c) if c.lang == "zh-CN" else []
     has_lang_paths = bool(en_issues)
     out = [("index", f"{base}/")]
     if has_lang_paths:
@@ -2904,145 +2845,36 @@ def public_urls(cfg: dict[str, str], issues: list[Issue]) -> list[tuple[str, str
     return out
 
 
-
-def password_file_path() -> Path:
-    env = os.environ.get("DIGEST_SITE_PASSWORD_FILE", "").strip()
-    return Path(env) if env else PASSWORD_FILE_DEFAULT
-
-
-def salt_file_path() -> Path:
-    env = os.environ.get("DIGEST_SITE_SALT_FILE", "").strip()
-    return Path(env) if env else SALT_FILE_DEFAULT
-
-
-def _ensure_secret_parent(path: Path) -> None:
-    d = path.parent
-    d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(d, 0o700)
-
-
-def write_secret_file(path: Path, data: bytes) -> None:
-    """Atomically write a mode-600 secret file. `data` must not be logged."""
-    _ensure_secret_parent(path)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-        os.chmod(path, 0o600)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
-def generate_and_save_password() -> None:
-    """Write a new 20-char password to the password file. Never prints the value."""
-    pw = "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(20))
-    write_secret_file(password_file_path(), (pw + "\n").encode("utf-8"))
-    pw = None  # noqa: F841
-    path = password_file_path()
-    print(f"wrote password to {path} (value not shown, mode 600)", file=sys.stderr)
-
-
-def generate_and_save_salt() -> bytes:
-    salt = secrets.token_bytes(SALT_LEN)
-    write_secret_file(salt_file_path(), (salt.hex() + "\n").encode("ascii"))
-    print(f"wrote new salt to {salt_file_path()} (remember-me keys invalidated)", file=sys.stderr)
-    return salt
-
-
-def rotate_password_and_salt() -> None:
-    generate_and_save_password()
-    generate_and_save_salt()
-
-
 _PASSWORD_OVERRIDE: str | None = None  # demo mode only (never persisted)
 _SALT_OVERRIDE: bytes | None = None
+ENC_CACHE_PATH = SITE / "enc-cache.json"
+CHANGED_PAGES: list[str] = []
 
 
-def read_password() -> str:
-    if _PASSWORD_OVERRIDE is not None:
-        return _PASSWORD_OVERRIDE
-    path = password_file_path()
-    if not path.is_file():
-        die(
-            f"password file not found: {path}. "
-            "Create it (20+ chars) or run --rotate-password."
-        )
-    mode = path.stat().st_mode
-    if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
-        print(f"warning: {path} should be mode 600", file=sys.stderr)
-    # Strip a single surrounding newline only; do not log the value.
-    pw = path.read_bytes().decode("utf-8")
-    if pw.endswith("\n"):
-        pw = pw[:-1]
-    if pw.endswith("\r"):
-        pw = pw[:-1]
-    if len(pw) < 16:
-        die("password file is too short")
-    return pw
+def read_password(ctx: SiteContext | None = None) -> str:
+    c = ctx or _default_ctx()
+    return site_crypto.read_password(c.password_override)
 
 
-def load_or_create_salt() -> bytes:
-    if _SALT_OVERRIDE is not None:
-        return _SALT_OVERRIDE
-    path = salt_file_path()
-    if path.is_file():
-        raw = path.read_text(encoding="ascii").strip()
-        try:
-            salt = bytes.fromhex(raw)
-        except ValueError:
-            die(f"salt file {path} is not valid hex")
-        if len(salt) < 16:
-            die("salt file is too short")
-        return salt
-    return generate_and_save_salt()
+def load_or_create_salt(ctx: SiteContext | None = None) -> bytes:
+    c = ctx or _default_ctx()
+    return site_crypto.load_or_create_salt(c.salt_override)
 
 
-def derive_key(password: str, salt: bytes) -> bytes:
-    return hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        PBKDF2_ITERATIONS,
-        dklen=KEY_LEN,
-    )
+def localize_template(
+    tmpl: str,
+    lang: str | None = None,
+    extras: dict[str, str] | None = None,
+    *,
+    ctx: SiteContext | None = None,
+) -> str:
+    c = ctx or _default_ctx()
+    return site_crypto.localize_template(tmpl, lang=lang, extras=extras, default_lang=c.lang)
 
 
-def localize_template(tmpl: str, lang: str | None = None, extras: dict[str, str] | None = None) -> str:
-    """Fill {{key}} (HTML-escaped) and {{js:key}} (JSON string literal) from i18n.STRINGS.
-
-    `extras` supplies pre-built HTML for keys such as {{lang_switch}}; a key that is not
-    in `extras` and not in the string table is an error, except lang_switch and demo_hint (empty).
-    """
-    lang = lang or LANG
-    extras = extras or {}
-
-    def sub(m: re.Match) -> str:
-        js, key = m.group(1) == "js:", m.group(2)
-        if key in extras:
-            return extras[key]
-        if key in ("lang_switch", "demo_hint"):
-            return ""
-        try:
-            val = i18n.t(lang, key)
-        except KeyError:
-            die(f"password template uses unknown i18n key {key!r}")
-        return json.dumps(val, ensure_ascii=False).replace("<", "\\u003c") if js else _esc(val)
-
-    return re.sub(r"\{\{(js:)?(\w+)\}\}", sub, tmpl)
-
-
-def _shell_lang_for_rel(rel: str) -> str:
-    clean = rel.lstrip("/")
-    if clean == "en/index.html" or clean.startswith("en/"):
-        return "en"
-    if clean == "zh/index.html" or clean.startswith("zh/"):
-        return "zh-CN"
-    return LANG
+def _shell_lang_for_rel(rel: str, *, ctx: SiteContext | None = None) -> str:
+    c = ctx or _default_ctx()
+    return site_crypto._shell_lang_for_rel(rel, default_lang=c.lang)
 
 
 def shell_extras(
@@ -3050,17 +2882,17 @@ def shell_extras(
     *,
     allow_lang_switch: bool = True,
     shell_lang: str | None = None,
+    ctx: SiteContext | None = None,
 ) -> dict[str, str]:
-    """Extra HTML for the password shell of the page at `rel` (e.g. daily/2026-01-15.html)."""
-    lg = shell_lang or LANG
-    extras = {"lang_switch": lang_switch_link(rel, "lang-alt") if allow_lang_switch else ""}
-    if _PASSWORD_OVERRIDE is not None:  # demo builds only: the demo password is public by design
-        extras["demo_hint"] = (
-            '<p class="demo-hint">'
-            + _esc(i18n.t(lg, "pw_demo_hint")).replace("{pw}", f"<code>{_esc(_PASSWORD_OVERRIDE)}</code>")
-            + "</p>"
-        )
-    return extras
+    c = ctx or _default_ctx()
+    return site_crypto.shell_extras(
+        rel,
+        allow_lang_switch=allow_lang_switch,
+        shell_lang=shell_lang,
+        default_lang=c.lang,
+        lang_alt=c.lang_alt,
+        password_override=c.password_override,
+    )
 
 
 def wrap_encrypted(
@@ -3072,48 +2904,25 @@ def wrap_encrypted(
     *,
     allow_lang_switch: bool = True,
     shell_lang: str | None = None,
+    ctx: SiteContext | None = None,
 ) -> str:
-    nonce = os.urandom(NONCE_LEN)
-    # v2: gzip before encrypting (ciphertext is incompressible, so the CDN's
-    # brotli cannot help); the page inflates with DecompressionStream.
-    packed = gzip.compress(plaintext.encode("utf-8"), compresslevel=9, mtime=0)
-    ct = AESGCM(key).encrypt(nonce, packed, None)
-    cfg = {
-        "v": 2,
-        "z": "gzip",
-        "iter": PBKDF2_ITERATIONS,
-        "salt": base64.b64encode(salt).decode("ascii"),
-        "iv": base64.b64encode(nonce).decode("ascii"),
-        "ct": base64.b64encode(ct).decode("ascii"),
-    }
-    if "__ENCRYPT_CFG_JSON__" not in tmpl:
-        die("password template is missing the __ENCRYPT_CFG_JSON__ placeholder")
-    lg = shell_lang or _shell_lang_for_rel(rel)
-    tmpl = localize_template(
-        tmpl, lang=lg, extras=shell_extras(rel, allow_lang_switch=allow_lang_switch, shell_lang=lg)
-    )
-    return tmpl.replace(
-        "__ENCRYPT_CFG_JSON__",
-        json.dumps(cfg, separators=(",", ":")),
-        1,
+    c = ctx or _default_ctx()
+    return site_crypto.wrap_encrypted(
+        plaintext,
+        key,
+        salt,
+        tmpl,
+        rel,
+        allow_lang_switch=allow_lang_switch,
+        shell_lang=shell_lang,
+        default_lang=c.lang,
+        lang_alt=c.lang_alt,
+        password_override=c.password_override,
     )
 
 
 def _distinctive_snippets(plain: str, tmpl: str) -> list[str]:
-    snippets: list[str] = []
-    for m in re.finditer(r"<h[1-6][^>]*>(.*?)</h[1-6]>", plain, re.I | re.S):
-        t = re.sub(r"<[^>]+>", "", m.group(1))
-        t = re.sub(r"\s+", " ", t).strip()
-        if len(t) >= 8 and t not in tmpl:
-            snippets.append(t)
-    # Dedup, keep order
-    seen: set[str] = set()
-    out: list[str] = []
-    for s in snippets:
-        if s not in seen:
-            seen.add(s)
-            out.append(s)
-    return out[:30]
+    return site_crypto._distinctive_snippets(plain, tmpl)
 
 
 def _assert_no_plaintext_leak(
@@ -3124,45 +2933,35 @@ def _assert_no_plaintext_leak(
     *,
     allow_lang_switch: bool = True,
     shell_lang: str | None = None,
+    ctx: SiteContext | None = None,
 ) -> None:
-    lg = shell_lang or _shell_lang_for_rel(rel.as_posix())
-    tmpl = localize_template(
+    c = ctx or _default_ctx()
+    site_crypto.assert_no_plaintext_leak(
+        plain,
+        wrapped,
+        rel,
         tmpl,
-        lang=lg,
-        extras=shell_extras(rel.as_posix(), allow_lang_switch=allow_lang_switch, shell_lang=lg),
-    )  # the shell's own (localized) words are not a leak
-    for snip in _distinctive_snippets(plain, tmpl):
-        if snip in wrapped:
-            die(f"plaintext leak in encrypted {rel}: {snip!r}")
-    # Prompt page must be present
-    for needle in (i18n.t(lg, "pw_title"), i18n.t(lg, "pw_label"), i18n.t(lg, "pw_open"), PROMPT_MARK, "noindex"):
-        if needle not in wrapped:
-            die(f"encrypted {rel} is missing the password prompt ({needle})")
-    if "__ENCRYPT_CFG_JSON__" in wrapped:
-        die(f"encrypted {rel} still has an unreplaced template placeholder")
-    if '"ct"' not in wrapped and '"ct":' not in wrapped:
-        # json.dumps uses "ct":
-        die(f"encrypted {rel} is missing ciphertext")
+        allow_lang_switch=allow_lang_switch,
+        shell_lang=shell_lang,
+        default_lang=c.lang,
+        lang_alt=c.lang_alt,
+        password_override=c.password_override,
+    )
 
 
 _ROOT_CONTROL_HTML = frozenset({"404.html"})
 
 
 def _prune_empty_dirs(root: Path) -> None:
-    if not root.is_dir():
-        return
-    for d in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
-        try:
-            d.rmdir()
-        except OSError:
-            pass
+    site_crypto._prune_empty_dirs(root)
 
 
-def publish_plain_pages(cfg: dict[str, str]) -> None:
+def publish_plain_pages(cfg: dict[str, str], ctx: SiteContext | None = None) -> None:
     """Publish plaintext HTML directly from site/plain/ into site/public/ (ENCRYPT=0)."""
+    c = ctx or _default_ctx()
     slug = cfg["SLUG"]
-    src_root = _site_dir(PLAIN, slug)
-    dst_root = _site_dir(PUBLIC, slug)
+    src_root = _site_dir(c.plain, slug)
+    dst_root = _site_dir(c.public, slug)
     if not src_root.is_dir():
         die("plaintext pages not found under site/plain; run a rebuild first")
     html_files = sorted(src_root.rglob("*.html"))
@@ -3170,7 +2969,7 @@ def publish_plain_pages(cfg: dict[str, str]) -> None:
         die("no plaintext HTML to publish")
 
     written = reused = 0
-    CHANGED_PAGES.clear()
+    c.changed_pages.clear()
 
     def _copy_one(src: Path, dest: Path, change_name: str) -> None:
         nonlocal written, reused
@@ -3180,7 +2979,7 @@ def publish_plain_pages(cfg: dict[str, str]) -> None:
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(body)
-        CHANGED_PAGES.append(change_name)
+        c.changed_pages.append(change_name)
         written += 1
 
     for src in html_files:
@@ -3195,285 +2994,82 @@ def publish_plain_pages(cfg: dict[str, str]) -> None:
                 continue
             if r not in keep:
                 pub.unlink()
-                CHANGED_PAGES.append(f"-{r}")
+                c.changed_pages.append(f"-{r}")
 
-    if slug and not _DEMO_MODE:
+    if slug and not c.demo_mode:
         for rel_str in _ROOT_LATEST_RELS:
             if rel_str.startswith(f"{slug}/"):
                 continue
-            src = PLAIN / rel_str
-            dest = PUBLIC / rel_str
+            src = c.plain / rel_str
+            dest = c.public / rel_str
             if src.is_file():
                 _copy_one(src, dest, f"/{rel_str}")
             elif dest.is_file():
                 dest.unlink()
-                CHANGED_PAGES.append(f"-/{rel_str}")
+                c.changed_pages.append(f"-/{rel_str}")
 
-    ENC_CACHE_PATH.unlink(missing_ok=True)
-    _prune_empty_dirs(PUBLIC)
+    c.enc_cache_path.unlink(missing_ok=True)
+    _prune_empty_dirs(c.public)
     print(
         f"published {written} public HTML page(s), kept {reused} unchanged (ENCRYPT=0)",
         file=sys.stderr,
     )
 
 
-def assert_public_matches_plain(cfg: dict[str, str]) -> None:
-    """Verify public HTML pages match site/plain/ verbatim with no password prompt (ENCRYPT=0)."""
-    slug = cfg["SLUG"]
-    src_root = _site_dir(PLAIN, slug)
-    dst_root = _site_dir(PUBLIC, slug)
-    pages = (
-        [
-            p
-            for p in sorted(dst_root.rglob("*.html"))
-            if slug or p.relative_to(dst_root).as_posix() not in _ROOT_CONTROL_HTML
-        ]
-        if dst_root.exists()
-        else []
-    )
-    if not pages:
-        die("no published HTML under public/; run a rebuild first")
-    checked = 0
-
-    def _check_plain(path: Path, plain_path: Path) -> None:
-        nonlocal checked
-        text = path.read_text(encoding="utf-8")
-        if PROMPT_MARK in text or "__ENCRYPT_CFG_JSON__" in text:
-            die(f"{path.relative_to(PUBLIC)} contains password prompt despite ENCRYPT=0; run --rebuild")
-        if not plain_path.is_file():
-            die(f"missing plaintext source for {path.relative_to(PUBLIC)}; run --rebuild")
-        if text != plain_path.read_text(encoding="utf-8"):
-            die(f"{path.relative_to(PUBLIC)} does not match plaintext; run --rebuild")
-        checked += 1
-
-    for path in pages:
-        rel = path.relative_to(dst_root)
-        _check_plain(path, src_root / rel)
-    if slug and not _DEMO_MODE:
-        for rel_str in _ROOT_LATEST_RELS:
-            if rel_str.startswith(f"{slug}/"):
-                continue
-            path = PUBLIC / rel_str
-            if path.is_file():
-                _check_plain(path, PLAIN / rel_str)
-    for name in ("robots.txt", "_headers", "404.html"):
-        path = PUBLIC / name
-        if not path.is_file():
-            die(f"missing root file: {name}")
-        body = path.read_text(encoding="utf-8")
-        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
-            die(f"{name} must stay unencrypted")
-    redirects_path = PUBLIC / "_redirects"
-    if redirects_path.is_file():
-        body = redirects_path.read_text(encoding="utf-8")
-        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
-            die("_redirects must stay unencrypted")
-    print(f"public check: {checked} page(s) match plaintext (ENCRYPT=0)", file=sys.stderr)
-
-
-def encrypt_all_pages(cfg: dict[str, str]) -> None:
-    """Encrypt every HTML page under site/plain/ into site/public/ (ENCRYPT=1)."""
-    if not TEMPLATE_PATH.is_file():
-        die(f"password template not found: {TEMPLATE_PATH}")
-    tmpl = TEMPLATE_PATH.read_text(encoding="utf-8")
-    password = read_password()
-    salt = load_or_create_salt()
-    key = derive_key(password, salt)
-    # Drop the password string as soon as the key is derived.
-    password = None  # noqa: F841
-
-    slug = cfg["SLUG"]
-    src_root = _site_dir(PLAIN, slug)
-    dst_root = _site_dir(PUBLIC, slug)
-    if not src_root.is_dir():
-        die("plaintext pages not found under site/plain; run a rebuild first")
-    html_files = sorted(src_root.rglob("*.html"))
-    if not html_files:
-        die("no plaintext HTML to encrypt")
-
-    # Content-hash cache: a page is re-encrypted only when its plaintext,
-    # the derived key/salt, the template, or the shell language changed.
-    # Encryption uses a random IV, so re-encrypting unchanged pages would
-    # change ciphertext and force re-upload; we keep the prior encrypted file.
-    cache = _load_enc_cache()
-    salt_fp = hashlib.sha256(salt).hexdigest()[:16]
-    key_fp = hashlib.sha256(key).hexdigest()[:16]
-    tmpl_fp = hashlib.sha256(tmpl.encode("utf-8")).hexdigest()[:16]
-    new_cache: dict[str, str] = {}
-    n = skipped = 0
-    CHANGED_PAGES.clear()
-
-    def _encrypt_one(
-        src: Path,
-        dest: Path,
-        rel: Path,
-        cache_key: str,
-        change_name: str,
-        *,
-        allow_lang_switch: bool = True,
-    ) -> None:
-        nonlocal n, skipped
-        plain = src.read_text(encoding="utf-8")
-        shell_lg = _shell_lang_for_rel(rel.as_posix())
-        alt_href = lang_switch_href(rel.as_posix()) if allow_lang_switch else ""
-        alt_fp = hashlib.sha256((alt_href or "").encode()).hexdigest()[:8]
-        fp = f"{hashlib.sha256(plain.encode('utf-8')).hexdigest()}:{salt_fp}:{key_fp}:{tmpl_fp}:{alt_fp}:{shell_lg}"
-        if cache.get(cache_key) == fp and dest.is_file():
-            body = dest.read_text(encoding="utf-8")
-            if PROMPT_MARK in body and '"ct":' in body:
-                new_cache[cache_key] = fp
-                skipped += 1
-                return
-        wrapped = wrap_encrypted(
-            plain,
-            key,
-            salt,
-            tmpl,
-            rel.as_posix(),
-            allow_lang_switch=allow_lang_switch,
-            shell_lang=shell_lg,
-        )
-        _assert_no_plaintext_leak(
-            plain,
-            wrapped,
-            rel,
-            tmpl,
-            allow_lang_switch=allow_lang_switch,
-            shell_lang=shell_lg,
-        )
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(wrapped, encoding="utf-8")
-        new_cache[cache_key] = fp
-        CHANGED_PAGES.append(change_name)
-        n += 1
-
-    for src in html_files:
-        rel = src.relative_to(src_root)
-        key_rel = rel.as_posix()
-        _encrypt_one(src, dst_root / rel, rel, key_rel, key_rel, allow_lang_switch=True)
-    # Prune encrypted pages whose plaintext no longer exists (removed issues).
-    keep = {s.relative_to(src_root).as_posix() for s in html_files}
-    if dst_root.is_dir():
-        for pub in sorted(dst_root.rglob("*.html")):
-            r = pub.relative_to(dst_root).as_posix()
-            if not slug and r in _ROOT_CONTROL_HTML:
-                continue
-            if r not in keep:
-                pub.unlink()
-                CHANGED_PAGES.append(f"-{r}")
-    # Opt-in root latest aliases (ROOT_LATEST=1 when SLUG is set): omit unencrypted
-    # lang_switch from the root password shell so companion slugs stay hidden before unlock.
-    if slug and not _DEMO_MODE:
-        for rel_str in _ROOT_LATEST_RELS:
-            if rel_str.startswith(f"{slug}/"):
-                continue
-            src = PLAIN / rel_str
-            dest = PUBLIC / rel_str
-            if src.is_file():
-                _encrypt_one(
-                    src,
-                    dest,
-                    Path(rel_str),
-                    f"__root__/{rel_str}",
-                    f"/{rel_str}",
-                    allow_lang_switch=False,
-                )
-            elif dest.is_file():
-                dest.unlink()
-                CHANGED_PAGES.append(f"-/{rel_str}")
-    _prune_empty_dirs(PUBLIC)
-    _save_enc_cache(new_cache)
-    print(
-        f"encrypted {n} HTML page(s), reused {skipped} unchanged, with AES-256-GCM / "
-        f"PBKDF2-SHA256 ({PBKDF2_ITERATIONS} iterations)",
-        file=sys.stderr,
+def assert_public_matches_plain(cfg: dict[str, str], ctx: SiteContext | None = None) -> None:
+    c = ctx or _default_ctx()
+    site_crypto.assert_public_matches_plain(
+        cfg,
+        plain_dir=c.plain,
+        public_dir=c.public,
+        demo_mode=c.demo_mode,
+        root_latest_rels=_ROOT_LATEST_RELS,
     )
 
 
-ENC_CACHE_PATH = SITE / "enc-cache.json"
-CHANGED_PAGES: list[str] = []
-
-
-def _load_enc_cache() -> dict[str, str]:
-    try:
-        return json.loads(ENC_CACHE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_enc_cache(cache: dict[str, str]) -> None:
-    ENC_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = ENC_CACHE_PATH.with_name(ENC_CACHE_PATH.name + ".tmp")
-    tmp.write_text(json.dumps(cache, indent=1, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, ENC_CACHE_PATH)
-
-
-def assert_public_is_encrypted(cfg: dict[str, str]) -> None:
-    """Refuse to deploy if issue/index/latest HTML is still plaintext."""
-    slug = cfg["SLUG"]
-    dst_root = _site_dir(PUBLIC, slug)
-    src_root = _site_dir(PLAIN, slug)
-    pages = (
-        [
-            p
-            for p in sorted(dst_root.rglob("*.html"))
-            if slug or p.relative_to(dst_root).as_posix() not in _ROOT_CONTROL_HTML
-        ]
-        if dst_root.exists()
-        else []
+def encrypt_all_pages(cfg: dict[str, str], ctx: SiteContext | None = None) -> None:
+    c = ctx or _default_ctx()
+    changed = site_crypto.encrypt_all_pages(
+        cfg,
+        plain_dir=c.plain,
+        public_dir=c.public,
+        template_path=c.template_path,
+        enc_cache_path=c.enc_cache_path,
+        default_lang=c.lang,
+        lang_alt=c.lang_alt,
+        demo_mode=c.demo_mode,
+        password_override=c.password_override,
+        salt_override=c.salt_override,
+        root_latest_rels=_ROOT_LATEST_RELS,
     )
-    if not pages:
-        die("no published HTML under public/; run a rebuild first")
-    tmpl = TEMPLATE_PATH.read_text(encoding="utf-8") if TEMPLATE_PATH.is_file() else ""
-    checked = 0
-
-    def _check_page(path: Path, rel: Path, plain_path: Path, *, allow_lang_switch: bool) -> None:
-        nonlocal checked
-        text = path.read_text(encoding="utf-8")
-        lg = _shell_lang_for_rel(rel.as_posix())
-        if PROMPT_MARK not in text or i18n.t(lg, "pw_title") not in text:
-            die(f"{path.relative_to(PUBLIC)} does not look encrypted; run --rebuild")
-        if "__ENCRYPT_CFG_JSON__" in text:
-            die(f"{path.relative_to(PUBLIC)} has an unreplaced placeholder")
-        if plain_path.is_file():
-            _assert_no_plaintext_leak(
-                plain_path.read_text(encoding="utf-8"),
-                text,
-                rel,
-                tmpl,
-                allow_lang_switch=allow_lang_switch,
-                shell_lang=lg,
-            )
-        checked += 1
-
-    for path in pages:
-        rel = path.relative_to(dst_root)
-        _check_page(path, rel, src_root / rel, allow_lang_switch=True)
-    if slug and not _DEMO_MODE:
-        for rel_str in _ROOT_LATEST_RELS:
-            if rel_str.startswith(f"{slug}/"):
-                continue
-            path = PUBLIC / rel_str
-            if path.is_file():
-                _check_page(path, Path(rel_str), PLAIN / rel_str, allow_lang_switch=False)
-    # Root files must remain unencrypted and must not be prompt pages.
-    for name in ("robots.txt", "_headers", "404.html"):
-        path = PUBLIC / name
-        if not path.is_file():
-            die(f"missing unencrypted root file: {name}")
-        body = path.read_text(encoding="utf-8")
-        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
-            die(f"{name} must stay unencrypted")
-    redirects_path = PUBLIC / "_redirects"
-    if redirects_path.is_file():
-        body = redirects_path.read_text(encoding="utf-8")
-        if PROMPT_MARK in body or "__ENCRYPT_CFG_JSON__" in body:
-            die("_redirects must stay unencrypted")
-    print(f"encryption check: {checked} page(s) look encrypted", file=sys.stderr)
+    c.changed_pages[:] = changed
 
 
-def print_urls(cfg: dict[str, str], issues: list[Issue]) -> None:
-    for name, url in public_urls(cfg, issues):
+def _load_enc_cache(ctx: SiteContext | None = None) -> dict[str, str]:
+    return site_crypto._load_enc_cache((ctx or _default_ctx()).enc_cache_path)
+
+
+def _save_enc_cache(cache: dict[str, str], ctx: SiteContext | None = None) -> None:
+    site_crypto._save_enc_cache((ctx or _default_ctx()).enc_cache_path, cache)
+
+
+def assert_public_is_encrypted(cfg: dict[str, str], ctx: SiteContext | None = None) -> None:
+    c = ctx or _default_ctx()
+    site_crypto.assert_public_is_encrypted(
+        cfg,
+        plain_dir=c.plain,
+        public_dir=c.public,
+        template_path=c.template_path,
+        default_lang=c.lang,
+        lang_alt=c.lang_alt,
+        demo_mode=c.demo_mode,
+        password_override=c.password_override,
+        root_latest_rels=_ROOT_LATEST_RELS,
+    )
+
+
+def print_urls(cfg: dict[str, str], issues: list[Issue], *, ctx: SiteContext | None = None) -> None:
+    for name, url in public_urls(cfg, issues, ctx=ctx):
         print(f"{name}: {url}")
 
 
@@ -3483,8 +3079,10 @@ def prepare(
     label: str | None,
     *,
     en_html_path: Path | None = None,
+    ctx: SiteContext | None = None,
 ) -> tuple[dict[str, str], list[Issue]]:
-    cfg = init_config_if_needed()
+    c = ctx or _default_ctx()
+    cfg = init_config_if_needed(ctx=c)
     if html_path is not None:
         if not html_path.is_file():
             die(f"HTML file not found: {html_path}")
@@ -3494,25 +3092,25 @@ def prepare(
             parse_daily_label(label)  # type: ignore[arg-type]
         else:
             parse_weekly_label(label)  # type: ignore[arg-type]
-        save_source(html_path, kind, label)  # type: ignore[arg-type]
+        save_source(html_path, kind, label, ctx=c)  # type: ignore[arg-type]
         print(f"saved source {kind}/{label}", file=sys.stderr)
         if en_html_path is not None:
             if not en_html_path.is_file():
                 die(f"English HTML file not found: {en_html_path}")
-            save_source(en_html_path, kind, label, lang_sub="en")  # type: ignore[arg-type]
+            save_source(en_html_path, kind, label, lang_sub="en", ctx=c)  # type: ignore[arg-type]
             print(f"saved English source en/{kind}/{label}", file=sys.stderr)
-    issues = rebuild_all(cfg)
+    issues = rebuild_all(cfg, ctx=c)
     # Privacy scan MUST run on plaintext, before encryption. Ciphertext is
     # base64 and can false-positive the email regex.
-    privacy_scan(iter_plain_files() + iter_unencrypted_public())
+    privacy_scan(iter_plain_files(c) + iter_unencrypted_public(c), ctx=c)
     if _parse_bool(cfg.get("ENCRYPT")):
-        encrypt_all_pages(cfg)
-        _finalize_csp_headers()
-        assert_public_is_encrypted(cfg)
+        encrypt_all_pages(cfg, ctx=c)
+        _finalize_csp_headers(c)
+        assert_public_is_encrypted(cfg, ctx=c)
     else:
-        publish_plain_pages(cfg)
-        _finalize_csp_headers()
-        assert_public_matches_plain(cfg)
+        publish_plain_pages(cfg, ctx=c)
+        _finalize_csp_headers(c)
+        assert_public_matches_plain(cfg, ctx=c)
     idx_path = f"{_url_prefix(cfg['SLUG'])}/"
     print(f"prepared {len(issues)} issue(s); index at {idx_path}", file=sys.stderr)
     return cfg, issues
@@ -3594,6 +3192,9 @@ DEMO_WEEKLY_LABEL = "2026-01-12_01-18"
 
 def _verify_demo_pages(out_slug_dir: Path, plain_slug_dir: Path, key: bytes | None) -> int:
     """Verify every output page matches its plaintext (decrypting first when encrypted)."""
+    import gzip
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     n = 0
     for page in sorted(out_slug_dir.rglob("*.html")):
         text = page.read_text(encoding="utf-8")
@@ -3619,16 +3220,15 @@ DEMO_LANGS = ("en", "zh-CN")
 
 def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                langs: tuple[str, ...] | None = None) -> int:
-    """Build the demo site from examples/ into `out` (no deploy).
+    """Build the demo site from examples/ into `out` (no deploy) using isolated SiteContext.
 
     Public (no password) by default; set DIGEST_DEMO_PASSWORD (>= 4 chars) to
     enable client-side AES-256-GCM encryption on the demo build.
     `langs=None` or one language: a single site at /<slug>/ (slug "demo" by default).
     Both languages (DEMO_LANGS): English at /en/ and Chinese at /zh-CN/ in one output tree,
     with a language-switch link on every page and `/` redirecting to /en/.
+    Zero module-global or os.environ mutations.
     """
-    global SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH
-    global _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE
     import shutil
     import tempfile
 
@@ -3644,31 +3244,32 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         if not (examples / f"sample-digest.{lg}.md").is_file():
             die(f"missing {examples / f'sample-digest.{lg}.md'}")
 
-    saved_paths = (SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH)
-    saved_overrides = (_PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE)
     saved_slug = os.environ.get("SITE_SLUG")
-    saved_lang_alt = os.environ.get("DIGEST_LANG_ALT")
-    saved_root_latest = os.environ.get("DIGEST_ROOT_LATEST")
-    saved_encrypt = os.environ.get("DIGEST_ENCRYPT")
-    os.environ.pop("DIGEST_LANG_ALT", None)
-    os.environ.pop("DIGEST_ROOT_LATEST", None)
-    os.environ.pop("DIGEST_ENCRYPT", None)
-    if multi:  # the language prefixes are the slugs; an env slug would override them in load_config()
-        os.environ.pop("SITE_SLUG", None)
+    env_overrides: dict[str, str | None] = {
+        "DIGEST_LANG_ALT": None,
+        "DIGEST_ROOT_LATEST": None,
+        "DIGEST_ENCRYPT": None,
+    }
+    if multi:
+        env_overrides["SITE_SLUG"] = None
+
     work = Path(tempfile.mkdtemp(prefix="ai-digest-demo-"))
     try:
-        _DEMO_MODE = True
-        SITE = work / "site"
-        PUBLIC, PLAIN = SITE / "public", SITE / "plain"
-        CONFIG_PATH = SITE / "CONFIG"
+        demo_site = work / "site"
+        demo_public = demo_site / "public"
+        demo_plain = demo_site / "plain"
+        demo_config = demo_site / "CONFIG"
+        demo_template = TEMPLATE_PATH
+
         if encrypted:
-            _PASSWORD_OVERRIDE = password
-            _SALT_OVERRIDE = os.urandom(SALT_LEN)
-            key: bytes | None = derive_key(password, _SALT_OVERRIDE)
+            demo_pw: str | None = password
+            demo_salt: bytes | None = os.urandom(SALT_LEN)
+            key: bytes | None = derive_key(password, demo_salt)
         else:
-            _PASSWORD_OVERRIDE = None
-            _SALT_OVERRIDE = None
+            demo_pw = None
+            demo_salt = None
             key = None
+
         if str(CODE_ROOT) not in sys.path:
             sys.path.insert(0, str(CODE_ROOT))
         import render_html
@@ -3676,12 +3277,25 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         slugs = {lg: (lg if multi else (saved_slug or "demo")) for lg in langs}
         total_issues = total_pages = 0
         for lg in langs:
-            CLI_LANG = lg  # beats $DIGEST_LANG inside load_config()
-            set_lang(lg)
             other = next((o for o in langs if o != lg), None)
-            LANG_ALT = {"code": other, "base": f"/{slugs[other]}/"} if multi and other else None
-            SOURCES = SITE / f"sources-{lg}"
-            ENC_CACHE_PATH = SITE / f"enc-cache-{lg}.json"
+            lang_alt = {"code": other, "base": f"/{slugs[other]}/"} if multi and other else None
+            ctx = SiteContext(
+                root=work,
+                site=demo_site,
+                public=demo_public,
+                plain=demo_plain,
+                sources=demo_site / f"sources-{lg}",
+                config_path=demo_config,
+                template_path=demo_template,
+                enc_cache_path=demo_site / f"enc-cache-{lg}.json",
+                lang=lg,
+                cli_lang=lg,
+                lang_alt=lang_alt,
+                demo_mode=True,
+                password_override=demo_pw,
+                salt_override=demo_salt,
+                env_overrides=env_overrides,
+            )
             cfg_data = {
                 "PLATFORM": PLATFORM,
                 "PROJECT": os.environ.get("CF_PAGES_PROJECT") or PROJECT_DEFAULT,
@@ -3693,7 +3307,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             }
             if multi and other:
                 cfg_data["LANG_ALT"] = f"{other}:/{slugs[other]}/"
-            write_config(cfg_data)
+            write_config(cfg_data, ctx=ctx)
             html_dir = work / f"html-{lg}"
             sample_daily = examples / f"sample-digest.{lg}.md"
             sample_weekly = examples / f"sample-weekly.{lg}.md"
@@ -3703,29 +3317,29 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             for md, kind, label, issue_year in jobs:
                 h = html_dir / f"{kind}-{label}.html"
                 render_html.render_file(md, h, lg, year=issue_year)
-                save_source(h, kind, label)
-            cfg = load_config()
-            issues = rebuild_all(cfg)
-            privacy_scan(iter_plain_files() + iter_unencrypted_public())
+                save_source(h, kind, label, ctx=ctx)
+            cfg = load_config(ctx)
+            issues = rebuild_all(cfg, ctx=ctx)
+            privacy_scan(iter_plain_files(ctx) + iter_unencrypted_public(ctx), ctx=ctx)
             if encrypted:
-                encrypt_all_pages(cfg)
-                assert_public_is_encrypted(cfg)
+                encrypt_all_pages(cfg, ctx=ctx)
+                assert_public_is_encrypted(cfg, ctx=ctx)
             else:
-                publish_plain_pages(cfg)
-                assert_public_matches_plain(cfg)
-            total_pages += _verify_demo_pages(PUBLIC / slugs[lg], PLAIN / slugs[lg], key)
+                publish_plain_pages(cfg, ctx=ctx)
+                assert_public_matches_plain(cfg, ctx=ctx)
+            total_pages += _verify_demo_pages(demo_public / slugs[lg], demo_plain / slugs[lg], key)
             total_issues += len(issues)
         entry = slugs[langs[0]]
         # Pages: send the site root to the (first language's) index; per-language latest aliases
         # are static HTML pages served directly at HTTP 200 (URL stays on latest).
-        (PUBLIC / "_redirects").write_text(f"/ /{entry}/ 302\n", encoding="utf-8")
+        (demo_public / "_redirects").write_text(f"/ /{entry}/ 302\n", encoding="utf-8")
         if multi:  # one _headers with cache rules for every language prefix
             rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
-            (PUBLIC / "_headers").write_text(SECURITY_HEADERS + rules, encoding="utf-8")
-        _finalize_csp_headers()
+            (demo_public / "_headers").write_text(rules, encoding="utf-8")
+        site_crypto.finalize_csp_headers(demo_public, demo_plain)
         if out.exists():
             shutil.rmtree(out)
-        shutil.copytree(PUBLIC, out)
+        shutil.copytree(demo_public, out)
         where = ", ".join(f"/{sl}/" for sl in slugs.values())
         if encrypted:
             print(f"demo site: {total_issues} issue(s), {total_pages} page(s) verified by decrypt -> {out}/ (entry: /{entry}/; {where})")
@@ -3733,16 +3347,6 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
             print(f"demo site: {total_issues} issue(s), {total_pages} public page(s) verified -> {out}/ (entry: /{entry}/; {where})")
         return 0
     finally:
-        SITE, PUBLIC, PLAIN, SOURCES, CONFIG_PATH, ENC_CACHE_PATH = saved_paths
-        _PASSWORD_OVERRIDE, _SALT_OVERRIDE, CLI_LANG, LANG_ALT, LANG, _DEMO_MODE = saved_overrides
-        if saved_slug is not None:
-            os.environ["SITE_SLUG"] = saved_slug
-        if saved_lang_alt is not None:
-            os.environ["DIGEST_LANG_ALT"] = saved_lang_alt
-        if saved_root_latest is not None:
-            os.environ["DIGEST_ROOT_LATEST"] = saved_root_latest
-        if saved_encrypt is not None:
-            os.environ["DIGEST_ENCRYPT"] = saved_encrypt
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -3806,9 +3410,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verbose", action="store_true", help="with --issue/--remove: stream full logs instead of a short summary")
     args = parser.parse_args(argv)
 
-    global CLI_LANG
     demo_all = bool(args.demo and (args.lang == "all" or (not args.lang and not os.environ.get("DIGEST_LANG", "").strip())))
-    CLI_LANG = None if args.lang == "all" else args.lang
+    demo_cli_lang = None if args.lang == "all" else args.lang
+    if args.demo:
+        try:
+            demo_single_lang = i18n.resolve_lang(demo_cli_lang)
+        except ValueError as e:
+            die(str(e))
+        return build_demo(
+            Path(args.out),
+            Path(args.examples) if args.examples else CODE_ROOT / "examples",
+            DEMO_DAILY_LABEL, DEMO_WEEKLY_LABEL,
+            DEMO_LANGS if demo_all else (demo_single_lang,),
+        )
+
+    global CLI_LANG
+    CLI_LANG = demo_cli_lang
     set_lang(CLI_LANG)
 
     if args.init:
@@ -3816,15 +3433,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"SLUG={cfg['SLUG']}")
         print(f"ENCRYPT={cfg['ENCRYPT']}")
         return 0
-
-    if args.demo:
-        set_lang(CLI_LANG)  # demo ignores site/CONFIG: --lang > $DIGEST_LANG > both languages
-        return build_demo(
-            Path(args.out),
-            Path(args.examples) if args.examples else CODE_ROOT / "examples",
-            DEMO_DAILY_LABEL, DEMO_WEEKLY_LABEL,
-            DEMO_LANGS if demo_all else None,
-        )
 
     _acquire_publish_lock()
 
