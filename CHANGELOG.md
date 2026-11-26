@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.9.0](https://github.com/eatingDream/ai-digest/compare/v0.8.1...v0.9.0) (2026-11-26)
+
+
+### Features
+
+* **ai:** add portable Agent Skill, llms.txt, and AI integration guide ([#39](https://github.com/eatingDream/ai-digest/issues/39)) ([fcaff2d](https://github.com/eatingDream/ai-digest/commit/fcaff2d15cc25599fa730ef7adef0883e1d30a05))
+* **geo:** add public GEO, Markdown negotiation, and Search for Agents ([#37](https://github.com/eatingDream/ai-digest/issues/37)) ([62065ae](https://github.com/eatingDream/ai-digest/commit/62065ae402e657ab5acb5d04db4fe4245d176090))
+
 ## [0.8.1](https://github.com/eatingDream/ai-digest/compare/v0.8.0...v0.8.1) (2026-11-26)
 
 
