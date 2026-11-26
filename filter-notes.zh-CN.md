@@ -42,5 +42,5 @@
 20. **论文 triage 的「其余·仅标题」档已折叠，论文提名前移到「论文初筛」步骤。**
     - `triage-papers.md` 里方向外（偏好权重 0）的论文只保留有信号的（HF / 多源 / 被其他信源提到 / 台账 / 大结果关键词：技术报告、前沿模型名、开源权重、规模、硬基准/数学、安全对抗），其余折叠成一行计数；**全量标题**在同目录的 `triage-papers-rest.md`，怀疑漏了某类大结果时用 `rg -i -n '关键词' …/triage-papers-rest.md` 抽查（安全网，不需要通读）。
     - 论文初筛步骤通读论文 triage，写 `runs/P/paper-cands.md`（30–40 篇宽松候选，宁宽勿窄）；日报读它代替整份论文 triage，不存在时回退为读 `triage-papers.md`。日报不要因为「不在初筛里」就放过它在非论文线索里遇到的论文。
-    - 初筛和日报共用同一份抓取（`fetch.py --daily --reuse`），不重复联网。
-21. **周报不再重抓、不再读整周原始 triage。** 周报读 7 期日报 + 7 份 filter-log + `ledger.py recent` + `weekly_late.py` 生成的「后来才有信号、未推过」清单。要摘要用 `cand.py --since <周一>`。
+    - 初筛和日报共用同一份抓取（`ai-digest fetch --daily --reuse`），不重复联网。
+21. **周报不再重抓、不再读整周原始 triage。** 周报读 7 期日报 + 7 份 filter-log + `ai-digest ledger recent` + `ai-digest weekly-late` 生成的「后来才有信号、未推过」清单。要摘要用 `ai-digest cand --since <周一>`。

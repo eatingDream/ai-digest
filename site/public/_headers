@@ -1,4 +1,4 @@
-# Example only: publish.py regenerates this file (with the real slug) on every build.
+# Example only: `ai-digest publish` regenerates this file (with the real slug and SHA-256 CSP hashes) on every build.
 /*
   X-Robots-Tag: noindex, nofollow
   X-Content-Type-Options: nosniff
@@ -8,7 +8,7 @@
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
-  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0=' 'inline-speculation-rules'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
 /favicon.svg
   Cache-Control: public, max-age=86400
 /<SITE_SLUG>/

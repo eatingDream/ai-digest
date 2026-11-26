@@ -18,7 +18,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. python3 publish.py --demo --out dist/
+        1. ai-digest publish --demo --out dist/
         2. ...
     validations:
       required: true
@@ -26,13 +26,13 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `python3 publish.py --version` (or the commit hash).
+      description: Output of `ai-digest --version` (or the commit hash).
   - type: input
     id: env
     attributes:
       label: Environment
-      description: OS, Python and Node versions.
-      placeholder: "Ubuntu 24.04, Python 3.12, Node 20"
+      description: OS, Rust (and Node if editing `web/`) versions.
+      placeholder: "Ubuntu 24.04, Rust 1.88, Node 22"
   - type: dropdown
     id: lang
     attributes:

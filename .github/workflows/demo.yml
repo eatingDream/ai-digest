@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - render_html.py
-      - publish.py
-      - site_crypto.py
-      - geo.py
-      - i18n.py
+      - src/**
+      - web/**
+      - Cargo.toml
+      - Cargo.lock
+      - build.rs
       - examples/**
       - site/**
       - .github/workflows/demo.yml
@@ -25,6 +25,7 @@ jobs:
   demo:
     runs-on: ubuntu-latest
     env:
+      AI_DIGEST_REQUIRE_WEB_DIST: "1"
       # Public demo by default; set repo var DIGEST_DEMO_PASSWORD to build an encrypted demo.
       DIGEST_DEMO_PASSWORD: ${{ vars.DIGEST_DEMO_PASSWORD }}
       CF_PROJECT: ${{ vars.CF_PAGES_PROJECT || 'ai-digest-demo' }}
@@ -32,14 +33,12 @@ jobs:
       HAS_CF_SECRETS: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-      - run: pip install -r requirements.txt
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Build ai-digest release binary
+        run: cargo build --release --locked
       - name: Build demo site (no deploy)
-        run: python3 publish.py --demo --out dist/
+        run: ./target/release/ai-digest publish --demo --out dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: demo-dist

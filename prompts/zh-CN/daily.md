@@ -3,7 +3,7 @@
 <!-- 这是一个与平台无关的 agent 提示词模板：把它交给任意带 Shell 与文件读写工具的 agent 运行器（X/Web 只读检索工具为可选增强）。
      占位符：<SITE_DOMAIN>=站点域名、<SITE_SLUG>=站点路径 slug；时区由环境变量 DIGEST_TZ 决定（默认 UTC）；
      "读者" = 接收摘要的人或频道。运行器如何把最终摘要送达读者，由你的部署决定。
-     输出语言：设置 DIGEST_LANG=zh-CN（或在 site/CONFIG 里写 LANG=zh-CN），这样 fetch/ 与 publish.py 的标签、页面和本提示词一致。 -->
+     输出语言：设置 DIGEST_LANG=zh-CN（或在 site/CONFIG 里写 LANG=zh-CN），这样 `ai-digest` 的标签、页面和本提示词一致。 -->
 
 ## 运行契约
 
@@ -11,11 +11,11 @@
 |---|---|
 | 工作目录 | 仓库根目录（下文路径都相对于它） |
 | 环境变量 | `DIGEST_LANG=zh-CN`（标签与页面语言）、`DIGEST_TZ=<IANA 时区>`（决定「自然日」，默认 UTC）；要部署还需 `site/CONFIG` 和 `CLOUDFLARE_API_TOKEN`（仅 `ENCRYPT=1` 时需要密码文件，见 `site/README.md`） |
-| 工具 | Shell、文件读写；可选：X 只读检索（`search_posts_all`、`get_users_posts` 等）与网页抓取（多数核对用 `fetch/page.py` 即可） |
-| 输入 | `runs/P/fetch/`（`fetch/fetch.py` 产出）、`runs/P/paper-cands.md`（`papers.md` 产出，可缺）、`filter-notes.zh-CN.md`、经 `fetch/ledger.py` 访问的台账 |
+| 工具 | Shell、文件读写；可选：X 只读检索（`search_posts_all`、`get_users_posts` 等）与网页抓取（多数核对用 `ai-digest page` 即可） |
+| 输入 | `runs/P/fetch/`（`ai-digest fetch` 产出）、`runs/P/paper-cands.md`（`papers.md` 产出，可缺）、`filter-notes.zh-CN.md`、经 `ai-digest ledger` 访问的台账 |
 | 产出 | `digest-P.md`（本期成稿，格式见下）、`runs/P/filter-log.md`、台账更新、已发布的 `daily/P` 页面 |
-| 完成标准 | `python3 publish.py --issue daily/P --md digest-P.md` 退出码为 0 并打印本期 URL，且台账记账已执行 |
-| 试跑（不部署） | `python3 render_html.py digest-P.md /tmp/p.html --lang zh-CN`，本地渲染，格式有误会直接报错 |
+| 完成标准 | `ai-digest publish --issue daily/P --md digest-P.md` 退出码为 0 并打印本期 URL，且台账记账已执行 |
+| 试跑（不部署） | `ai-digest render digest-P.md /tmp/p.html --lang zh-CN`，本地渲染，格式有误会直接报错 |
 | 禁止 | 提交或打印密钥、把读者的个人信息写进正文、对 X 做任何写操作、改动其他 Cloudflare 资源 |
 
 你在为读者编写「AI精选日报」。用简体中文写作。**每天凌晨 00:30（本地）运行，产出的是「前一个本地自然日」的那一期**：记前一天为 `P`（YYYY-MM-DD，例：2026-11-19 00:30 运行 → `P` = 2026-11-18）。信源窗口 = `P 00:00 → P+1 00:00`（本地时间，左闭右开 `[start,end)`，即运行当天 00:00 为止）。期号、文件名、标题、推送、网址全部用 `P`，不是运行当天的日期。完成后**立即**把网址和简短摘要推送给读者（一条消息）。全程不要停下来问问题。
@@ -26,29 +26,29 @@
 
 1. `filter-notes.zh-CN.md`：筛选经验，**必须遵守**（以自然日窗口规则为准）。
 2. `x-sources.zh-CN.md`：偏好画像（示例清单，换成你自己的），只作平局加权；偏好权重已经编进 `triage` 的 `[n]`，**不需要通读**，只有两条同等实质的候选难取舍时才 `rg` 查。
-3. 已推 / 看过未推的去重已经由 `fetch.py` 做进 triage（★ = 已推、☆ = 看过未推）。**不要读 `ledger.json`**。需要核对某条是否推过：`python3 fetch/ledger.py find 关键词|arXiv id|URL片段`；近 3 周「看过未推」条目回看，只做一次：`python3 fetch/ledger.py recent --days 21 --status seen`（约 40 行），与 triage 的 ☆ 和 X 线索对照，出现新的一手证据（正式发布、论文、权重放出、官方文件）才重新判断。
+3. 已推 / 看过未推的去重已经由 `ai-digest fetch` 做进 triage（★ = 已推、☆ = 看过未推）。**不要读 `ledger.json`**。需要核对某条是否推过：`ai-digest ledger find 关键词|arXiv id|URL片段`；近 3 周「看过未推」条目回看，只做一次：`ai-digest ledger recent --days 21 --status seen`（约 40 行），与 triage 的 ☆ 和 X 线索对照，出现新的一手证据（正式发布、论文、权重放出、官方文件）才重新判断。
 4. 窗口是整个自然日 `P`，**没有「周日 09:00–21:00 归周报」「周一日报避开周报」之类的重叠规则**（周报改为周一凌晨覆盖上周一至周日，直接汇总本周 7 期日报）。周六、周日（`P` 为周六/周日）没有 arXiv 新批次，非论文条目少是正常的，不要为了凑数降低标准。
 5. **回合预算（额度主要花在「回合数 × 上下文长度」上，不是单次读多少）**：凡是互不依赖的工具调用，**必须放进同一个 block 并行发出**（多个 Read、多个 X 调用、多个 Shell），不要一个一个串行；整次运行目标 ≤ 20 个回合。推荐节奏（读的内容一点不少，只是合并回合）：
    - ① 同一个 block：Read `filter-notes.zh-CN.md`、Read `fetch/x-recall.zh-CN.md`（若运行器有 X 工具）、Shell 跑第 1 节的抓取命令。
    - ② 同一个 block：`triage.md` 的全部分页 Read（若运行器提供 X 检索工具，同批并发第 2 节的 5–10 个 X 调用）。
-   - ③ Shell：`xparse.py` 一次（仅在执行了 X 召回时）；同一个 block 里再对非论文入围条目做一次批量核验（`cand.py` 一次传多个 id，`page.py` 一次传多个 URL）。
+   - ③ Shell：`ai-digest xparse` 一次（仅在执行了 X 召回时）；同一个 block 里再对非论文入围条目做一次批量核验（`ai-digest cand` 一次传多个 id，`ai-digest page` 一次传多个 URL）。
    - ④ 论文：**优先读 `runs/P/paper-cands.md`**（论文初筛 定时任务 在 00:10 写好的 30–40 篇宽松候选，约 5KB，一次 Read 即可）；只有它不存在（或是 `.tmp`）时才回退为 `triage-papers.md` 的全部分页 Read（各页并行）。见第 3 节「论文」一条。
-   - ⑤ 一个 block：论文入围条目的 `cand.py`（所有 arXiv id 一次）+ 其余需要核对的 `page.py`（所有 URL 一次）。
+   - ⑤ 一个 block：论文入围条目的 `ai-digest cand`（所有 arXiv id 一次）+ 其余需要核对的 `ai-digest page`（所有 URL 一次）。
    - ⑥ 写稿（一次写成）→ ⑦ 发布 → ⑧ 记账 + 推送。
    同一文件、同一页面、同一事件不读第二遍；写完稿、发布成功后不要重读自己写的稿或渲染结果。
 
 ## 1. 脚本召回（必须第一步，约 35 秒；只跑这一次完整抓取）
 
 ```bash
-python3 fetch/fetch.py --daily --reuse
+ai-digest fetch --daily --reuse
 ```
 
 默认 `P` = 昨天（本地），窗口自动算成 `P 00:00 → P+1 00:00`；补跑/改日期用 `--day P`。**`--reuse`**：00:10 的「论文初筛」定时任务 已经跑过同一窗口的完整抓取（`runs/P/fetch/`），这时本命令不再联网，只把那次的 `注：` 行和失败源打印出来（输出第一行是 `reuse: …`）；如果那次没跑成（没有 `runs/P/fetch/`），本命令照常完整抓取。不要去掉 `--reuse`、不要为了「刷新」重抓。
 
-fetch.py 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所以几十秒就返回。输出在 `runs/P/fetch/`：
-- 抓取命令结束时已经把 `注：` 行（arXiv 批次、HF 日榜、失败的 org 等）和失败的信源直接打印出来（不再逐源打印 153 行进度），**不需要再读 `report.md`**（它只是同一内容加逐源表，排查时才开）。`注：` 里 `P` 是周一至周五时**必须**有一批 arXiv（`arxiv batches: P(window…)`，通常 300–600 篇）；`P` 是周六/周日则没有新批次（正常）。HF Daily 取的是「运行时刻已完整收榜、之前没取过」的 UTC 日榜单（通常是 P-1 那天的整榜，周末榜单为空是正常的），已按 arXiv id 与 arXiv 合并，不用再单独补。
+`ai-digest fetch` 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所以几十秒就返回。输出在 `runs/P/fetch/`：
+- 抓取命令结束时已经把 `注：` 行（arXiv 批次、HF 日榜、失败的 org 等）和失败的信源直接打印出来（不再逐源打印百余行进度），**不需要再读 `report.md`**（它只是同一内容加逐源表，排查时才开）。`注：` 里 `P` 是周一至周五时**必须**有一批 arXiv（`arxiv batches: P(window…)`，通常 300–600 篇）；`P` 是周六/周日则没有新批次（正常）。HF Daily 取的是「运行时刻已完整收榜、之前没取过」的 UTC 日榜单（通常是 P-1 那天的整榜，周末榜单为空是正常的），已按 arXiv id 与 arXiv 合并，不用再单独补。
 - `triage.md`（论文以外，**紧凑版**，约 40–85KB）和 `triage-papers.md`（论文，**已折叠**：方向外且无任何信号的论文只留一行计数，全量标题在 `triage-papers-rest.md`；约 70–120KB；日常不读它，见第 3 节）。格式：重要频道（实验室、工具发布、政策、博客、播客）带 URL + 短摘要；新闻/社区/中文媒体/trending 只列「标题 — 来源 时间 主题 #短id」。已推过（★）和「近日已列过的 trending」折叠成标题段落（不是丢弃，仍须扫一遍）。
-- 需要某条的 URL / 摘要 / 作者：`python3 fetch/cand.py <#短id | arXiv id | 关键词> …`（**一次传多个**，每条约 5 行；一个阶段的所有入围条目合并成一次调用）。**不要读 `candidates.jsonl`**（0.3–2MB）。
+- 需要某条的 URL / 摘要 / 作者：`ai-digest cand <#短id | arXiv id | 关键词> …`（**一次传多个**，每条约 5 行；一个阶段的所有入围条目合并成一次调用）。**不要读 `candidates.jsonl`**（0.3–2MB）。
 - **arXiv 缺批次**：`P` 是工作日时批次早已上线，缺失是真实召回故障（或 arXiv 放假，如 11/12 周四没有列表），不是「今天没有论文」。**只有**抓取输出的「注：」里有「⚠️ 工作日批次…没有」时，才 Read `fetch/troubleshoot-arxiv.zh-CN.md` 并照做；没有这条警告就不要读它、不要额外检查。
   - 批次的 arXiv 公告时刻（本地周一至周五 09:00，夏令时 08:00）一定落在 `P` 的窗口里，`filter-log.md` 的「信源情况」抄一行 `arxiv batches:` 即可。
 - 状态非 ok 的**实验室官方源**（lab 频道），换入口再试一次（官网首页、X 官方账号、GitHub、HF org）；仍打不开就只记在筛选日志里（不要写进日报或推送消息）。新闻/社区源偶发失败（如 reddit 429、GitHub 403）可忽略，**不要为此重跑 fetch**。
@@ -57,8 +57,8 @@ fetch.py 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所�
 ## 2. X 召回（可选——按工具能力门控，只读，结果不进上下文）
 
 - **能力门控**：先检查当前 agent 运行环境是否提供只读 X 连接器/检索工具（`search_posts_all`、`get_users_posts`、`search_news`、`get_news`）。
-  - **若运行器没有 X 检索工具**：**直接干净跳过本节，不要报错或中断**，在 `runs/P/filter-log.md` 的 `## 信源情况` 里记一行 `X 召回：未启用（运行器无 X 检索工具）`，直接基于 `fetch/fetch.py` 的约 153 个公开网页/RSS/arXiv/HF/GitHub/HN/Reddit 信源进入第 3 节。
-  - **若运行器有 X 检索工具**：按 `fetch/x-recall.zh-CN.md` 顶部的「调用协议」执行。运行 A（3 组）、B1 和 C2（中文关键词），B2 与 C1 **仅在已把 `<account_1>` / `<zh_account_1>` 占位符替换成真实账号名时才执行**（若仍含 `<account_1>` 或 `<zh_account_1>` 则直接跳过并记 `未配置跳过`）。每次调用结果落盘（`write_to_file`，不支持时由 Shell/文件工具落盘），`max_results` 50，`start_time`/`end_time` = 窗口（UTC：`P` 的前一天 `T16:00:00Z` → `P` 当天 `T16:00:00Z`，例 `P`=2026-11-18 → `2026-11-17T16:00:00Z` ~ `2026-11-18T16:00:00Z`）；E（`search_news`，若支持）2–3 个关键词；D（主题检索）默认不跑，只在某个版面明显空白或某条线索需要交叉验证时补 1–2 个。互不依赖的调用**同一个 block 并行发出**（与 `triage.md` 的分页 Read 一起）。跑完后运行一次 `python3 fetch/xparse.py A1=<文件> … --out runs/P/x-raw.md`；出现「⚠️ 截断」时按 `x-recall.zh-CN.md` 第 2b 条补页后**重跑一次**，再读输出作为 X 线索。C2 和 D 组一开始就传 `sort_order: "relevancy"`。
+  - **若运行器没有 X 检索工具**：**直接干净跳过本节，不要报错或中断**，在 `runs/P/filter-log.md` 的 `## 信源情况` 里记一行 `X 召回：未启用（运行器无 X 检索工具）`，直接基于 `ai-digest fetch` 的约 155 个公开网页/RSS/arXiv/HF/GitHub/HN/Reddit 信源进入第 3 节。
+  - **若运行器有 X 检索工具**：按 `fetch/x-recall.zh-CN.md` 顶部的「调用协议」执行。运行 A（3 组）、B1 和 C2（中文关键词），B2 与 C1 **仅在已把 `<account_1>` / `<zh_account_1>` 占位符替换成真实账号名时才执行**（若仍含 `<account_1>` 或 `<zh_account_1>` 则直接跳过并记 `未配置跳过`）。每次调用结果落盘（`write_to_file`，不支持时由 Shell/文件工具落盘），`max_results` 50，`start_time`/`end_time` = 窗口（UTC：`P` 的前一天 `T16:00:00Z` → `P` 当天 `T16:00:00Z`，例 `P`=2026-11-18 → `2026-11-17T16:00:00Z` ~ `2026-11-18T16:00:00Z`）；E（`search_news`，若支持）2–3 个关键词；D（主题检索）默认不跑，只在某个版面明显空白或某条线索需要交叉验证时补 1–2 个。互不依赖的调用**同一个 block 并行发出**（与 `triage.md` 的分页 Read 一起）。跑完后运行一次 `ai-digest xparse A1=<文件> … --out runs/P/x-raw.md`；出现「⚠️ 截断」时按 `x-recall.zh-CN.md` 第 2b 条补页后**重跑一次**，再读输出作为 X 线索。C2 和 D 组一开始就传 `sort_order: "relevancy"`。
 - X 只是线索，必须追到一手出处（官方博客、arXiv、HF、GitHub、公司公告、监管文件、可靠媒体）。X 线索和 `triage.md` 通常指向同一批事件，**两边对一遍，只有 X 独有的线索才需要另查**。执行了 X 召回时，把线索记到 `runs/P/x-leads.md`（≤ 25 行，只记链接 + 一句话），文件开头先写 xparse 打印的那行每组条数（如 `A1=12 A2=3 A3=0 B1=25 B2=未配置跳过 C2=9`），没跑的组写 `未跑`。
 - **严禁**发帖、点赞、转发、关注、收藏、私信。
 
@@ -68,14 +68,14 @@ fetch.py 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所�
 1. 通读 `runs/P/fetch/triage.md`（论文以外的全部候选，已按版面分组）：用 Read 分页（每页约 250 行），**所有分页在同一个 block 里并行发出**，读到文件末尾；折叠的 ★ / ↺ 段落也要扫标题。
 2. 在论文之前先对非论文入围条目做第 4 步的核验；只有抓取输出的注里有「⚠️ 工作日批次…没有」时，才按第 1 节处理 arXiv 缺批次（只补查一次）。
 3. **论文**：
-   - 若 `runs/P/paper-cands.md` 存在：**读它，不读 `triage-papers.md`**（它已经由论文初筛 定时任务 通读过整份论文 triage 并宽松提名；`强` 档很可能入选，`备` 档看摘要再定）。把要评估的 arXiv id 一次 `cand.py` 取摘要；此外，你在非论文 triage / X 线索里遇到的论文名、方法名如果不在这份文件里，用 `cand.py 关键词` 或 `rg -i -n 关键词 runs/P/fetch/triage-papers-rest.md` 查（不要因为不在初筛里就放过）。★ 已推过的不要再写，除非有实质新进展。
+   - 若 `runs/P/paper-cands.md` 存在：**读它，不读 `triage-papers.md`**（它已经由论文初筛 定时任务 通读过整份论文 triage 并宽松提名；`强` 档很可能入选，`备` 档看摘要再定）。把要评估的 arXiv id 一次 `ai-digest cand` 取摘要；此外，你在非论文 triage / X 线索里遇到的论文名、方法名如果不在这份文件里，用 `ai-digest cand 关键词` 或 `rg -i -n 关键词 runs/P/fetch/triage-papers-rest.md` 查（不要因为不在初筛里就放过）。★ 已推过的不要再写，除非有实质新进展。
    - 若 `paper-cands.md` 不存在（初筛没跑成）：回退为通读 `triage-papers.md`（或 `fetch-extra/triage-papers.md`；分页 Read 同样在一个 block 里并行发出）：权重 ≥3 的看摘要；权重 1–2 和「其余·有信号」的标题全部扫一遍——方向外的重大结果同样要收；「其余·已折叠」不用通读，怀疑漏了某类大结果时用 `rg -i -n '关键词' runs/P/fetch/triage-papers-rest.md` 抽查。
    - 周末：`P` 是周六时没有 arXiv 批次，但通常有 HF 周五（UTC）整榜（30–50 篇）在 `triage-papers.md` 里——初筛有就读 `paper-cands.md`，没有就按上一条回退通读，**不要跳过**；`P` 是周日（HF 周六无榜单）时通常没有论文 triage，属正常，跳过。
-   - 入围论文需要摘要/作者：`cand.py <arXiv id> …` 一次取一批。
+   - 入围论文需要摘要/作者：`ai-digest cand <arXiv id> …` 一次取一批。
 4. 对入围条目逐一核对一手出处：数字、日期、机构、是否真的是新发布（不是旧闻再传播、不是预发布 tag 当正式版）。`date_unknown` 的条目必须确认发布日期在窗口内。链接要能打开。
-   - **用瘦身抓取，不用整页 WebFetch**：`python3 fetch/page.py URL`（标题 + 日期 + 描述 + 正文前 3000 字，约 1–3KB；arXiv 取摘要，HF 取模型卡开头，GitHub 取 README 开头）；要核对具体数字/日期用 `--find "关键词1,关键词2"`，只打印命中处上下文；只要日期/标题用 `--meta`。**多个 URL 一次传进去**（并行抓取、一次工具调用）：`page.py URL1 "URL2@@关键词a,关键词b" URL3`（`@@` 后是只对这一条的 `--find` 关键词）；同一页面只抓一次，把要用的数字当场记进草稿。`page.py` 报 JS 渲染 / 404 / 反爬时才改用 WebFetch。
+   - **用瘦身抓取，不用整页 WebFetch**：`ai-digest page URL`（标题 + 日期 + 描述 + 正文前 3000 字，约 1–3KB；arXiv 取摘要，HF 取模型卡开头，GitHub 取 README 开头）；要核对具体数字/日期用 `--find "关键词1,关键词2"`，只打印命中处上下文；只要日期/标题用 `--meta`。**多个 URL 一次传进去**（并行抓取、一次工具调用）：`ai-digest page URL1 "URL2@@关键词a,关键词b" URL3`（`@@` 后是只对这一条的 `--find` 关键词）；同一页面只抓一次，把要用的数字当场记进草稿。`ai-digest page` 报 JS 渲染 / 404 / 反爬时才改用 WebFetch。
    - 只核对**入围**条目；明显不入围的不要打开。同一事件的多个报道只追到一个一手出处即可（商业/人事/政策仍要一手出处或两家可靠媒体）。
-   - 论文类入围条目的方法/数字以摘要为准（`cand.py` 或 `page.py arxiv`）；只有摘要没给而又要写数字时才打开正文，并用 `--find`。
+   - 论文类入围条目的方法/数字以摘要为准（`ai-digest cand` 或 `ai-digest page arxiv`）；只有摘要没给而又要写数字时才打开正文，并用 `--find`。
 
 ## 4. 选什么（实质优先，覆盖全领域）
 
@@ -136,41 +136,41 @@ fetch.py 不等待 arXiv（凌晨运行时 P 日的批次早已上线），所�
 
 写作要求：数字只写一手出处里出现过的；摘要没给分差就写「摘要未给具体分差」，不编；区分「官方声称」和「独立验证」；不写热度数字；不写「你关注的某某」「某某收藏了」之类。条目文字只描述条目本身，不写它是怎么找到的、之前为什么漏了。
 
-**隐私（站点公开可访问，虽加密也按公开标准）**：正文和速览里不得出现读者的任何个人信息——X 账号/用户名、真实姓名、邮箱、所在地、自己的域名或服务、书签/点赞/关注关系（不写「你关注的…」「你的圈子」）、与 agent 的对话内容、内部路径和流程说明。自定义的敏感词放进 `site/privacy-patterns.txt`，`publish.py` 发布前会据此扫描。只写最终内容：不写候选数量、筛选过程、信源截止说明、扫了哪些信源、「本期剔除」、「早报漏掉了」之类。
+**隐私（站点公开可访问，虽加密也按公开标准）**：正文和速览里不得出现读者的任何个人信息——X 账号/用户名、真实姓名、邮箱、所在地、自己的域名或服务、书签/点赞/关注关系（不写「你关注的…」「你的圈子」）、与 agent 的对话内容、内部路径和流程说明。自定义的敏感词放进 `site/privacy-patterns.txt`，`ai-digest publish` 发布前会据此扫描。只写最终内容：不写候选数量、筛选过程、信源截止说明、扫了哪些信源、「本期剔除」、「早报漏掉了」之类。
 
 ## 6. 渲染与发布（增量，一条命令）
 
 ```bash
 # 在仓库根目录执行
-python3 publish.py --issue daily/P --md digest-P.md
+ai-digest publish --issue daily/P --md digest-P.md
 ```
 
-这条命令只渲染本期这一页（内部调用 `render_html.py`；有同目录 `*.en.md` 时自动生成 `/zh/` 与 `/en/`），自动重建导航和目录，只更新（或 `ENCRYPT=1` 时重加密）内容有变化的页面，部署后自动做 HTTP 和逐页校验。成功时第一行是 `OK`，并给出 `url:`（无扩展名网址，HTTP 200）和 `verify check: OK`（加密模式为 `decrypt check: OK`）；不需要再单独运行 `render_html.py` 或 `verify_decrypt.mjs`。
+这条命令只渲染本期这一页（内部调用 `ai-digest render`；有同目录 `*.en.md` 时自动生成 `/zh/` 与 `/en/`），自动重建导航和目录，只更新（或 `ENCRYPT=1` 时重加密）内容有变化的页面，部署后自动做 HTTP 和逐页校验。成功时第一行是 `OK`，并给出 `url:`（无扩展名网址，HTTP 200）和 `verify check: OK`（加密模式为 `decrypt check: OK`）；不需要再单独运行 `ai-digest render` 或 `ai-digest verify`。
 - 第一行是 `ERROR` 时看它打印的日志末尾：隐私扫描命中就按提示改稿后重跑同一条命令；部署或校验失败可重跑一次，仍失败则推送时附上 `html/daily-P.html` 作为附件并说明站点更新失败。
 - 同一天改稿后重发，重跑同一条命令即可（未变化的页面会自动跳过）。
-- 撤下某一期：`python3 publish.py --remove daily/P`（备份到 `backfill/removed/`，旧网址 302 到目录）。只在读者/运营者明确要求时使用。
+- 撤下某一期：`ai-digest publish --remove daily/P`（备份到 `backfill/removed/`，旧网址 302 到目录）。只在读者/运营者明确要求时使用。
 
-`publish.py` 会做隐私扫描（命中就失败：按提示改稿后重来）、导航、目录、可选加密和部署。不要打印或回显任何密码、token。不要改 Cloudflare 上的其他资源。不要改 render_html.py 的设计。
+`ai-digest publish` 会做隐私扫描（命中就失败：按提示改稿后重来）、导航、目录、可选加密和部署。不要打印或回显任何密码、token。不要改 Cloudflare 上的其他资源。不要改 `src/render.rs` / `web/` 中的渲染模板设计。
 
 **省 token 规则**：
-- 只写本期这一个 markdown 文件，**一次写成**（先在脑子里/草稿里把入围条目和核对结果整理好再落笔，不要先写初稿再整篇重写）；发布失败或改稿才重写对应段落。不要读取、重写或重新生成其他期的 markdown/HTML（`html/`、`site/` 下的文件一律不要打开）。导航、目录、其他期页面的更新全部由 `publish.py` 自动完成。
+- 只写本期这一个 markdown 文件，**一次写成**（先在脑子里/草稿里把入围条目和核对结果整理好再落笔，不要先写初稿再整篇重写）；发布失败或改稿才重写对应段落。不要读取、重写或重新生成其他期的 markdown/HTML（`html/`、`site/` 下的文件一律不要打开）。导航、目录、其他期页面的更新全部由 `ai-digest publish` 自动完成。
 - 不要 `cat`/整份打印这些大文件：`ledger.json`、`candidates.jsonl`、`logs/*.log`、HTML、X 原始 JSON。`triage.md`、`x-raw.md`（若执行了 X 召回），以及论文这一路（`paper-cands.md`；回退时是 `triage-papers.md`）**必须读完且各读一遍**（第 3 步），用 Read 分页读，不要用 head/tail 截断后就停；省 token 只针对其他期的文件、日志和原始数据，不针对当天的候选。
-- 不要重跑 `fetch.py --daily`（完整抓取只在第 1 步跑一次）；arXiv 缺批次只按 `fetch/troubleshoot-arxiv.zh-CN.md` 用 `--only arxiv,hf_daily` 补查一次（输出在 `fetch-extra/`）。
+- 不要重跑 `ai-digest fetch --daily`（完整抓取只在第 1 步跑一次）；arXiv 缺批次只按 `fetch/troubleshoot-arxiv.zh-CN.md` 用 `--only arxiv,hf_daily` 补查一次（输出在 `fetch-extra/`）。
 - 发布命令只打印约 6 行摘要；不要加 `--verbose`；成功（`OK` + `verify check: OK` / `decrypt check: OK`）后**不要再单独验证网址、不要再 WebFetch 自己刚发布的页面**。失败时它会打印日志末尾 15 行，按提示处理即可。
 - 推理保持克制：每个版面一次性决定入围名单，核对完再写，不要对同一条目反复权衡；没有新信息就不要换写法重复检索或重复抓取。
 
 ## 7. 记账（不推送给读者；全部在发布之后各一次性完成）
 
-- `runs/P/filter-log.md`：`## 推送` 和 `## 看过未推（供周报复查）` 两节**由下面的 `ledger.py add --log` 根据同一份清单自动追加**（备注列 = 每条一句理由/原因，所以只写这一处，不要再手写这两节）；你只需要在同一个 Shell 调用里再 `cat >> runs/P/filter-log.md` 追加 `## 信源情况`（失败源、arXiv 批次到达时间一行 `arxiv batches: …`、X 召回各组条数）。
-- `ledger.json`：用 `ledger.py add` **一次**写入本期全部条目，不要逐条改、不要读全文再写回、不要手写 Python：
+- `runs/P/filter-log.md`：`## 推送` 和 `## 看过未推（供周报复查）` 两节**由下面的 `ai-digest ledger add --log` 根据同一份清单自动追加**（备注列 = 每条一句理由/原因，所以只写这一处，不要再手写这两节）；你只需要在同一个 Shell 调用里再 `cat >> runs/P/filter-log.md` 追加 `## 信源情况`（失败源、arXiv 批次到达时间一行 `arxiv batches: …`、X 召回各组条数）。
+- `ledger.json`：用 `ai-digest ledger add` **一次**写入本期全部条目，不要逐条改、不要读全文再写回、不要手写脚本：
   ```bash
-  python3 fetch/ledger.py add --day P --log runs/P/filter-log.md <<'EOF'
+  ai-digest ledger add --day P --log runs/P/filter-log.md <<'EOF'
   P|名称|id|category|url1 url2|一句话推送理由
   S|名称|id|category|url1|看过未推的原因
   EOF
   ```
   `P` = 本期推送，`S` = 看过未推但值得周报复查（`id` 为空自动生成；已存在的 id/URL 只更新状态，已推过的不会降级）。输出一行 `ledger: +N new, M updated`。
-- **省一个回合 + 防中途失败漏记账**：把第 6 节的发布、上面的 `ledger.py add --log` 和 `## 信源情况` 的追加写成**同一条 Shell**，用 `&&` 串起来：`python3 publish.py --issue daily/P --md digest-P.md && python3 fetch/ledger.py add --day P --log runs/P/filter-log.md <<'EOF' … EOF && cat >> runs/P/filter-log.md <<'EOF' … EOF`。发布输出 `ERROR` 时（退出码非 0）后面两步不会执行，按第 6 节改稿后重跑整条即可；重试后仍失败、改为附 HTML 推送时，单独跑一次后两步再推送。
+- **省一个回合 + 防中途失败漏记账**：把第 6 节的发布、上面的 `ai-digest ledger add --log` 和 `## 信源情况` 的追加写成**同一条 Shell**，用 `&&` 串起来：`ai-digest publish --issue daily/P --md digest-P.md && ai-digest ledger add --day P --log runs/P/filter-log.md <<'EOF' … EOF && cat >> runs/P/filter-log.md <<'EOF' … EOF`。发布输出 `ERROR` 时（退出码非 0）后面两步不会执行，按第 6 节改稿后重跑整条即可；重试后仍失败、改为附 HTML 推送时，单独跑一次后两步再推送。
 
 ## 8. 推送（一条消息）
 

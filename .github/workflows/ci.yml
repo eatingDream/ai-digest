@@ -14,47 +14,144 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
-    name: Python (compile + pytest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-      - run: pip install -r requirements-dev.txt
-      - name: py_compile
-        run: python -m py_compile *.py fetch/*.py tests/*.py
-      - name: pytest
-        run: pytest -q
-
-  python-311:
-    name: Python 3.11 (compat)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-      - run: pip install -r requirements-dev.txt
-      - name: py_compile
-        run: python -m py_compile *.py fetch/*.py tests/*.py
-      - name: pytest
-        run: pytest -q
-
-  node:
-    name: Node (syntax check)
+  frontend:
+    name: Frontend (TS + CSS + Vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "20"
-      - run: node --check verify_decrypt.mjs
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm --prefix web ci
+      - name: TypeScript typecheck
+        run: npm --prefix web run typecheck
+      - name: Clean rebuild web/dist and verify committed parity
+        run: |
+          rm -rf web/dist
+          npm --prefix web run build
+          git diff --exit-code web/dist/
+          if [ -n "$(git status --porcelain web/dist/)" ]; then
+            echo "error: untracked or dirty files in web/dist/" >&2
+            git status --short web/dist/ >&2
+            exit 1
+          fi
+      - name: Vitest suite
+        run: npm --prefix web test
+
+  rust:
+    name: Rust (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    env:
+      AI_DIGEST_REQUIRE_WEB_DIST: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test --locked
+        run: cargo test --locked
+
+  e2e-parity:
+    name: E2E parity & release binary hygiene
+    runs-on: ubuntu-latest
+    env:
+      AI_DIGEST_REQUIRE_WEB_DIST: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Build release binary with remapped paths
+        run: |
+          RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src" \
+            cargo build --release --locked
+      - name: Verify zero local paths in release binary
+        run: |
+          if strings target/release/ai-digest | grep -Eq '(/Users/|/home/runner)'; then
+            echo "error: local path leaked into target/release/ai-digest" >&2
+            strings target/release/ai-digest | grep -E '(/Users/|/home/runner)' | head -n 20 >&2
+            exit 1
+          fi
+      - name: Verify version parity across Cargo, npm, manifest, and CLIs
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const { execFileSync } = require("node:child_process");
+            const manifest = JSON.parse(fs.readFileSync(".release-please-manifest.json", "utf8"))["."];
+            const cargoToml = fs.readFileSync("Cargo.toml", "utf8").match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+            const cargoLock = fs.readFileSync("Cargo.lock", "utf8").match(/name = "ai-digest"\r?\nversion = "([^"]+)"/)?.[1];
+            const pkg = JSON.parse(fs.readFileSync("web/package.json", "utf8")).version;
+            const lock = JSON.parse(fs.readFileSync("web/package-lock.json", "utf8"));
+            const lockTop = lock.version;
+            const lockRoot = lock.packages?.[""]?.version;
+            const rustCli = execFileSync("./target/release/ai-digest", ["--version"], { encoding: "utf8" }).trim();
+            const nodeCli = execFileSync(process.execPath, ["web/dist/verify_decrypt.mjs", "--version"], { encoding: "utf8" }).trim();
+            const expectedCli = `ai-digest ${manifest}`;
+            const checks = { manifest, cargoToml, cargoLock, pkg, lockTop, lockRoot };
+            for (const [k, v] of Object.entries(checks)) {
+              if (v !== manifest) throw new Error(`version mismatch: ${k}=${v} != manifest=${manifest}`);
+            }
+            if (rustCli !== expectedCli) throw new Error(`rust CLI version ${rustCli} != ${expectedCli}`);
+            if (nodeCli !== expectedCli) throw new Error(`node CLI version ${nodeCli} != ${expectedCli}`);
+            console.log(`version parity ok: ${expectedCli}`);
+          '
+      - name: E2E public and encrypted DIGEST_ROOT parity (Rust + Node verifiers)
+        run: |
+          set -euo pipefail
+          bin="$PWD/target/release/ai-digest"
+          node_verify="$PWD/web/dist/verify_decrypt.mjs"
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+
+          # 1. Public DIGEST_ROOT (ENCRYPT=0, SLUG=)
+          pub="$tmp/pub"
+          mkdir -p "$pub/site"
+          cp examples/sample-digest.zh-CN.md "$pub/digest-2026-01-15.md"
+          cp examples/sample-digest.en.md "$pub/digest-2026-01-15.en.md"
+          printf 'LANG=zh-CN\nSLUG=\nENCRYPT=0\nDOMAIN=digest.example.com\n' > "$pub/site/CONFIG"
+          DIGEST_ROOT="$pub" "$bin" publish --issue daily/2026-01-15 --md "$pub/digest-2026-01-15.md" --prepare-only
+          pub_rust=$(DIGEST_ROOT="$pub" "$bin" verify --local)
+          echo "$pub_rust"
+          echo "$pub_rust" | grep -Eq '[1-9][0-9]* page\(s\)'
+          pub_node=$(DIGEST_ROOT="$pub" node "$node_verify" --local)
+          echo "$pub_node"
+          echo "$pub_node" | grep -Eq '[1-9][0-9]* page\(s\)'
+
+          # 2. Encrypted DIGEST_ROOT (ENCRYPT=1, SLUG=ci-verify-slug)
+          enc="$tmp/enc"
+          mkdir -p "$enc/site"
+          cp examples/sample-digest.zh-CN.md "$enc/digest-2026-01-15.md"
+          cp examples/sample-digest.en.md "$enc/digest-2026-01-15.en.md"
+          printf 'LANG=zh-CN\nSLUG=ci-verify-slug\nENCRYPT=1\nDOMAIN=digest.example.com\n' > "$enc/site/CONFIG"
+          printf 'ci-fixture-passphrase-2026!\n' > "$enc/site-password"
+          chmod 600 "$enc/site-password"
+          DIGEST_ROOT="$enc" DIGEST_SITE_PASSWORD_FILE="$enc/site-password" DIGEST_SITE_SALT_FILE="$enc/site-salt" \
+            "$bin" publish --issue daily/2026-01-15 --md "$enc/digest-2026-01-15.md" --prepare-only
+          enc_rust=$(DIGEST_ROOT="$enc" DIGEST_SITE_PASSWORD_FILE="$enc/site-password" "$bin" verify --local)
+          echo "$enc_rust"
+          echo "$enc_rust" | grep -Eq '[1-9][0-9]* page\(s\)'
+          enc_node=$(DIGEST_ROOT="$enc" DIGEST_SITE_PASSWORD_FILE="$enc/site-password" node "$node_verify" --local)
+          echo "$enc_node"
+          echo "$enc_node" | grep -Eq '[1-9][0-9]* page\(s\)'
+      - name: Build demo site and verify key outputs
+        run: |
+          ./target/release/ai-digest publish --demo --out dist/
+          test -f dist/_redirects
+          test -f dist/404.html
+          test -f dist/en/index.html
+          test -f dist/zh-CN/index.html
+          test -f dist/llms.txt
+          test -f dist/_headers
 
   secrets-scan:
     name: Secret scan (gitleaks) + sanitization guard

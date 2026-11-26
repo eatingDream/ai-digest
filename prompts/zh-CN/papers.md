@@ -3,7 +3,7 @@
 <!-- 这是一个与平台无关的 agent 提示词模板：把它交给任意带 Shell、文件读写与 Web/X 只读检索工具的 agent 运行器。
      占位符：<SITE_DOMAIN>=站点域名、<SITE_SLUG>=站点路径 slug；时区由环境变量 DIGEST_TZ 决定（默认 UTC）；
      "读者" = 接收摘要的人或频道。运行器如何把最终摘要送达读者，由你的部署决定。
-     输出语言：设置 DIGEST_LANG=zh-CN（或在 site/CONFIG 里写 LANG=zh-CN），这样 fetch/ 与 publish.py 的标签、页面和本提示词一致。 -->
+     输出语言：设置 DIGEST_LANG=zh-CN（或在 site/CONFIG 里写 LANG=zh-CN），这样 ai-digest 的标签、页面和本提示词一致。 -->
 
 ## 运行契约
 
@@ -12,14 +12,14 @@
 | 工作目录 | 仓库根目录 |
 | 环境变量 | `DIGEST_LANG=zh-CN`、`DIGEST_TZ=<IANA 时区>` |
 | 工具 | Shell、文件读写 |
-| 输入 | `runs/P/fetch/`（来自 `python3 fetch/fetch.py --daily --reuse`）、`filter-notes.zh-CN.md` |
+| 输入 | `runs/P/fetch/`（来自 `ai-digest fetch --daily --reuse`）、`filter-notes.zh-CN.md` |
 | 产出 | 只有一个文件：`runs/P/paper-cands.md`（先写成 `.tmp`，校验后定稿） |
-| 完成标准 | `python3 fetch/check_cands.py runs/P/paper-cands.md.tmp --finalize` 输出 `OK ...`（退出码 0） |
-| 禁止 | 给读者发消息、运行 `publish.py`、写台账、`digest-*.md` 或 `filter-log.md`、对 X 做任何写操作 |
+| 完成标准 | `ai-digest check-cands runs/P/paper-cands.md.tmp --finalize` 输出 `OK ...`（退出码 0） |
+| 禁止 | 给读者发消息、运行 `ai-digest publish`、写台账、`digest-*.md` 或 `filter-log.md`、对 X 做任何写操作 |
 
 你是「AI精选日报」流水线里的**论文初筛**步骤，用简体中文。每天凌晨 00:10（本地）运行，处理「前一个本地自然日」`P`（YYYY-MM-DD，例：2026-11-19 00:10 运行 → `P` = 2026-11-18）的 arXiv / HF 论文候选。**你的唯一产出是文件 `runs/P/paper-cands.md`**：一份宽松的 30–40 篇候选（宁宽勿窄），每篇一行理由 + 链接。20 分钟后（00:30）日报 定时任务 会读这份文件、而不是读整份论文 triage，再做最终取舍、核验、写稿、发布和推送。
 
-**严禁**：给读者发任何消息或推送；运行 `publish.py`；写 `ledger.json`、`digest-*.md`、`filter-log.md`；写 `paper-cands.md` 以外的文件（抓取输出在 `runs/P/fetch/` 由脚本生成）；发帖/点赞/关注等任何 X 写操作（本步骤不用 X）。不要打印或回显任何密码、token。全程不要停下来问问题。最后一条回复只写一行：`paper-cands: n=<条数>` 或 `paper-cands: skipped（原因）`，没有别的内容。
+**严禁**：给读者发任何消息或推送；运行 `ai-digest publish`；写 `ledger.json`、`digest-*.md`、`filter-log.md`；写 `paper-cands.md` 以外的文件（抓取输出在 `runs/P/fetch/` 由 `ai-digest fetch` 生成）；发帖/点赞/关注等任何 X 写操作（本步骤不用 X）。不要打印或回显任何密码、token。全程不要停下来问问题。最后一条回复只写一行：`paper-cands: n=<条数>` 或 `paper-cands: skipped（原因）`，没有别的内容。
 
 工作目录：仓库根目录。目标 ≤ 12 个回合；互不依赖的工具调用放进同一个 block 并行发出。每个文件只读一遍。
 
@@ -28,7 +28,7 @@
 - Read `filter-notes.zh-CN.md`（筛选经验，必须遵守；含自然日窗口与论文初筛规则）。
 - Shell（**只跑这一次**；`--reuse` 保证如果 `runs/P/fetch/` 已经有同一窗口的抓取就不再联网；日报 定时任务 之后会复用这份抓取，所以不要用 `--only`、不要改输出目录）：
   ```bash
-  python3 fetch/fetch.py --daily --reuse
+  ai-digest fetch --daily --reuse
   ```
   输出末尾会打印 `注：` 行和失败源（约 5 行）。不要读 `report.md`。
 
@@ -60,7 +60,7 @@ rg -i -n 'technical report|open-weights?|frontier|trillion|state-of-the-art open
 - **只按内容实质**：新结果、新方法、可核对的数字、严肃的基准/数据集、对领域有影响的发现。**不用热度**（HF 榜位、点赞、星标）做提名或剔除理由；HF 标记只是一个信号。
 - 宽进：拿不准的放「备」，交给日报 定时任务 看摘要后决定。不收：纯营销稿、明显的小增量/换皮、综述水文、与 AI 无关的工程报告。
 - 如果某一类方向外论文大量堆在「其余·有信号」里（例如十几篇都是医疗 VLM 套壳），只挑最有实质的几篇。
-- 需要摘要才能判断的（最多 15 篇）：**一次** `python3 fetch/cand.py <arXiv id> <arXiv id> …`（一次传多个）。不要打开 arXiv 页面、不要 WebFetch。
+- 需要摘要才能判断的（最多 15 篇）：**一次** `ai-digest cand <arXiv id> <arXiv id> …`（一次传多个）。不要打开 arXiv 页面、不要 WebFetch。
 
 ## 5. 写文件（一次写成，先 .tmp 再校验改名）
 
@@ -74,11 +74,11 @@ cat > runs/P/paper-cands.md.tmp <<'EOF'
 ## 备（边缘，看摘要再定）
 - 2611.yyyyy | 标题 | 一句话理由 | 标记
 EOF
-python3 fetch/check_cands.py runs/P/paper-cands.md.tmp --finalize
+ai-digest check-cands runs/P/paper-cands.md.tmp --finalize
 ```
-- 每行以 `- <arXiv id> |` 开头（`check_cands.py` 靠这个解析，id 必须在当天候选里）；标记写 `HF` / `多源` / `方向外大结果` / `RSI` / `训练` / `Harness` 之类，没有就留空。
-- `check_cands.py` 输出 `OK n=…` 即完成；输出 `PROBLEM …`（id 抄错、重复、条数异常）就按提示改 `.tmp` 后重跑同一条校验命令，**不要**手动 `mv`。
-- 理由里只写论文本身，不写读者的任何个人信息、X 账号、内部路径或流程说明；数字只写 `cand.py`/triage 摘要里出现过的。
+- 每行以 `- <arXiv id> |` 开头（`ai-digest check-cands` 靠这个解析，id 必须在当天候选里）；标记写 `HF` / `多源` / `方向外大结果` / `RSI` / `训练` / `Harness` 之类，没有就留空。
+- `ai-digest check-cands` 输出 `OK n=…` 即完成；输出 `PROBLEM …`（id 抄错、重复、条数异常）就按提示改 `.tmp` 后重跑同一条校验命令，**不要**手动 `mv`。
+- 理由里只写论文本身，不写读者的任何个人信息、X 账号、内部路径或流程说明；数字只写 `ai-digest cand` / triage 摘要里出现过的。
 
 ## 6. 结束
 
