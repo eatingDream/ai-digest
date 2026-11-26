@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.0.0](https://github.com/eatingDream/ai-digest/compare/v0.9.0...v1.0.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* Replaces Python + JS scripts with a single self-contained Rust binary (`ai-digest`) and TypeScript/CSS Opus v2 frontend while keeping full CLI, crypto, GEO Level 5/5, and Cloudflare Pages parity.
+
+### Features
+
+* migrate ai-digest to Rust + TypeScript with Opus v2 editorial UI ([#40](https://github.com/eatingDream/ai-digest/issues/40)) ([474b5d5](https://github.com/eatingDream/ai-digest/commit/474b5d5fb25fde10aae5e7e902f6c2310aa8b5e9))
+
 ## [0.9.0](https://github.com/eatingDream/ai-digest/compare/v0.8.1...v0.9.0) (2026-11-26)
 
 
