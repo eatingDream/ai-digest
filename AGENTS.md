@@ -29,11 +29,14 @@ CI (`.github/workflows/ci.yml`) also runs gitleaks over full history. Required c
 | `prompts/<en\|zh-CN>/{papers,daily,weekly}.md` | Self-contained agent prompts; each starts with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and reader-preference profile template (`.zh-CN.md` twins) |
 | `render_html.py` | Markdown → single-file HTML (warm paper/charcoal light & dark themes, auto-hide top bar, live-tracked full-title sidebar TOC, optional `--md-en` single-page bilingual toggle; parses EN & ZH labels) |
-| `publish.py` | Localized nav, index, symmetric `/zh/` & `/en/` trees (from auto-discovered `*.en.md` or `--md-en`) + legacy compat, static `latest` pages (HTTP 200, `no-store`), privacy scan, public default (`ENCRYPT=0`, `SLUG=`) + opt-in AES-256-GCM encryption (`ENCRYPT=1`), deploy, `--demo` |
+| `geo.py` | Public GEO & Agent Readiness engine (`ENCRYPT=0` only): `robots.txt` Content Signals & AI bot rules, `sitemap.xml`, `llms.txt`/`llms-full.txt`, Atom feeds, JSON-LD, `.md` mirrors, `/.well-known/agent-skills/`, `search-index.json`, and Pages `_worker.js` (`Accept: text/markdown` + `GET`/`QUERY` `/.well-known/search`) |
+| `site_crypto.py` | Privacy scan, build-time SHA-256 CSP header finalizer (`application/ld+json` safe), and opt-in AES-256-GCM encryption (`ENCRYPT=1`) |
+| `publish.py` | Localized nav, index, symmetric `/zh/` & `/en/` trees (from auto-discovered `*.en.md` or `--md-en`) + legacy compat, static `latest` pages (HTTP 200, `no-store`), privacy scan, public GEO default (`ENCRYPT=0`, `SLUG=`) + opt-in encryption (`ENCRYPT=1`), deploy, `--demo` |
+| `skills/ai-digest/SKILL.md`, `llms.txt` | Portable Agent Skill (`agentskills.io`) and repo-level `llms.txt` directory for AI agents |
 | `i18n.py` | All UI strings, date formats, fetch labels, and bilingual Markdown vocabulary (`en`, `zh-CN`) |
 | `site/` | Optional password page template, `CONFIG.example`, site docs (`site/CONFIG` is local and gitignored) |
 | `examples/` | Synthetic sample issues (`sample-{digest,weekly}.{en,zh-CN}.md`) for tests, demo, and docs |
-| `tests/` | Offline pytest suite |
+| `tests/` | Offline pytest suite (incl. Node.js `_worker.js` runtime tests in `tests/test_geo.py`) |
 | `version.py` | `__version__` (also `--version` on `publish.py`, `render_html.py`, `fetch/fetch.py`) |
 
 Gitignored working data: `runs/`, `logs/`, `html/`, `ledger.json`, `digest-*.md`, `weekly-*.md`, `site/plain|sources|public`, `dist/`.

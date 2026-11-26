@@ -137,6 +137,11 @@ Environment variables take precedence over `site/CONFIG`.
 
 Sources live in `fetch/sources.toml`; selection rules live in `filter-notes.md`.
 
+## AI Agent Integration
+
+- **Install the portable Agent Skill**: [`skills/ai-digest/SKILL.md`](skills/ai-digest/SKILL.md) (or `npx skills add eatingDream/ai-digest`) teaches Claude Code, Codex, Cursor, OpenCode, and Antigravity how to query published sites and run the local pipeline.
+- **Machine-readable repo & site indexes**: Read [`llms.txt`](llms.txt) and [`AGENTS.md`](AGENTS.md) in this repo; every public (`ENCRYPT=0`) deployed site also publishes `/llms.txt`, `/llms-full.txt`, `/sitemap.xml`, `/feed.xml`, `/.well-known/agent-skills/index.json`, `Accept: text/markdown` content negotiation, and `GET`/`QUERY` `/.well-known/search?q=<query>`.
+
 ## Contributing & License
 
 Pull requests are welcome (`main` is protected; see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md)). CSS design tokens in `render_html.py` are adapted from [AIHOT](https://github.com/KKKKhazix/AIHOT) (MIT, © 2026 数字生命卡兹克; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [licenses/AIHOT-MIT.txt](licenses/AIHOT-MIT.txt)). Licensed under [MIT](LICENSE).

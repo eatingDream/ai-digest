@@ -1,0 +1,27 @@
+# ai-digest
+
+> Open-source pipeline that fetches ~155 frontier AI sources, guides an LLM agent to curate daily and weekly Markdown digests, renders single-file warm-editorial HTML, and publishes a hardened, GEO/agent-ready Cloudflare Pages site (public by default, opt-in AES-256-GCM encryption).
+
+## For AI Agents
+
+- [Agent Skill](skills/ai-digest/SKILL.md): Portable skill (`agentskills.io`) for both consuming published `ai-digest` sites (via `llms.txt`, `.md` mirrors, `Accept: text/markdown`, and `/.well-known/search`) and running the fetch -> curate -> render -> publish pipeline.
+- [Contributor & Agent Guide](AGENTS.md): Repo layout, offline test commands, pipeline contract, and security invariants.
+- [README (English)](README.md) | [README (简体中文)](README.zh-CN.md)
+
+## Pipeline & Key Modules
+
+- [fetch/fetch.py](fetch/fetch.py): Parallel recall across ~155 zero-key RSS/Atom/arXiv/HF/GitHub/HN/Reddit sources (`--json` supported).
+- [fetch/ledger.py](fetch/ledger.py): Deduplication ledger CLI (`init`, `check`, `add`, `recent`).
+- [prompts/](prompts/): Self-contained daily, weekly, and papers curation prompts (`en` and `zh-CN`).
+- [render_html.py](render_html.py): Markdown -> single-file HTML renderer (`--json`, `--md-en`).
+- [geo.py](geo.py): Public GEO & Agent Readiness engine (`robots.txt` Content Signals, `sitemap.xml`, `llms.txt`, `llms-full.txt`, Atom feeds, JSON-LD, `.md` mirrors, `/.well-known/agent-skills/`, `search-index.json`, and Pages `_worker.js`).
+- [site_crypto.py](site_crypto.py): Privacy scanner, build-time SHA-256 CSP header finalizer, and opt-in AES-256-GCM page encryption (`ENCRYPT=1`).
+- [publish.py](publish.py): Site builder, bilingual `/zh/` & `/en/` publisher, Cloudflare Pages deploy, and offline `--demo` builder.
+
+## Consuming a Published Site
+
+Any public (`ENCRYPT=0`) site built by `ai-digest` exposes:
+- `GET /llms.txt` and `GET /llms-full.txt`
+- `GET /.well-known/search?q=<query>` and `QUERY /.well-known/search` (`text/plain` or `{"q":"..."}`)
+- `Accept: text/markdown` content negotiation on every page, plus direct `.md` mirrors (e.g. `/zh/daily/latest.md`, `/en/daily/latest.md`)
+- `GET /.well-known/agent-skills/index.json`, `GET /sitemap.xml`, and `GET /feed.xml`
