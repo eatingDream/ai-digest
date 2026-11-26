@@ -24,7 +24,7 @@ const TOP_SLOT: &str = "<!-- digest-nav-slot -->";
 const BOTTOM_SLOT: &str = "<!-- digest-nav-bottom-slot -->";
 
 // Native pane selection also works before the reader script initializes.
-const BILINGUAL_CSS: &str = ".lang-en,#en-language:checked~.lang-zh,#language-zh:not(:checked)~.lang-zh:has(~.lang-en :target){display:none}#en-language:checked~.lang-en,#language-zh:not(:checked)~.lang-en:has(:target){display:block}.lang-seg label{cursor:pointer;padding:0 9px}.sr-only:focus-visible~.lang-pane .lang-seg{outline:2px solid var(--accent)}";
+const BILINGUAL_CSS: &str = ".lang-en,#en-language:checked~.lang-zh,#language-zh:not(:checked)~.lang-zh:has(~.lang-en :target){display:none}#en-language:checked~.lang-en,#language-zh:not(:checked)~.lang-en:has(:target){display:block}.lang-seg label{cursor:pointer}.sr-only:focus-visible~.lang-pane .lang-seg{outline:2px solid var(--accent)}";
 
 #[derive(Clone, Debug)]
 pub struct RenderOptions {
@@ -42,6 +42,33 @@ impl Default for RenderOptions {
             folio_dek: String::new(),
             edition_number: None,
         }
+    }
+}
+
+pub fn protect_technical_hyphens(text: &str) -> Cow<'_, str> {
+    if !text.contains('-') {
+        return Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    for i in 1..bytes.len().saturating_sub(1) {
+        if bytes[i] == b'-'
+            && bytes[i - 1].is_ascii_alphanumeric()
+            && bytes[i + 1].is_ascii_alphanumeric()
+        {
+            let buf = out.get_or_insert_with(|| String::with_capacity(text.len() + 8));
+            buf.push_str(&text[copied..i]);
+            buf.push('\u{2011}');
+            copied = i + 1;
+        }
+    }
+    match out {
+        Some(mut buf) => {
+            buf.push_str(&text[copied..]);
+            Cow::Owned(buf)
+        }
+        None => Cow::Borrowed(text),
     }
 }
 
@@ -64,6 +91,8 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
     let (prepared, formulas) = protect_math(text, options, slot);
     let mut events = Vec::new();
     let mut links = Vec::new();
+    let mut autolinks = Vec::new();
+    let mut in_code_block = false;
     let mut table_aligns: Vec<Vec<Alignment>> = Vec::new();
     let mut in_table_head = false;
     let mut cell_idx = 0usize;
@@ -86,13 +115,27 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                 },
             ) => skip += 1,
             Event::Html(_) | Event::InlineHtml(_) => {}
+            Event::Start(Tag::CodeBlock(_)) if inline => {
+                in_code_block = true;
+            }
+            Event::End(TagEnd::CodeBlock) if inline => {
+                in_code_block = false;
+                events.push(Event::Text(CowStr::Borrowed(" ")));
+            }
+            Event::Start(Tag::CodeBlock(kind)) => {
+                in_code_block = true;
+                events.push(Event::Start(Tag::CodeBlock(kind)));
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code_block = false;
+                events.push(Event::End(TagEnd::CodeBlock));
+            }
             Event::Start(
                 Tag::Paragraph
                 | Tag::Heading { .. }
                 | Tag::BlockQuote(_)
                 | Tag::List(_)
                 | Tag::Item
-                | Tag::CodeBlock(_)
                 | Tag::Table(_)
                 | Tag::TableHead
                 | Tag::TableRow
@@ -104,7 +147,6 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                 | TagEnd::BlockQuote(_)
                 | TagEnd::List(_)
                 | TagEnd::Item
-                | TagEnd::CodeBlock
                 | TagEnd::Table
                 | TagEnd::TableHead
                 | TagEnd::TableRow
@@ -159,20 +201,26 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                 })));
             }
             Event::Start(Tag::Link {
-                dest_url, title, ..
+                link_type,
+                dest_url,
+                title,
+                ..
             }) => {
                 let url = link_markup(&dest_url, &title, prefix, false);
                 links.push(url.is_some());
+                autolinks.push(matches!(link_type, LinkType::Autolink));
                 if let Some(markup) = url {
                     events.push(Event::InlineHtml(CowStr::from(markup)));
                 }
             }
             Event::End(TagEnd::Link) => {
+                autolinks.pop();
                 if links.pop().unwrap_or(false) {
                     events.push(Event::InlineHtml(CowStr::Borrowed("</a>")));
                 }
             }
             Event::Text(s) if !formulas.is_empty() && s.contains(slot) => {
+                let protect = !in_code_block && !autolinks.last().copied().unwrap_or(false);
                 let mut rest = s.as_ref();
                 while let Some((before, tail)) = rest.split_once(slot) {
                     let Some((key, after)) = tail.split_once('\u{e001}') else {
@@ -182,11 +230,27 @@ fn markdown(text: &str, inline: bool, prefix: &str) -> String {
                     else {
                         break;
                     };
-                    events.push(Event::Text(CowStr::from(before.to_owned())));
+                    let before_txt = if protect {
+                        protect_technical_hyphens(before).into_owned()
+                    } else {
+                        before.to_owned()
+                    };
+                    events.push(Event::Text(CowStr::from(before_txt)));
                     events.push(Event::InlineHtml(CowStr::from(html.as_str())));
                     rest = after;
                 }
-                events.push(Event::Text(CowStr::from(rest.to_owned())));
+                let rest_txt = if protect {
+                    protect_technical_hyphens(rest).into_owned()
+                } else {
+                    rest.to_owned()
+                };
+                events.push(Event::Text(CowStr::from(rest_txt)));
+            }
+            Event::Text(s) if !in_code_block && !autolinks.last().copied().unwrap_or(false) => {
+                match protect_technical_hyphens(&s) {
+                    Cow::Borrowed(_) => events.push(Event::Text(s)),
+                    Cow::Owned(protected) => events.push(Event::Text(CowStr::from(protected))),
+                }
             }
             other => events.push(other),
         }
@@ -293,7 +357,8 @@ fn page_head(
 <html lang="{lang}" data-mast="shown"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#141311">
+<meta name="theme-color" content="#121110">
+<meta name="color-scheme" content="dark">
 <script>{}</script>
 <title>{}</title>
 "##,
@@ -312,7 +377,11 @@ fn page_head(
     if noindex {
         out.push_str("<meta name=\"robots\" content=\"noindex,nofollow\">\n");
     }
-    write!(out, "{GEO_SLOT}\n<style>{css}</style>\n</head>\n<body>\n").unwrap();
+    write!(out, "{GEO_SLOT}\n<style>{css}</style>\n").unwrap();
+    if !noindex {
+        out.push_str("<script type=\"speculationrules\">{\"prefetch\":[{\"where\":{\"and\":[{\"href_matches\":\"/*\"},{\"not\":{\"selector_matches\":\"[target=_blank],[download]\"}}]},\"eagerness\":\"moderate\"}]}</script>\n");
+    }
+    out.push_str("</head>\n<body>\n");
     out
 }
 
@@ -336,7 +405,38 @@ fn icon(name: &str) -> &'static str {
         "contents" => {
             r#"<svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>"#
         }
+        "ext" => {
+            r#"<svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11L11 5M6 5h5v5"/></svg>"#
+        }
         _ => "",
+    }
+}
+
+pub fn strip_leading_emoji(title: &str) -> &str {
+    let trimmed = title.trim_start();
+    let mut rest = trimmed;
+    while let Some(ch) = rest.chars().next() {
+        let is_emoji_or_mod = matches!(
+            ch as u32,
+            0x200D
+                | 0x20E3
+                | 0x23E9..=0x23FA
+                | 0x2600..=0x27BF
+                | 0x2B50
+                | 0x2B55
+                | 0xFE0E..=0xFE0F
+                | 0x1F300..=0x1FAFF
+        );
+        if is_emoji_or_mod || ch.is_whitespace() {
+            rest = &rest[ch.len_utf8()..];
+        } else {
+            break;
+        }
+    }
+    if rest.is_empty() {
+        trimmed
+    } else {
+        rest
     }
 }
 
@@ -407,13 +507,13 @@ fn filter_panel(
             "filter_label"
         },
     );
-    writeln!(out, r#"<div class="filter-bar filter-drawer" id="{prefix}digestFilterBar" hidden aria-label="{}"><div class="filter-row"><input type="search" class="filter-input" placeholder="{}" aria-label="{}" autocomplete="off"><span class="filter-count" aria-live="polite" data-total="{total}">{total} / {total}</span><button type="button" class="filter-clear" hidden>{}</button><button type="button" class="filter-close" aria-label="{}">{}</button></div><div class="filter-tags">"#,
-        esc(label), esc(placeholder), esc(label), t(lang, "filter_clear"), esc(t(lang, "search_close")), icon("close")).unwrap();
+    writeln!(out, r#"<div class="filter-bar filter-drawer" id="{prefix}digestFilterBar" aria-label="{}" aria-hidden="true" inert><div class="filter-inner"><div class="filter-input-wrap">{}<input type="search" class="filter-input" placeholder="{}" aria-label="{}" autocomplete="off"><span class="filter-count num" aria-live="polite" data-total="{total}">{total}</span><button type="button" class="filter-clear" hidden>{}</button><button type="button" class="filter-close" aria-label="{}">{}</button></div><div class="filter-tags">"#,
+        esc(label), icon("search"), esc(placeholder), esc(label), t(lang, "filter_clear"), esc(t(lang, "search_close")), icon("close")).unwrap();
     for (tag, count) in tags {
         let tag = esc(tag);
-        write!(out, r#"<button type="button" class="filter-tag" data-tag="{tag}" aria-pressed="false">{tag} <span class="num">{count}</span></button>"#).unwrap();
+        write!(out, r#"<button type="button" class="filter-tag" data-tag="{tag}" aria-pressed="false">{tag}<span class="tag-cnt num">{count}</span></button>"#).unwrap();
     }
-    out.push_str("</div></div>\n");
+    out.push_str("</div></div></div>\n");
 }
 
 fn filter_empty(out: &mut String, lang: Lang, archive: bool) {
@@ -444,7 +544,7 @@ impl Reader<'_> {
             prefix,
             bilingual,
         } = *self;
-        let title = esc(&digest.full_title());
+        let title = esc(&protect_technical_hyphens(&digest.full_title()));
         let total = digest.items().count();
         let home = prefix_fragment(
             normalized_safe_url(&opts.home_href).unwrap_or_else(|| "./".into()),
@@ -471,7 +571,7 @@ impl Reader<'_> {
         };
         writeln!(out, r#"<header class="mast"><div class="mast-row"><h1 class="np"><a class="np-link" href="{}" data-brand-home><span class="ai">AI</span> Digest</a></h1><span class="edition" data-kind="{kind}">{edition}{}{date}</span><span class="mast-sep" aria-hidden="true"></span>{TOP_SLOT}"#, esc(&home), if date.is_empty() { "" } else { " · " }).unwrap();
         tools(out, lang, prefix, opts.lang_alt.as_ref(), bilingual);
-        out.push_str("</div>\n");
+        out.push_str("</div></header>\n<div class=\"read-prog\" aria-hidden=\"true\"><div class=\"read-prog-fill\"></div></div>\n");
         filter_panel(
             out,
             lang,
@@ -480,7 +580,7 @@ impl Reader<'_> {
             &tags_by_count(digest.items().flat_map(|it| &it.tags)),
             false,
         );
-        out.push_str("</header>\n<div class=\"read-prog\" aria-hidden=\"true\"><div class=\"read-prog-fill\"></div></div>\n<div class=\"reader-shell\">\n");
+        out.push_str("<div class=\"reader-shell\">\n");
         self.toc(out);
         writeln!(out, r#"<main id="{prefix}main" class="prose-col"><header class="folio"><p class="folio-kicker">{edition}{} </p><h1>{title}</h1>"#,
             opts.edition_number.map_or_else(String::new, |n| match lang { Lang::En => format!(" · No. {n}"), Lang::ZhCn => format!(" · 第 {n} 期") })).unwrap();
@@ -508,14 +608,18 @@ impl Reader<'_> {
         writeln!(out, r#"<span class="mast-meta"><span>{}</span><span>{} · {reading}</span><span class="motto">{}</span></span><nav class="folio-sections" aria-label="{}">"#,
             esc(&period), i18n::count_items(lang, total), t(lang, "motto"), esc(t(lang, "issue_sections"))).unwrap();
         for (i, sec) in digest.sections.iter().enumerate() {
-            writeln!(out, r##"<a href="#{prefix}{}"><span class="num">{:02}</span> {} <span class="num">{}</span></a>"##, esc(&sec.id), i + 1, esc(&sec.title), sec.items().count()).unwrap();
+            let count = sec.items().count();
+            if count == 0 {
+                continue;
+            }
+            writeln!(out, r##"<a href="#{prefix}{}"><span class="num">{:02}</span> {} <span class="num">{count}</span></a>"##, esc(&sec.id), i + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&sec.title)))).unwrap();
         }
         out.push_str("</nav></header>\n");
         self.front(out);
         let mut lead = true;
         for (idx, section) in digest.sections.iter().enumerate() {
-            writeln!(out, r#"<section class="sec" id="{prefix}{}"><div class="sec-head"><span class="sec-no num">{:02}</span><h2>{}</h2>"#,
-                esc(&section.id), idx + 1, esc(&section.title)).unwrap();
+            writeln!(out, r#"<section class="sec" id="{prefix}{}"><div class="sec-head"><span class="sec-no num">{:02}</span><h2>{}</h2><span class="sec-cnt num">{}</span>"#,
+                esc(&section.id), idx + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&section.title))), section.items().count()).unwrap();
             if !section.note.is_empty() {
                 writeln!(
                     out,
@@ -527,9 +631,12 @@ impl Reader<'_> {
             out.push_str("</div>\n");
             for entry in &section.entries {
                 match entry {
-                    SectionEntry::Subheading(title) => {
-                        writeln!(out, r#"<h3 class="subhead">{}</h3>"#, esc(title)).unwrap()
-                    }
+                    SectionEntry::Subheading(title) => writeln!(
+                        out,
+                        r#"<h3 class="subhead">{}</h3>"#,
+                        esc(&protect_technical_hyphens(title))
+                    )
+                    .unwrap(),
                     SectionEntry::Item(item) => {
                         self.story(out, item, lead);
                         lead = false;
@@ -542,8 +649,9 @@ impl Reader<'_> {
         writeln!(out, r#"<div class="end"></div><footer class="colophon">{}</footer>{BOTTOM_SLOT}
 </main></div>
 <nav class="dock" aria-label="{}"><button type="button" class="dock-toc" data-sheet-open aria-controls="{prefix}toc-sheet">{}<span>{}</span></button><div class="dock-nav" data-dock-nav></div><button type="button" class="dock-top" data-scroll-top hidden aria-label="{}">{}</button></nav>
+<button type="button" class="ctrl-btn to-top" data-to-top aria-label="{}" aria-hidden="true" inert>{}</button>
 <div class="scrim" data-sheet-scrim hidden></div><div class="sr-only" id="{prefix}liveAnnounce" aria-live="polite"></div>"#,
-            t(lang, "end"), esc(t(lang, "nav_aria")), icon("contents"), t(lang, "toc"), esc(t(lang, "to_top")), icon("up")).unwrap();
+            t(lang, "end"), esc(t(lang, "nav_aria")), icon("contents"), t(lang, "toc"), esc(t(lang, "to_top")), icon("up"), esc(t(lang, "to_top")), icon("up")).unwrap();
     }
 
     fn toc(&self, out: &mut String) {
@@ -553,8 +661,8 @@ impl Reader<'_> {
             prefix,
             ..
         } = *self;
-        writeln!(out, r#"<nav class="toc-side" id="{prefix}toc-sheet" aria-label="{}"><div class="toc-handle" aria-hidden="true"></div><div class="toc-head"><span>{}</span><button type="button" class="toc-expand-all" aria-expanded="false">{}</button><button type="button" class="toc-close" aria-label="{}">{}</button></div>"#,
-            esc(t(lang, "toc")), t(lang, "toc"), lang.choose("Expand all", "全部展开"), esc(t(lang, "toc_close")), icon("close")).unwrap();
+        writeln!(out, r#"<nav class="toc-side" id="{prefix}toc-sheet" aria-label="{}"><div class="toc-handle" aria-hidden="true"></div><div class="toc-head"><span>{}</span><button type="button" class="toc-expand-all" aria-expanded="true">{}</button><button type="button" class="toc-close" aria-label="{}">{}</button></div>"#,
+            esc(t(lang, "toc")), t(lang, "toc"), lang.choose("Collapse all", "全部收起"), esc(t(lang, "toc_close")), icon("close")).unwrap();
         if !digest.must.is_empty() || !digest.themes.is_empty() {
             out.push_str("<div class=\"toc-front\">");
             if !digest.must.is_empty() {
@@ -577,16 +685,17 @@ impl Reader<'_> {
         }
         for (idx, sec) in digest.sections.iter().enumerate() {
             let id = esc(&sec.id);
-            let title = esc(&sec.title);
+            let title = esc(&protect_technical_hyphens(strip_leading_emoji(&sec.title)));
             let count = sec.items().count();
-            let open = idx == 0;
-            writeln!(out, r#"<div class="ts-group" data-sec="{prefix}{id}"><button type="button" class="ts-sec" aria-expanded="{open}" aria-controls="{prefix}ts-list-{id}"><span class="ts-no num">{:02}</span><span class="ts-title">{title}</span><span class="ts-cnt num" data-total="{count}">{count}</span></button><ol class="ts-items" id="{prefix}ts-list-{id}"{}>"#,
-                idx + 1, if open { "" } else { " hidden" }).unwrap();
+            writeln!(out, r#"<div class="ts-group" data-sec="{prefix}{id}" data-open="true"><button type="button" class="ts-sec" aria-expanded="true" aria-controls="{prefix}ts-list-{id}"><span class="ts-no num">{:02}</span><span class="ts-title">{title}</span><span class="ts-cnt num" data-total="{count}">{count}</span></button><div class="ts-panel" id="{prefix}ts-list-{id}"><ol class="ts-items">"#,
+                idx + 1).unwrap();
             for item in sec.items() {
-                let title = esc(&item.title);
+                let raw_title = esc(&item.title);
+                let title = esc(&protect_technical_hyphens(&item.title));
+                let num = esc(&item.number);
                 writeln!(
                     out,
-                    r##"<li><a href="#{prefix}{}" title="{title}">{title}{}</a></li>"##,
+                    r##"<li><a href="#{prefix}{}" title="{raw_title}"><span class="ts-num num">{num}.</span><span>{title}{}</span></a></li>"##,
                     esc(&item.id),
                     if item.is_new {
                         r#"<span class="dot-hot" aria-hidden="true"></span>"#
@@ -596,7 +705,7 @@ impl Reader<'_> {
                 )
                 .unwrap();
             }
-            out.push_str("</ol></div>\n");
+            out.push_str("</ol></div></div>\n");
         }
         out.push_str("</nav>\n");
     }
@@ -619,7 +728,7 @@ impl Reader<'_> {
                         Lang::ZhCn => format!("（{}）", esc(&must.when)),
                     }
                 };
-                let title = esc(&must.title);
+                let title = esc(&protect_technical_hyphens(&must.title));
                 write!(
                     out,
                     r#"<li><span class="must-n num">{:02}</span><div class="must-body">"#,
@@ -726,7 +835,7 @@ impl Reader<'_> {
             out.push_str("<div class=\"story-links\">");
             for link in &item.links {
                 if let Some(a) = link_markup(&link.url, "", prefix, true) {
-                    write!(out, "{a}{}{}</a>", icon("link"), esc(&link.label)).unwrap();
+                    write!(out, "{a}{}{}</a>", esc(&link.label), icon("ext")).unwrap();
                 } else {
                     write!(out, "<span>{}</span>", esc(&link.label)).unwrap();
                 }
@@ -853,7 +962,7 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
     skip_link(&mut out, lang, "");
     write!(out, r#"<header class="mast"><div class="mast-row"><h1 class="np"><span class="ai">AI</span> Digest</h1><span class="mast-chip">{}</span>"#, i18n::count_issues(lang, issues.len())).unwrap();
     tools(&mut out, lang, "", opts.lang_alt.as_ref(), false);
-    out.push_str("</div>\n");
+    out.push_str("</div></header>\n");
     filter_panel(
         &mut out,
         lang,
@@ -867,8 +976,8 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
     } else {
         &opts.folio_dek
     };
-    writeln!(out, r#"</header><main id="main" class="paper"><header class="folio"><p class="folio-kicker">{}</p><h1>{}</h1><p class="folio-dek">{}</p></header><div class="quick-bar">"#,
-        lang.choose("Archive", "存档"), lang.choose("Daily & Weekly AI Briefings", "每日与每周 AI 简报"), esc(dek)).unwrap();
+    writeln!(out, r#"<main id="main" class="paper"><header class="folio"><p class="folio-kicker">{}</p><h1>{}</h1><p class="folio-dek">{}</p></header><div class="quick-bar">"#,
+        lang.choose("Archive", "存档"), lang.choose("Daily & Weekly AI Briefings", "每日与每周 AI 简报"), esc(&protect_technical_hyphens(dek))).unwrap();
     for (weekly, kind, key) in [
         (false, "daily", "latest_daily"),
         (true, "weekly", "latest_weekly"),
@@ -973,7 +1082,7 @@ fn archive_row(out: &mut String, issue: &ArchiveIssue, lang: Lang) {
     };
     let href = normalized_safe_url(&issue.href).unwrap_or_else(|| "./".into());
     writeln!(out, r#"<li class="archive-item" data-kind="{kind}" data-tags="{}" data-search="{}"><a class="ai-row" href="{}"><span class="ai-date">{date}</span><span class="ai-wd">{}</span><span class="ai-title">{}</span><span class="ai-cnt num">{}</span></a></li>"#,
-        esc(&issue.tags.join("|")), esc(&search), esc(&href), i18n::weekday_short(lang, issue.date), esc(title), i18n::count_items(lang, issue.item_count)).unwrap();
+        esc(&issue.tags.join("|")), esc(&search), esc(&href), i18n::weekday_short(lang, issue.date), esc(&protect_technical_hyphens(title)), i18n::count_items(lang, issue.item_count)).unwrap();
 }
 
 pub fn render_404_html() -> String {
@@ -1076,6 +1185,12 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
     let nav_link = |link: Option<&LinkItem>, key: &str, role: &str, symbol: &str, top: bool| {
         let label = esc(t(lang, key));
         let class = format!("nav-{role}");
+        let short_lbl = match role {
+            "prev" => lang.choose("Prev", "上一期"),
+            "next" => lang.choose("Next", "下一期"),
+            "index" => lang.choose("Archive", "归档"),
+            _ => "",
+        };
         if let Some((link, url)) =
             link.and_then(|link| normalized_safe_url(&link.url).map(|url| (link, url)))
         {
@@ -1087,24 +1202,54 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
                 } else {
                     String::new()
                 };
-                let content = if role == "week" {
-                    label.clone()
-                } else {
-                    format!(r#"<span aria-hidden="true">{symbol}</span>"#)
-                };
-                let date = if detail.is_empty() || !matches!(role, "prev" | "next") {
-                    String::new()
-                } else {
-                    format!(r#"<span data-short-date>{detail}</span>"#)
+                let body = match role {
+                    "week" => label.clone(),
+                    "index" => format!(
+                        r#"<span aria-hidden="true">{symbol}</span><span class="nav-lbl">{short_lbl}</span>"#
+                    ),
+                    "prev" => {
+                        let txt = if detail.is_empty() {
+                            short_lbl
+                        } else {
+                            &detail
+                        };
+                        format!(
+                            r#"<span aria-hidden="true">{symbol}</span><span data-short-date>{txt}</span>"#
+                        )
+                    }
+                    "next" => {
+                        let txt = if detail.is_empty() {
+                            short_lbl
+                        } else {
+                            &detail
+                        };
+                        format!(
+                            r#"<span data-short-date>{txt}</span><span aria-hidden="true">{symbol}</span>"#
+                        )
+                    }
+                    _ => format!(r#"<span aria-hidden="true">{symbol}</span>"#),
                 };
                 format!(
-                    r#"<a class="{class}" href="{url}"{semantics} aria-label="{label}">{content}{date}</a>"#
+                    r#"<a class="{class}" href="{url}"{semantics} aria-label="{label}">{body}</a>"#
                 )
             } else {
                 format!(
                     r#"<a class="{class}" href="{url}"><span>{symbol} {label}</span><span>{detail}</span></a>"#
                 )
             }
+        } else if top && matches!(role, "prev" | "next") {
+            let body = if role == "prev" {
+                format!(
+                    r#"<span aria-hidden="true">{symbol}</span><span data-short-date>{short_lbl}</span>"#
+                )
+            } else {
+                format!(
+                    r#"<span data-short-date>{short_lbl}</span><span aria-hidden="true">{symbol}</span>"#
+                )
+            };
+            format!(
+                r#"<span class="{class}" aria-disabled="true" aria-label="{label}">{body}</span>"#
+            )
         } else {
             format!(
                 r#"<span class="{class}" aria-disabled="true" aria-label="{label}">{symbol}</span>"#
@@ -1115,7 +1260,7 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
         let prev = nav_link(opts.previous.as_ref(), "nav_prev", "prev", "‹", top);
         let next = nav_link(opts.next.as_ref(), "nav_next", "next", "›", top);
         let home = if top {
-            nav_link(opts.home.as_ref(), "nav_index", "index", "▦", top)
+            nav_link(opts.home.as_ref(), "nav_index", "index", "⊞", top)
         } else {
             String::new()
         };
@@ -1126,11 +1271,11 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
     };
     let label = esc(t(lang, "nav_aria"));
     let top = format!(
-        r#"<!-- digest-nav:top:start --><nav class="issue-nav top" aria-label="{label}">{}</nav><!-- digest-nav:top:end -->"#,
+        r#"<!-- digest-nav:top:start --><nav class="issue-nav top num" aria-label="{label}">{}</nav><!-- digest-nav:top:end -->"#,
         links(true)
     );
     let bottom = format!(
-        r#"<!-- digest-nav:bottom:start --><nav class="issue-nav bottom" aria-label="{label}">{}</nav><!-- digest-nav:bottom:end -->"#,
+        r#"<!-- digest-nav:bottom:start --><nav class="issue-nav bottom num" aria-label="{label}">{}</nav><!-- digest-nav:bottom:end -->"#,
         links(false)
     );
     let mut out = if let Some(href) = opts

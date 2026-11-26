@@ -4,6 +4,7 @@ export type ThemeMode = "system" | "light" | "dark";
 export interface MastController {
   setPinned(key: string, pinned: boolean): void;
   setState(next: MastState): void;
+  setProgrammaticScroll(active: boolean): void;
   getMastHeight(): number;
   getMastOffset(): number;
   isReducedMotion(): boolean;
@@ -14,7 +15,57 @@ export interface MastController {
 }
 
 const THEME_KEY = "digest-theme";
+export const LANG_ANCHOR_KEY = "ai_digest_lang_anchor";
 const THEME_MODES: readonly ThemeMode[] = ["system", "light", "dark"];
+
+export interface LangAnchorSnapshot {
+  anchorId: string;
+  relTop: number;
+  ts: number;
+}
+
+export function normalizeAnchorId(id: string): string {
+  return id.startsWith("en-") ? id.slice(3) : id;
+}
+
+export function captureVisibleAnchor(
+  scope: ParentNode = document,
+  mastHeight = 56
+): LangAnchorSnapshot {
+  if (window.scrollY < 40) {
+    return { anchorId: "__top__", relTop: 0, ts: Date.now() };
+  }
+  const refY = mastHeight + 16;
+  const pickNearest = (selector: string): HTMLElement | null => {
+    const list = Array.from(scope.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => !el.hidden && el.offsetParent !== null
+    );
+    let best: HTMLElement | null = null;
+    let bestDist = Infinity;
+    for (const el of list) {
+      const r = el.getBoundingClientRect();
+      if (r.height <= 0 || r.bottom < mastHeight) continue;
+      const dist = Math.abs(r.top - refY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = el;
+      }
+      if (r.top > refY + 240) break;
+    }
+    return best;
+  };
+  const best =
+    pickNearest("article.story[id], section.front[id]") ||
+    pickNearest("section.sec[id]");
+  if (!best) {
+    return { anchorId: "__top__", relTop: 0, ts: Date.now() };
+  }
+  return {
+    anchorId: normalizeAnchorId(best.id),
+    relTop: Math.round(best.getBoundingClientRect().top),
+    ts: Date.now(),
+  };
+}
 
 const THEME_SVGS: Record<ThemeMode, string> = {
   system:
@@ -56,9 +107,10 @@ export function initMast(): MastController {
 
   let reducedMotion = Boolean(rmQuery?.matches);
   let state: MastState = "shown";
-  let mastH = 52;
+  let mastH = 56;
   let hovering = false;
   let focusWithin = false;
+  let programmaticScroll = false;
   const pinReasons = new Set<string>();
 
   const isPinned = (): boolean =>
@@ -71,8 +123,13 @@ export function initMast(): MastController {
     root.style.setProperty("--mast-offset", `${offset}px`);
   };
 
+  let lastY = window.scrollY;
+  let acc = 0;
+
   const setState = (next: MastState): void => {
     const target: MastState = next === "hidden" && isPinned() ? "shown" : next;
+    lastY = window.scrollY;
+    acc = 0;
     if (target === state && root.dataset.mast === target) return;
     state = target;
     syncCssVars();
@@ -87,9 +144,19 @@ export function initMast(): MastController {
     }
   };
 
+  const setProgrammaticScroll = (active: boolean): void => {
+    programmaticScroll = active;
+    lastY = window.scrollY;
+    acc = 0;
+  };
+
   const measureMast = (): void => {
     for (const mast of masts) {
-      const h = Math.ceil(mast.getBoundingClientRect().height);
+      const row = mast.querySelector<HTMLElement>(".mast-row");
+      const rawH = row
+        ? row.getBoundingClientRect().height + 1
+        : mast.getBoundingClientRect().height;
+      const h = Math.round(rawH);
       if (h > 0) {
         if (h !== mastH) {
           mastH = h;
@@ -107,7 +174,8 @@ export function initMast(): MastController {
         ? new ResizeObserver(measureMast)
         : null;
     for (const mast of masts) {
-      ro?.observe(mast);
+      const row = mast.querySelector<HTMLElement>(".mast-row") ?? mast;
+      ro?.observe(row);
       mast.addEventListener("mouseenter", () => {
         hovering = true;
         setState("shown");
@@ -134,9 +202,7 @@ export function initMast(): MastController {
     if (reducedMotion) setState("shown");
   });
 
-  // Scroll choreography: passive + rAF throttled + 3000ms idle reveal
-  let lastY = window.scrollY;
-  let acc = 0;
+  // Scroll choreography: passive + rAF throttled + anti-bounce hysteresis + 3000ms idle reveal
   let rafId = 0;
   let idleTimer = 0;
 
@@ -150,18 +216,25 @@ export function initMast(): MastController {
   const onScrollFrame = (): void => {
     rafId = 0;
     const y = window.scrollY;
+    root.toggleAttribute("data-scrolled", y > 8);
+    if (programmaticScroll) {
+      lastY = y;
+      acc = 0;
+      return;
+    }
     const dy = y - lastY;
     lastY = y;
     if (dy !== 0) {
       if ((dy > 0 && acc < 0) || (dy < 0 && acc > 0)) acc = 0;
       acc += dy;
     }
-    if (y <= 64 || acc <= -10) {
+    if (y <= 120 || acc <= -24) {
       setState("shown");
-    } else if (y > 96 && acc >= 16 && !isPinned()) {
+    } else if (y > 120 && acc >= 32 && !isPinned()) {
       setState("hidden");
     }
   };
+  root.toggleAttribute("data-scrolled", window.scrollY > 8);
 
   window.addEventListener(
     "scroll",
@@ -212,8 +285,12 @@ export function initMast(): MastController {
   const syncThemeMeta = (mode: ThemeMode): void => {
     const dk =
       mode === "dark" || (mode !== "light" && Boolean(darkQuery?.matches));
+    const cs = dk ? "dark" : "light";
+    root.style.colorScheme = cs;
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dk ? "#141311" : "#faf8f4");
+    if (meta) meta.setAttribute("content", dk ? "#121110" : "#f6f3ec");
+    const csMeta = document.querySelector('meta[name="color-scheme"]');
+    if (csMeta) csMeta.setAttribute("content", cs);
   };
 
   const syncThemeButtons = (mode: ThemeMode): void => {
@@ -264,8 +341,11 @@ export function initMast(): MastController {
     if (curTheme === "system") syncThemeMeta("system");
   });
 
-  // Language link preserving #hash and ?q / ?tag
-  const buildLangHref = (link: HTMLAnchorElement): string => {
+  // Language link preserving ?q / ?tag + saving exact story-anchor lock (with #anchor fallback)
+  const buildLangHref = (
+    link: HTMLAnchorElement,
+    fallbackHash?: string
+  ): string => {
     const raw = link.getAttribute("href") || "";
     if (!raw) return raw;
     try {
@@ -277,24 +357,42 @@ export function initMast(): MastController {
       else target.searchParams.delete("q");
       if (tag) target.searchParams.set("tag", tag);
       else target.searchParams.delete("tag");
-      target.hash = cur.hash;
+      target.hash =
+        fallbackHash !== undefined ? fallbackHash : cur.hash;
       return target.pathname + target.search + target.hash;
     } catch {
       return raw;
     }
   };
 
+  const saveLangAnchor = (): LangAnchorSnapshot => {
+    const snap = captureVisibleAnchor(document, mastH);
+    try {
+      sessionStorage.setItem(LANG_ANCHOR_KEY, JSON.stringify(snap));
+    } catch {
+      // Ignore storage restrictions.
+    }
+    return snap;
+  };
+
   const langLinks = Array.from(
     document.querySelectorAll<HTMLAnchorElement>("[data-lang-link], .lang-seg a[href]")
   );
   for (const link of langLinks) {
-    const update = (): void => {
-      const nextHref = buildLangHref(link);
+    const update = (hashOverride?: string): void => {
+      const nextHref = buildLangHref(link, hashOverride);
       if (nextHref) link.setAttribute("href", nextHref);
     };
-    link.addEventListener("mouseenter", update);
-    link.addEventListener("focus", update);
-    link.addEventListener("click", update);
+    link.addEventListener("mouseenter", () => update());
+    link.addEventListener("focus", () => update());
+    link.addEventListener("click", () => {
+      const snap = saveLangAnchor();
+      const hashFallback =
+        snap.anchorId && snap.anchorId !== "__top__"
+          ? `#${snap.anchorId}`
+          : window.location.hash;
+      update(hashFallback);
+    });
   }
 
   // Global shortcuts: t (theme), l (lang)
@@ -307,8 +405,22 @@ export function initMast(): MastController {
       const link = langLinks[0];
       if (link) {
         e.preventDefault();
-        const nextHref = buildLangHref(link);
+        const snap = saveLangAnchor();
+        const hashFallback =
+          snap.anchorId && snap.anchorId !== "__top__"
+            ? `#${snap.anchorId}`
+            : window.location.hash;
+        const nextHref = buildLangHref(link, hashFallback);
         if (nextHref) window.location.assign(nextHref);
+        return;
+      }
+      const targetFor = isZh() ? "en-language" : "language-zh";
+      const label = document.querySelector<HTMLElement>(
+        `label[for="${targetFor}"]`
+      );
+      if (label) {
+        e.preventDefault();
+        label.click();
         return;
       }
       const zhRadio = document.getElementById("language-zh") as HTMLInputElement | null;
@@ -325,6 +437,7 @@ export function initMast(): MastController {
   return {
     setPinned,
     setState,
+    setProgrammaticScroll,
     getMastHeight: () => mastH,
     getMastOffset: () => (state === "shown" ? mastH : 0),
     isReducedMotion: () => reducedMotion,

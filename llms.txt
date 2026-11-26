@@ -5,6 +5,7 @@
 ## For AI Agents
 
 - [Agent Skill](skills/ai-digest/SKILL.md): Portable skill (`agentskills.io`) for both consuming published `ai-digest` sites (via `llms.txt`, `.md` mirrors, `Accept: text/markdown`, and `/.well-known/search`) and running the fetch -> curate -> render -> publish pipeline.
+- [Agent & Operations Guide](docs/ai-guide.md): Complete `site/CONFIG` & environment variable table, CLI subcommand matrix, safe optional X recall, and GEO endpoint reference.
 - [Contributor & Agent Guide](AGENTS.md): Repo layout, offline build/test commands, pipeline contract, and security invariants.
 - [README (English)](README.md) | [README (简体中文)](README.zh-CN.md)
 

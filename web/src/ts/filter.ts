@@ -9,6 +9,7 @@ export interface FilterOptions {
   mast: MastController;
   onFilter: (query: string, activeTags: Set<string>) => FilterResult;
   onFirstMatchScroll?: () => void;
+  onResize?: () => void;
   root?: ParentNode;
   isActive?: () => boolean;
 }
@@ -21,6 +22,8 @@ export interface FilterController {
   isOpen(): boolean;
   refreshTags(): void;
 }
+
+const INITIAL_TAG_CAP = 12;
 
 export function initFilter(opts: FilterOptions): FilterController {
   const { mast, onFilter, onFirstMatchScroll } = opts;
@@ -44,6 +47,30 @@ export function initFilter(opts: FilterOptions): FilterController {
   let expandedTags = false;
   let debounceTimer = 0;
 
+  const isDrawerOpen = (): boolean =>
+    Boolean(drawer && !drawer.hidden && drawer.classList.contains("is-open"));
+
+  const syncFilterHeight = (): void => {
+    if (!isActive()) return;
+    const h =
+      isDrawerOpen() && drawer
+        ? Math.round(drawer.getBoundingClientRect().height)
+        : 0;
+    document.documentElement.style.setProperty("--filter-h", `${h}px`);
+    opts.onResize?.();
+  };
+
+  if (drawer && typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(syncFilterHeight);
+    ro.observe(drawer);
+  }
+
+  // Ensure collapsed initial state syncs inert + aria-hidden without [hidden] snap
+  if (drawer && !drawer.classList.contains("is-open")) {
+    (drawer as HTMLElement & { inert: boolean }).inert = true;
+    drawer.setAttribute("aria-hidden", "true");
+  }
+
   // Snapshot original tag buttons in count-desc order
   const tagButtons: HTMLButtonElement[] = tagsWrap
     ? Array.from(tagsWrap.querySelectorAll<HTMLButtonElement>(".filter-tag:not(.filter-more)"))
@@ -52,9 +79,9 @@ export function initFilter(opts: FilterOptions): FilterController {
     btn.dataset.origIdx = String(idx);
   });
 
-  // Dynamic "+N more" / "Less" toggle button
+  // Dynamic "+N more" / "Less" toggle pill
   let moreBtn = tagsWrap?.querySelector<HTMLButtonElement>(".filter-more") ?? null;
-  if (tagsWrap && !moreBtn && tagButtons.length > 0) {
+  if (tagsWrap && !moreBtn && tagButtons.length > INITIAL_TAG_CAP) {
     moreBtn = document.createElement("button");
     moreBtn.type = "button";
     moreBtn.className = "filter-tag filter-more";
@@ -85,17 +112,21 @@ export function initFilter(opts: FilterOptions): FilterController {
     if (moreBtn) tagsWrap.appendChild(moreBtn);
   };
 
-  // Wrapping 2-row collapse with dynamic "+N" placed as last visible slot (never clips tags)
+  // Cap initial visible tags cleanly to 12 (1 clean row on desktop) with smooth +N toggle
   const layoutTags = (): void => {
-    if (!tagsWrap || !moreBtn || tagButtons.length === 0) return;
-    if (drawer?.hidden || !isActive()) return;
-
+    if (!tagsWrap || tagButtons.length === 0) return;
     const ordered = Array.from(
       tagsWrap.querySelectorAll<HTMLButtonElement>(".filter-tag:not(.filter-more)")
     );
-    for (const btn of ordered) btn.hidden = false;
+    if (!moreBtn || ordered.length <= INITIAL_TAG_CAP) {
+      for (const btn of ordered) btn.hidden = false;
+      if (moreBtn) moreBtn.hidden = true;
+      tagsWrap.classList.remove("is-expanded");
+      return;
+    }
 
     if (expandedTags) {
+      for (const btn of ordered) btn.hidden = false;
       tagsWrap.classList.add("is-expanded");
       moreBtn.hidden = false;
       moreBtn.textContent = labelLess();
@@ -105,60 +136,26 @@ export function initFilter(opts: FilterOptions): FilterController {
     }
 
     tagsWrap.classList.remove("is-expanded");
-    moreBtn.hidden = true;
-
-    // Measure distinct row Y offsets across all tags
-    const rowTops: number[] = [];
-    for (const btn of ordered) {
-      const top = btn.offsetTop;
-      if (!rowTops.some((r) => Math.abs(r - top) <= 3)) {
-        rowTops.push(top);
-      }
-    }
-    if (rowTops.length <= 2) {
-      moreBtn.hidden = true;
-      return;
-    }
-
-    const row2Top = rowTops[1];
     let hiddenCount = 0;
-    let firstOverflowIdx = ordered.length;
     for (let i = 0; i < ordered.length; i++) {
-      if (ordered[i].offsetTop > row2Top + 3) {
-        firstOverflowIdx = i;
-        break;
-      }
+      const show = i < INITIAL_TAG_CAP || activeTags.has(ordered[i].dataset.tag || "");
+      ordered[i].hidden = !show;
+      if (!show) hiddenCount++;
     }
-
-    for (let i = firstOverflowIdx; i < ordered.length; i++) {
-      ordered[i].hidden = true;
-      hiddenCount++;
-    }
-
-    // Place "+N" as last visible slot in row 2, hiding extra row-2 tags if "+N" wraps to row 3
-    moreBtn.hidden = false;
-    moreBtn.setAttribute("aria-expanded", "false");
-    let visibleEnd = firstOverflowIdx;
-    while (visibleEnd > 0) {
+    if (hiddenCount > 0) {
+      moreBtn.hidden = false;
       moreBtn.textContent = labelMore(hiddenCount);
-      tagsWrap.insertBefore(moreBtn, ordered[visibleEnd] || null);
-      if (moreBtn.offsetTop <= row2Top + 3) break;
-      visibleEnd--;
-      ordered[visibleEnd].hidden = true;
-      hiddenCount++;
+      moreBtn.setAttribute("aria-expanded", "false");
+      tagsWrap.appendChild(moreBtn);
+    } else {
+      moreBtn.hidden = true;
     }
-    moreBtn.textContent = labelMore(hiddenCount);
   };
 
   moreBtn?.addEventListener("click", () => {
     expandedTags = !expandedTags;
     layoutTags();
   });
-
-  if (tagsWrap && typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(() => layoutTags());
-    ro.observe(tagsWrap);
-  }
 
   const syncUrl = (): void => {
     if (!isActive()) return;
@@ -197,9 +194,13 @@ export function initFilter(opts: FilterOptions): FilterController {
   const open = (focusInput = true): void => {
     if (!drawer) return;
     drawer.hidden = false;
+    (drawer as HTMLElement & { inert: boolean }).inert = false;
+    drawer.setAttribute("aria-hidden", "false");
+    drawer.classList.add("is-open");
     toggleBtn?.setAttribute("aria-expanded", "true");
     mast.setPinned("filter", true);
     layoutTags();
+    syncFilterHeight();
     if (focusInput && input) {
       input.focus();
       input.select();
@@ -208,9 +209,12 @@ export function initFilter(opts: FilterOptions): FilterController {
 
   const close = (restoreFocus = true): void => {
     if (!drawer) return;
-    drawer.hidden = true;
+    drawer.classList.remove("is-open");
+    (drawer as HTMLElement & { inert: boolean }).inert = true;
+    drawer.setAttribute("aria-hidden", "true");
     toggleBtn?.setAttribute("aria-expanded", "false");
     mast.setPinned("filter", false);
+    syncFilterHeight();
     if (restoreFocus) toggleBtn?.focus();
   };
 
@@ -230,7 +234,7 @@ export function initFilter(opts: FilterOptions): FilterController {
   };
 
   toggleBtn?.addEventListener("click", () => {
-    if (drawer?.hidden) open(true);
+    if (!isDrawerOpen()) open(true);
     else close(true);
   });
 
@@ -239,7 +243,7 @@ export function initFilter(opts: FilterOptions): FilterController {
   for (const btn of clearBtns) {
     btn.addEventListener("click", () => {
       clear();
-      if (!drawer?.hidden) input?.focus();
+      if (isDrawerOpen()) input?.focus();
     });
   }
 
@@ -286,7 +290,7 @@ export function initFilter(opts: FilterOptions): FilterController {
       open(true);
       return;
     }
-    if (e.key === "Escape" && drawer && !drawer.hidden) {
+    if (e.key === "Escape" && isDrawerOpen()) {
       e.preventDefault();
       if (query.length > 0 || activeTags.size > 0) {
         clear();
@@ -331,7 +335,7 @@ export function initFilter(opts: FilterOptions): FilterController {
     close,
     clear,
     activateTag,
-    isOpen: () => Boolean(drawer && !drawer.hidden),
+    isOpen: isDrawerOpen,
     refreshTags: layoutTags,
   };
 }
