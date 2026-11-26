@@ -79,7 +79,7 @@ jobs:
             os: ubuntu-24.04-arm
             build_demo: false
           - target: aarch64-apple-darwin
-            os: macos-26
+            os: macos-15-intel
             build_demo: false
           - target: x86_64-apple-darwin
             os: macos-15-intel
@@ -123,17 +123,24 @@ jobs:
           check_dir=$(mktemp -d)
           tar -xzf "out-assets/$archive" -C "$check_dir"
           unpacked="$check_dir/ai-digest-${TAG}-${{ matrix.target }}"
-          got=$("$unpacked/ai-digest" --version)
-          want="ai-digest ${TAG#v}"
-          if [ "$got" != "$want" ]; then
-            echo "error: binary --version '$got' != expected '$want'" >&2
-            exit 1
+          host_arch=$(uname -m)
+          if [ "${{ matrix.target }}" != "aarch64-apple-darwin" ] || [ "$host_arch" = "arm64" ]; then
+            got=$("$unpacked/ai-digest" --version)
+            want="ai-digest ${TAG#v}"
+            if [ "$got" != "$want" ]; then
+              echo "error: binary --version '$got' != expected '$want'" >&2
+              exit 1
+            fi
+          else
+            lipo -archs "$unpacked/ai-digest" | grep -qx "arm64"
           fi
           test -f "$unpacked/fetch/sources.toml"
           test -f "$unpacked/fetch/preferences.example.json"
           test -f "$unpacked/examples/sample-digest.en.md"
-          (cd "$check_dir" && "$unpacked/publish.sh" --demo --lang en --out "$check_dir/demo-smoke")
-          test -f "$check_dir/demo-smoke/demo/index.html"
+          if [ "${{ matrix.target }}" != "aarch64-apple-darwin" ] || [ "$host_arch" = "arm64" ]; then
+            (cd "$check_dir" && "$unpacked/publish.sh" --demo --lang en --out "$check_dir/demo-smoke")
+            test -f "$check_dir/demo-smoke/demo/index.html"
+          fi
           rm -rf "$stage" "$check_dir"
       - name: Build demo zip
         if: matrix.build_demo
