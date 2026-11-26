@@ -1972,7 +1972,7 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
         "privacy_scan must still catch custom hyphenated rules after U+2011 protection"
     );
 
-    // 6. Incremental upgrade: previous v1.0.0 inline boot.js/reader.js hashes remain allowlisted
+    // 6. Incremental upgrade: previous v1.0.0 + v1.0.1 inline script hashes remain allowlisted
     let allowlist = crypto::ScriptAllowlist::default();
     let legacy_doc = format!(
         "<!doctype html><html><head><script>{}</script></head><body></body></html>",
@@ -1986,10 +1986,36 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
         "'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0='",
         "'sha256-za2UDgPTC4kgNKKeVfbNEujaIgnNHJnzdVgff5jcG5o='",
         "'sha256-2d1HlyBoJ0RTWBo1V8cJq5gqndqRo/+j5jGqg+hN+Vk='",
+        "'sha256-ULWcGE48zLdDVllI0EYBwq+iTR3kAcDbzv+3QVUarYQ='",
+        "'sha256-2Ivlf0XJIcWpuKux6MsYqWgB57xkKsnxmYqoT9r6D4g='",
+        "'sha256-aXNfRvBaL19OMemVpb9AUUGmEbb1BwKS6xDxb4Pb5HU='",
+        "'sha256-9HqZwpsqf7FMp1SP40jMRJ6HOhL5ezGD/GcJa+n99Qw='",
+        "'sha256-bAOgKqYwVOp7VK1g8OY7p0/ZwTM83IkvpUD6b66i2Qw='",
     ] {
         assert!(
             allowlist.contains_hash(h),
-            "v1.0.0 script hash {h} must remain allowlisted for incremental publish upgrades"
+            "previous release script hash {h} must remain allowlisted for incremental publish upgrades"
         );
     }
+
+    // 7. v1.0.2 editorial TOC single-line .ts-title & redundant daily date hiding (while preserving parser roundtrip)
+    assert!(
+        doc.contains(r#"<span class="ts-title">SWE‑2.1：Nemotron‑Labs‑Image 联合发布</span>"#),
+        "TOC item must wrap full title in .ts-title for single-line ellipsis + Cmd+F"
+    );
+    assert!(
+        doc.contains(r#"<time class="when" hidden>11.26</time>"#),
+        "daily story matching issue date must hide redundant visual date stamp"
+    );
+    let parsed_doc = parse_digest_html(&doc).unwrap();
+    assert_eq!(parsed_doc.items[0].when, "11.26");
+
+    // Non-matching date on a daily issue (or any weekly story) remains visible
+    let md_prev_day = md_with_empty.replace("11/26 · 强化学习", "11/25 · 强化学习");
+    let prev_digest = parser::parse_digest_md(&md_prev_day, Lang::ZhCn, Some(2026)).unwrap();
+    let prev_doc = render::render_digest_html(&prev_digest, Lang::ZhCn, &RenderOptions::default());
+    assert!(
+        prev_doc.contains(r#"<time class="when">11.25</time>"#),
+        "daily story from a different date must keep visible date stamp"
+    );
 }

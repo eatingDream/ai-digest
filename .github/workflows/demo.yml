@@ -36,7 +36,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build ai-digest release binary
-        run: cargo build --release --locked
+        run: |
+          RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$(pwd -P)=/src --remap-path-prefix=$PWD=/src" \
+            cargo build --release --locked
       - name: Build demo site (no deploy)
         run: ./target/release/ai-digest publish --demo --out dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
