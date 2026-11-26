@@ -30,7 +30,7 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
     <h1 class="np"><a class="np-link" href="/" data-brand-home><span class="ai">AI</span> Digest</a></h1>
     <span class="edition" data-kind="daily">Daily</span>
     <span class="mast-sep" aria-hidden="true"></span>
-    <nav class="issue-nav top"><a href="/prev" rel="prev"><span data-short-date>11.25</span></a></nav>
+    <nav class="issue-nav top"><a href="/prev" rel="prev"><span data-short-date>11.25</span></a><a class="nav-index" href="/"><span class="nav-lbl">Archive</span></a><a class="nav-week" href="/weekly/latest">Weekly</a></nav>
     <div class="mast-tools">
       <button type="button" class="ctrl-btn search-btn" data-filter-toggle aria-expanded="false" aria-controls="digestFilterBar"><span>Search</span><kbd>/</kbd></button>
       <div class="lang-seg"><span aria-current="page">ZH</span><a class="ctrl-btn lang-btn" data-lang-link href="/en/">EN</a></div>
@@ -38,16 +38,18 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
       <button type="button" class="ctrl-btn lock-btn" data-lock></button>
     </div>
   </div>
-  <div class="filter-bar filter-drawer" id="digestFilterBar" hidden>
-    <div class="filter-row">
-      <input type="search" class="filter-input">
-      <span class="filter-count">1</span>
-      <button type="button" class="filter-clear" hidden>Clear</button>
-      <button type="button" class="filter-close">Close</button>
-    </div>
-    <div class="filter-tags">
-      <button type="button" class="filter-tag" data-tag="llm">LLM <span class="num">1</span></button>
-      <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
+  <div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
+    <div class="filter-inner">
+      <div class="filter-input-wrap">
+        <input type="search" class="filter-input">
+        <span class="filter-count">1</span>
+        <button type="button" class="filter-clear" hidden>Clear</button>
+        <button type="button" class="filter-close">Close</button>
+      </div>
+      <div class="filter-tags">
+        <button type="button" class="filter-tag" data-tag="llm">LLM<span class="tag-cnt num">1</span></button>
+        <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
+      </div>
     </div>
   </div>
 </header>
@@ -57,11 +59,11 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
     <div class="toc-handle"></div>
     <div class="toc-head"><span>Contents</span><button type="button" class="toc-expand-all">All</button><button type="button" class="toc-close">X</button></div>
     <div class="toc-front"><a href="#front-must">Must</a></div>
-    <div class="ts-group" data-sec="sec-1">
+    <div class="ts-group is-open" data-sec="sec-1">
       <button type="button" class="ts-sec" aria-expanded="true" aria-controls="ts-list-sec-1">
         <span class="ts-no num">01</span><span class="ts-title">Models</span><span class="ts-cnt num" data-total="1">1</span>
       </button>
-      <ol class="ts-items" id="ts-list-sec-1"><li><a href="#item-1">Title<span class="dot-hot"></span></a></li></ol>
+      <div class="ts-panel" id="ts-list-sec-1"><ol class="ts-items"><li><a href="#item-1"><span class="ts-num num">1.</span><span>Title<span class="dot-hot"></span></span></a></li></ol></div>
     </div>
   </nav>
   <main id="main" class="prose-col">
@@ -80,7 +82,7 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
       <div class="themes"><div class="theme-item"><h4>Theme</h4><p>Text <a href="#item-1">#1</a></p></div></div>
     </section>
     <section class="sec" id="sec-1">
-      <div class="sec-head"><span class="sec-no num">01</span><h2>Models</h2><p class="sec-note">Note</p></div>
+      <div class="sec-head"><span class="sec-no num">01</span><h2>Models</h2><span class="sec-cnt num">1</span><p class="sec-note">Note</p></div>
       <h3 class="subhead">Subhead</h3>
       <article class="story story--lead" id="item-1" data-tags="llm">
         <div class="story-meta">
@@ -109,6 +111,7 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
   <div class="dock-nav" data-dock-nav></div>
   <button type="button" class="dock-top" data-scroll-top hidden>Top</button>
 </nav>
+<button type="button" class="to-top" data-to-top aria-hidden="true" inert>Top</button>
 <div class="scrim" data-sheet-scrim hidden></div>
 <div class="sr-only" id="liveAnnounce"></div>
 </body></html>`;
@@ -128,16 +131,18 @@ const INDEX_FIXTURE_HTML = `<!DOCTYPE html>
       <button type="button" class="ctrl-btn lock-btn" data-lock></button>
     </div>
   </div>
-  <div class="filter-bar filter-drawer" id="digestFilterBar" hidden>
-    <div class="filter-row">
-      <input type="search" class="filter-input">
-      <span class="filter-count">19</span>
-      <button type="button" class="filter-clear" hidden>Clear</button>
-      <button type="button" class="filter-close">Close</button>
-    </div>
-    <div class="filter-tags">
-      <button type="button" class="filter-tag" data-tag="llm">LLM <span class="num">5</span></button>
-      <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
+  <div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
+    <div class="filter-inner">
+      <div class="filter-input-wrap">
+        <input type="search" class="filter-input">
+        <span class="filter-count">19</span>
+        <button type="button" class="filter-clear" hidden>Clear</button>
+        <button type="button" class="filter-close">Close</button>
+      </div>
+      <div class="filter-tags">
+        <button type="button" class="filter-tag" data-tag="llm">LLM<span class="tag-cnt num">5</span></button>
+        <button type="button" class="filter-tag filter-more" hidden>+1 more</button>
+      </div>
     </div>
   </div>
 </header>
@@ -281,7 +286,7 @@ describe("web/dist artifacts and byte budgets", () => {
   it("enforces raw CSS and combined per-page JS byte budgets", () => {
     const size = (f: string) => Buffer.byteLength(readFileSync(join(DIST, f), "utf8"), "utf8");
 
-    expect(size("reader.css")).toBeLessThanOrEqual(15500);
+    expect(size("reader.css")).toBeLessThanOrEqual(16090);
     expect(size("index.css")).toBeLessThanOrEqual(10240);
     expect(size("unlock.css")).toBeLessThanOrEqual(4096);
     expect(size("404.css")).toBeLessThanOrEqual(4096);
@@ -297,8 +302,10 @@ describe("web/dist artifacts and byte budgets", () => {
 
     const boot = readFileSync(join(DIST, "boot.js"), "utf8");
     expect(boot).toContain("digest-theme");
-    expect(boot).toContain("#141311");
-    expect(boot).toContain("#faf8f4");
+    expect(boot).toContain("#121110");
+    expect(boot).toContain("#f6f3ec");
+    expect(boot).toContain("color-scheme");
+    expect(boot).toContain("colorScheme");
 
     const cli = readFileSync(join(DIST, "verify_decrypt.mjs"), "utf8");
     expect(cli.startsWith("#!/usr/bin/env node\n")).toBe(true);
@@ -346,6 +353,25 @@ describe("web/dist artifacts and byte budgets", () => {
     const mobileSlice = readerCss.slice(mobileIdx, readerCss.indexOf("@media(min-width:1024px)"));
     expect(mobileSlice).toContain("@media(prefers-reduced-motion:reduce)");
     expect(mobileSlice).toContain(".toc-side{opacity:0");
+
+    // Wide layout (>= 84-88% viewport), elevated cards & TOC, no empty 5th rail
+    expect(readerCss).toContain("min(1480px,88vw)");
+    expect(readerCss).toContain("clamp(276px,21vw,320px) minmax(0,1fr)");
+    expect(readerCss).not.toContain("grid-column:3/6");
+    expect(readerCss).not.toContain("text-wrap:balance");
+
+    // Smooth CSS Grid accordions, filter drawer, cross-document view transitions, and desktop to-top
+    expect(readerCss).toContain("@view-transition{navigation:auto}");
+    expect(readerCss).toContain("@view-transition{navigation:none}");
+    expect(readerCss).toContain("::view-transition-group(root){animation:none}");
+    expect(readerCss).toContain("view-transition-name:mast");
+    expect(readerCss).toContain(".ts-panel{display:grid;grid:0fr/1fr");
+    expect(readerCss).toContain(".filter-drawer{display:grid;grid:0fr/1fr");
+    expect(readerCss).toContain(".is-arrived{animation:");
+    expect(readerCss).toContain(".to-top{position:fixed");
+
+    const indexCss = readFileSync(join(DIST, "index.css"), "utf8");
+    expect(indexCss).toContain("min(1480px,88vw)");
   });
 });
 

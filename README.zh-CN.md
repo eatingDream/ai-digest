@@ -1,21 +1,18 @@
 <div align="center">
 
-<img src="docs/logo.svg" alt="AI Digest 图标" width="68" height="68">
+<img src="docs/logo.svg" alt="AI Digest 图标" width="64" height="64">
 
 # AI Digest
 
-**基于单一 Rust 二进制（`ai-digest`）与 TypeScript/CSS 杂志级前端的 agent 驱动 AI 日报 / 周报流水线：汇集约 155 个公开信源，渲染为单文件阅读器，并发布为纵深加固、GEO 就绪的静态站点。**
+**基于单一 Rust 二进制与 TypeScript 杂志级阅读器的 AI 日报 / 周报流水线：汇集约 155 个公开信源，渲染为单文件页面，发布为纵深加固、GEO 就绪的静态站点。**
 
 [![CI](https://github.com/eatingDream/ai-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/eatingDream/ai-digest/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/eatingDream/ai-digest?color=b85432)](https://github.com/eatingDream/ai-digest/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-4f6d5a)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-1.88%2B-dea584?logo=rust&logoColor=1f1c18)
 ![TypeScript](https://img.shields.io/badge/typescript-5.x-3178c6?logo=typescript&logoColor=white)
-![Cloudflare Pages](https://img.shields.io/badge/deploy-Cloudflare%20Pages-F38020?logo=cloudflare&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4f6d5a)](LICENSE)
 
-[English](README.md) | 简体中文
-
-**[在线演示](https://ai-digest-demo.pages.dev)** · [中文归档](https://ai-digest-demo.pages.dev/zh-CN/) · [最新中文日报](https://ai-digest-demo.pages.dev/zh-CN/daily/latest) · [English Index](https://ai-digest-demo.pages.dev/en/) · [Latest EN Daily](https://ai-digest-demo.pages.dev/en/daily/latest)
+[English](README.md) | 简体中文 · [在线演示](https://ai-digest-demo.pages.dev) · [版本发布](https://github.com/eatingDream/ai-digest/releases) · [Agent 指南（`llms.txt`）](llms.txt)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.zh-CN.png">
@@ -23,128 +20,63 @@
   <img src="docs/screenshot.zh-CN.png" alt="AI Digest 渲染示例页面（合成数据）" width="880">
 </picture>
 
-<sub>由 <code>examples/</code> 中的合成数据自动渲染。支持浅色暖纸与深色暖炭黑陶土双主题自动适配，以及完整中英双语体验。</sub>
-
 </div>
 
-## 核心亮点
+## 它是什么（不是什么）
 
-- **零依赖单文件 Rust 二进制（`ai-digest`）** — 无需 Python 或 Node 运行时：信源召回（`fetch`）、精选辅助工具（`ledger`、`cand`、`check-cands`、`page`、`weekly-late`、`xparse`）、单文件渲染（`render`）、静态站与 GEO 发布（`publish`）以及原生回测（`verify`）全部内置于单个可执行文件，编译期直接嵌入 `web/dist/` 前端产物。
-- **杂志级 TypeScript/CSS 单文件阅读器（`web/`）** — 深色优先暖炭黑陶土与暖纸浅色双主题（零白屏闪烁）、52 px 自动显隐顶栏、收拢进顶栏的折叠搜索抽屉（快捷键 `/`）与两行可折叠高频标签、实时跟滚手风琴侧栏目录 + 移动端底部导航/抽屉、构建期行内 LaTeX 数学公式渲染、键盘快捷导航（`j`/`k`/`[`/`]`）、锚点直链复制与内置 `/favicon.svg`。
-- **原生双语路径与静态 `latest` 入口** — 自动配对同目录 `<同名>.en.md` 生成对称 `/zh/` 与 `/en/` 站点目录（亦支持 `render --md-en` 单页双语或 `LANG_ALT` 伴生互链），直接以 HTTP 200 提供 `/daily/latest`、`/weekly/latest`、`/zh/daily/latest`、`/en/daily/latest`（`no-store` 实时更新，URL 稳定不跳转）。
-- **默认公开、纵深加固的静态发布与 Level 5/5 GEO（`ai-digest publish`）** — 默认发布免密码根路径公开站点（`ENCRYPT=0`、`SLUG=`），内置构建期 SHA-256 哈希锁定 CSP（零 `'unsafe-inline'` 脚本）、HSTS/COOP/CORP/Permissions-Policy、Markdown XSS 与原始 `<img>` 拦截、HTML5 实体解码隐私扫描，以及完整 **GEO / Agent 就绪能力**（含 Content Signals 与 AI 爬虫规则的 `robots.txt`、多语言 `sitemap.xml`、`llms.txt`/`llms-full.txt`、Atom 订阅、JSON-LD、全站 `.md` 镜像、Agent Skills 发现与编译型 Cloudflare Pages `_worker.js` 支持 `Accept: text/markdown` 与 `GET`/`HEAD`/`QUERY` `/.well-known/search`）；需私密部署时一条参数即可开启客户端 AES-256-GCM 加密与随机 `SLUG`（`--init --encrypt` / `ENCRYPT=1`，自动禁用公开 GEO 并保持 `Disallow: /`）。
-- **广覆盖公开召回 + 无 Grok Bot 的安全 X 方案（`ai-digest fetch`）** — 并行异步抓取约 155 个零密钥公开信源（RSS/Atom/arXiv/HF/GitHub/官博/HN/Reddit），内置防 SSRF / DNS 绑定安全 HTTP 与 `ai-digest ledger` 去重账本（★ 已推 / ☆ 看过未推）。可选 X 召回**不依赖 Grok Bot**，同时提供免费与付费安全路径（详见[没有 Grok Bot 时如何安全抓取 X 信源](#没有-grok-bot-时如何安全抓取-x-信源)）。
+**AI Digest** 是一套开源自包含的 Rust 命令行工具（`ai-digest`）与现代杂志级单文件阅读器：负责从公开渠道召回前沿 AI 资讯、驱动任意 LLM Agent 精选成日报/周报 Markdown，并一键发布为快速且经过隐私扫描的 Cloudflare Pages 静态站点。
+它**不是**托管 SaaS 订阅服务、不依赖个人 Cookie 爬虫，也不是笨重的前端框架——所有能力打包在单个原生二进制与零外部依赖的单文件 HTML 中。
 
-## 整体架构
+## 核心特性
 
-<p align="center"><img src="docs/architecture.zh-CN.svg" alt="AI Digest 架构图" width="100%"></p>
-
-1. **广覆盖召回与初筛（`ai-digest fetch`）** — Rust 异步并行抓取约 155 个零密钥公开信源（`fetch/sources.toml`，剥离点赞/星标噪音），经 `ai-digest ledger` 历史账本标记，产出 `triage.md`、`triage-papers.md` 与 `candidates.jsonl`。
-2. **内容优先的 LLM 精选（`prompts/<语言>/`）** — 平台无关的日报/周报提示词通过防 SSRF 的 `ai-digest page` 核验一手出处，按 `filter-notes.zh-CN.md` 写成七大固定版面（模型、论文、工具与项目、行业与产品、算力与基础设施、安全与政策、观点与长文）。
-3. **单文件渲染与安全门控（`ai-digest render`、`ai-digest publish`）** — 嵌入精简压缩的 TypeScript/CSS 产物（`web/dist/`），输出支持行内数学公式、折叠搜索与双语 `/zh/` `/en/` 路由的单文件 HTML、静态 `latest`、Level 5/5 GEO + `_worker.js`、实体解码隐私扫描与 SHA-256 哈希锁定的 `_headers`。
-4. **边缘部署与双运行时回测** — 增量部署至 Cloudflare Pages，并运行 `ai-digest verify`（Rust 原生）及可选 `node web/dist/verify_decrypt.mjs`（Node WebCrypto 对拍）逐页回测（公开模式逐字比对，加密模式真实执行 AES-256-GCM + gzip 解密校验）。
-
-## 在线演示站
-
-公开演示站 **[ai-digest-demo.pages.dev](https://ai-digest-demo.pages.dev)** 免密码直接访问，每次合并 `main` 后自动从 `examples/` 合成数据重新构建，完整展示 `/zh-CN/` 与 `/en/` 归档页、静态 `latest` 路由、深浅色切换及折叠顶栏搜索。本地一行即可复现：
-
-```bash
-ai-digest publish --demo --out dist/          # 生成 dist/en/ + dist/zh-CN/（--lang zh-CN 仅单语言）
-```
+- **零依赖单文件 Rust 二进制** — 内置异步信源召回（`fetch`）、去重账本（`ledger`）、精选辅助（`cand`、`page`、`xparse`）、单文件渲染（`render`）、静态站与 GEO 发布（`publish`）及双运行时回测（`verify`），无需 Python 或 Node 运行时。
+- **宽幅高质感编辑阅读器** — 暖纸浅色与暖炭黑深色双主题（零白屏闪烁）、微浮层资讯卡片、默认全展开支持 `Cmd+F` 检索的侧栏目录、距离自适应瞬达跳转、中英切换锚点锁定防跳动、统一胶囊搜索抽屉（`/`）、键盘导航（`j`/`k`/`[`/`]`）与构建期行内 LaTeX 数学公式。
+- **原生双语路由与静态 `latest`** — 自动配对 `<同名>.en.md` 生成对称 `/zh/` 与 `/en/` 站点目录（亦支持 `--md-en` 单页双语），直接提供 HTTP 200 `/daily/latest` 与 `/weekly/latest`。
+- **默认公开的 Level 5/5 GEO 与 Agent 就绪** — 自动输出 `robots.txt` Content Signals、`sitemap.xml`、`llms.txt`/`llms-full.txt`、Atom 订阅、JSON-LD、全站 `.md` 镜像、Agent Skills 索引与 Cloudflare Pages `_worker.js`（支持 `Accept: text/markdown` 与 `GET`/`HEAD`/`QUERY` `/.well-known/search`）。
+- **纵深安全与可选客户端加密** — 构建期 SHA-256 哈希锁定 CSP（零 `'unsafe-inline'` 脚本）、严格安全响应头、Markdown XSS 净化、HTML5 实体解码隐私扫描，以及一条参数即可开启的客户端 AES-256-GCM 加密（`--init --encrypt`）。
+- **约 155 个零密钥公开信源** — 开箱抓取 RSS/Atom、arXiv、Hugging Face、GitHub、实验室官博、HN 与 Reddit，X 召回完全可选且无需交出个人 Cookie。
 
 ## 快速开始
 
-直接从 [GitHub Releases](https://github.com/eatingDream/ai-digest/releases) 下载对应平台预编译二进制（Linux x86_64/arm64、macOS arm64/x86_64），或使用 Rust 1.88+ 从源码编译（仅在修改 `web/` 前端或运行 `web/dist/verify_decrypt.mjs` / `npx wrangler` 时需要 Node 22+）：
+从 [GitHub Releases](https://github.com/eatingDream/ai-digest/releases) 下载预编译二进制，或用 Rust 1.88+ 从源码构建：
 
 ```bash
-# 编译自包含发布版二进制（自动嵌入已提交的 web/dist/ 前端产物）
 AI_DIGEST_REQUIRE_WEB_DIST=1 cargo build --release --locked
-
-# 1. 渲染示例日报（中文加 --lang zh-CN；加 --md-en 可打包为单文件双语切换页）
+./target/release/ai-digest publish --demo --out dist/          # 本地构建双语演示站（零密钥）
 ./target/release/ai-digest render examples/sample-digest.zh-CN.md /tmp/sample.html --lang zh-CN
-./target/release/ai-digest render examples/sample-digest.zh-CN.md /tmp/bilingual.html --md-en examples/sample-digest.en.md
-
-# 2. 本地构建公开演示站（零密钥；如需测试加密模式，设 DIGEST_DEMO_PASSWORD='demo'）
-./target/release/ai-digest publish --demo --out dist/
-
-# 3. 运行 Rust 与前端测试套件
-AI_DIGEST_REQUIRE_WEB_DIST=1 cargo test --locked
-npm --prefix web ci && npm --prefix web run typecheck && npm --prefix web test
 ```
 
-### 运行你自己的日报
+运行自己的日报 / 周报流水线：
 
 ```bash
-# 1. 初始化配置（默认免密码根路径公开站；加 --encrypt 开启密码与随机 SLUG）
-ai-digest publish --init                      # 或 cp site/CONFIG.example site/CONFIG
-export CLOUDFLARE_API_TOKEN=...               # 权限范围：Account · Cloudflare Pages · Edit
-# 可选密码模式（仅 ENCRYPT=1 时需要）：
-# install -m 600 /dev/stdin ~/.config/ai-digest/site-password
-
-# 2. 抓取候选（先设 DIGEST_TZ；可选设 GITHUB_TOKEN/GH_TOKEN 提升 GitHub API 限额）
-ai-digest fetch --daily                       # 周报用 --weekly
-
-# 3. 交给 AI agent 精选：执行 prompts/zh-CN/daily.md（或 weekly.md；英文用 prompts/en/）→ digest-<P>.md
-
-# 4. 发布（zh-CN 站点自动发现同目录 <同名>.en.md，生成 /zh/ 与 /en/ 对称路径及静态 latest 页）
-ai-digest publish --issue daily/2026-01-15 --md digest-2026-01-15.md
+ai-digest publish --init && ai-digest fetch --daily
+# 交由 AI Agent 按 prompts/zh-CN/daily.md 精选输出 digest-YYYY-MM-DD.md
+ai-digest publish --issue daily/YYYY-MM-DD --md digest-YYYY-MM-DD.md
 ```
 
-信源频道与辅助子命令见 [fetch/README.md](fetch/README.md)；可选加密、`/zh/` 与 `/en/` 路由、`latest` 页面及 `--rebuild`、`--rerender-all`、`--rotate-password`、`--remove` 见 [site/README.md](site/README.md)。
+## 面向 AI Agent
 
-## 配合 AI agent 使用
+AI Digest 原生面向编码 Agent（Claude Code、Codex、Cursor、OpenCode、Antigravity）协作与消费：
 
-[AGENTS.md](AGENTS.md) 是给编码 agent 的入口（仓库地图、流水线、约定与安全规则）。在任意带 Shell 和文件工具的运行器中打开仓库根目录，设好 `DIGEST_LANG` 与 `DIGEST_TZ`，执行 `prompts/<语言>/{papers,daily,weekly}.md` 即可（每份开头都有运行契约；各子命令均支持 `--help`、`--version` 与 `--json`）。
+```bash
+npx skills add eatingDream/ai-digest
+```
 
-### 没有 Grok Bot 时如何安全抓取 X 信源
+直接让 Agent 阅读 [`llms.txt`](llms.txt)、[`skills/ai-digest/SKILL.md`](skills/ai-digest/SKILL.md)、[`docs/ai-guide.md`](docs/ai-guide.md)（完整环境变量 / `CONFIG` 配置表、CLI 矩阵与安全 X 召回指南）或 [`AGENTS.md`](AGENTS.md)。每个公开部署站均内置 `/llms.txt`、`Accept: text/markdown` 与 `/.well-known/search?q=<query>`。
 
-X/Twitter 召回是**完全可选的增强项**，不依赖 Grok Bot，也绝不需要交出个人 X 账号 Cookie。完整配置方法与查询模板见 [fetch/x-recall.zh-CN.md](fetch/x-recall.zh-CN.md)：
+## 安全与隐私
 
-- **免费安全途径**：
-  - **纯公开信源模式（默认）** — 无 X 工具时提示词自动干净跳过，直接基于 ~155 个公开 RSS/Atom/arXiv/HF/GitHub/官博/HN/Reddit 信源完成筛选。
-  - **只读网页搜索引擎检索** — 通过 agent 自带的免费额度网页检索（Gemini 搜索接地、Brave Search、Tavily、Exa、Perplexity 等）按日期查 `site:x.com/<账号>`，不登录 X，再追到一手链接。
-  - **官方跨平台 RSS 与自建桥接** — 直接在 `fetch/sources.toml` 订阅研究者的 Bluesky 原生 RSS（`https://bsky.app/profile/<handle>/rss`）、Mastodon、Substack 或自建 [RSSHub](https://docs.rsshub.app/) 公开只读路由。*（注：X 官方 Free 免费档不包含时间线与搜索读取接口。）*
-- **付费官方与低成本途径**：
-  - **xAI Grok 官方 API（`x_search` 工具）** *（付费首选）* — 按量计费（`api.x.ai`，每天通常仅几美分），原生支持账号组与日期范围过滤，零 X 账号风险。
-  - **X 官方 API v2（Pay-Per-Use / Basic）** — 只读 Bearer Token 调用 `GET /2/tweets/search/recent`，返回 JSON 可直接喂给 `ai-digest xparse` 去重。
-  - **第三方只读 X / 搜索 API 与 MCP** — Exa、Tavily、Perplexity Sonar、TwitterAPI.io 或 Apify（无需个人 X 凭据）。
-- **安全红线**：严禁把个人主号 `auth_token`/`ct0` Cookie 交给爬虫，所有抓取严格只读，API 密钥存放在仓库外 `0600` 权限文件或环境变量，个人关注列表绝不写入公开日报（`fetch/x-recall.zh-CN.md` 与 `x-sources.zh-CN.md` 中未替换的 `<account_1>` / `<zh_account_1>` 占位符会自动跳过）。
+- **防 SSRF 与只读抓取** — DNS 绑定安全 HTTP 拦截内网/回环地址，绝不使用个人社交账号 Cookie。
+- **零密钥仓库卫生** — 凭据严格存放在仓库外 `0600` 文件；发布前执行 HTML5 实体解码隐私扫描拦截敏感泄露。
+- **哈希锁定严格 CSP** — 所有可执行内联脚本在构建期计算 SHA-256 写入 `_headers`，零 `'unsafe-inline'` 脚本。
+- **加密模式严格隔离** — 开启 `ENCRYPT=1` 时自动关闭公开 GEO 端点并强制 `Disallow: /` 与 `noindex`。
 
-## 配置
+## 文档索引
 
-环境变量优先于 `site/CONFIG`。
+- [架构图](docs/architecture.zh-CN.svg) · [Agent 与运维配置指南](docs/ai-guide.md) · [AGENTS.md](AGENTS.md)
+- [信源与抓取说明](fetch/README.md) · [站点与发布说明](site/README.md) · [无 Grok Bot 安全抓 X](fetch/x-recall.zh-CN.md)
+- [参与贡献](CONTRIBUTING.zh-CN.md) · [安全策略](SECURITY.md) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
-| 变量 | `CONFIG` 键 | 说明 | 默认值 |
-|---|---|---|---|
-| `SITE_DOMAIN` | `DOMAIN` | 站点域名 | `digest.example.com` |
-| `SITE_SLUG` | `SLUG` | 可选路径前缀（留空即挂载在根路径 `/`；非空需至少 8 位 URL 安全字符） | 留空（`--init --encrypt` 生成随机前缀） |
-| `DIGEST_ENCRYPT` | `ENCRYPT` | 可选开启客户端 AES-256-GCM 密码加密（`1`/`true`/`yes`/`on`；开启后自动禁用公开 GEO） | `0`（免密码公开） |
-| `DIGEST_GEO_AI_TRAIN` | `GEO_AI_TRAIN` | 公开站 `Content-Signal` 与训练爬虫策略（`yes` 或 `no`；仅 `ENCRYPT=0` 生效） | `yes` |
-| `DIGEST_GEO_WORKER` | `GEO_WORKER` | 为公开 Pages 站生成 `_worker.js`（`Accept: text/markdown` 与 `/.well-known/search`；仅 `ENCRYPT=0`） | `1`（开启） |
-| `CF_ACCOUNT_ID` | `ACCOUNT_ID` | Cloudflare 账号 ID | — |
-| `CF_ZONE_ID` | `ZONE_ID` | 域名所在的 zone（可选） | — |
-| `CF_PAGES_PROJECT` | `PROJECT` | Cloudflare Pages 项目名 | `ai-digest` |
-| `CLOUDFLARE_API_TOKEN` / `_FILE` | — | 部署用 token（仅需 Pages · Edit） | — |
-| `DIGEST_SITE_PASSWORD_FILE` | — | 存放站点密码的文件（权限 600；仅 `ENCRYPT=1` 时使用） | `~/.config/ai-digest/site-password` |
-| `DIGEST_SITE_SALT_FILE` | — | PBKDF2 盐文件（仅 `ENCRYPT=1` 时自动生成） | `~/.config/ai-digest/site-salt` |
-| `DIGEST_LANG` | `LANG` | 日报与站点界面语言：`en` 或 `zh-CN`（命令行 `--lang` 优先） | `en` |
-| `DIGEST_LANG_ALT` | `LANG_ALT` | 可选的另一语言伴生站点路径/URL（如 `en:/en/`） | — |
-| `DIGEST_ROOT_LATEST` | `ROOT_LATEST` | 当设置了 `SLUG` 时，可选开启根路径 `/latest`、`/daily/latest`、`/weekly/latest`（及 `/zh/...`、`/en/...`）静态页（`1`/`true`/`yes`/`on`） | `0`（关闭） |
-| `DIGEST_TZ` | — | 用来划分「自然日」的 IANA 时区 | `UTC` |
-| `DIGEST_ROOT` | — | `runs/`、`html/`、`site/`、`ledger.json`、`logs/`、`state/` 工作目录 | 仓库根目录 |
-| `LEDGER_PATH` | — | `ledger.json` 路径（首次 `ai-digest ledger add` 自动创建） | `<DIGEST_ROOT>/ledger.json` |
-| `DIGEST_PREFERENCES_FILE` | — | 主题偏好权重 JSON（参考 `fetch/preferences.example.json`） | `fetch/preferences.json` |
-| `DIGEST_PRIVACY_PATTERNS_FILE` | — | 发布前额外检查的正则 | `site/privacy-patterns.txt` |
-| `DIGEST_DEMO_PASSWORD` | — | 可选，`ai-digest publish --demo` 使用的密码（不设则为公开演示） | — |
-| `GITHUB_TOKEN` / `GH_TOKEN` | — | 可选，抓取时提高 GitHub API 限额 | — |
+## 许可
 
-信源清单在 `fetch/sources.toml`，筛选规则在 `filter-notes.zh-CN.md`。
-
-## AI Agent 接入指南
-
-- **安装通用 Agent Skill**：使用 [`skills/ai-digest/SKILL.md`](skills/ai-digest/SKILL.md)（或运行 `npx skills add eatingDream/ai-digest`），即可让 Claude Code、Codex、Cursor、OpenCode 与 Antigravity 直接检索已发布站点或驱动本地抓取、渲染与发布流水线。
-- **仓库与站点的机器可读入口**：本仓库提供 [`llms.txt`](llms.txt) 与 [`AGENTS.md`](AGENTS.md)；每个公开部署的站点（`ENCRYPT=0`）均自动提供 `/llms.txt`、`/llms-full.txt`、`/sitemap.xml`、`/feed.xml`、`/.well-known/agent-skills/index.json`、`Accept: text/markdown` 内容协商及支持 `GET`/`HEAD`/`QUERY` 的 `/.well-known/search?q=<query>`。
-
-## 参与贡献与许可
-
-欢迎提 PR（`main` 受保护，详见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) 与 [SECURITY.md](SECURITY.md)）。`web/src/css/tokens.css` 中的设计令牌改编自 [AIHOT](https://github.com/KKKKhazix/AIHOT)（MIT，© 2026 数字生命卡兹克；见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [licenses/AIHOT-MIT.txt](licenses/AIHOT-MIT.txt)）。项目采用 [MIT](LICENSE) 许可。
+[MIT](LICENSE) — CSS 设计令牌改编自 [AIHOT](https://github.com/KKKKhazix/AIHOT)（MIT，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）。

@@ -1,7 +1,15 @@
 import { initFilter } from "./filter";
-import { initMast, type MastController } from "./mast";
+import {
+  captureVisibleAnchor,
+  initMast,
+  LANG_ANCHOR_KEY,
+  type LangAnchorSnapshot,
+  type MastController,
+} from "./mast";
 
 const TOC_ALL_KEY = "digest-toc-all";
+const LONG_JUMP_PX = 900;
+const SHORT_JUMP_MAX_MS = 200;
 
 const CHECK_SVG =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>';
@@ -15,19 +23,55 @@ interface SpyEntry {
 
 interface PaneController {
   pane: Document | HTMLElement;
-  activate(): void;
+  activate(anchorSnap?: LangAnchorSnapshot | null): void;
   deactivate(): void;
   rebuildSpyCache(): void;
   onScroll(): void;
   jumpToElement(el: HTMLElement, updateHash?: boolean): void;
 }
 
-function readExpandAllPref(): boolean {
+function consumeLangAnchor(): LangAnchorSnapshot | null {
   try {
-    return sessionStorage.getItem(TOC_ALL_KEY) === "1";
+    const raw = sessionStorage.getItem(LANG_ANCHOR_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(LANG_ANCHOR_KEY);
+    const parsed = JSON.parse(raw) as Partial<LangAnchorSnapshot>;
+    if (
+      typeof parsed.anchorId === "string" &&
+      typeof parsed.relTop === "number" &&
+      typeof parsed.ts === "number" &&
+      Date.now() - parsed.ts < 5000
+    ) {
+      return parsed as LangAnchorSnapshot;
+    }
   } catch {
-    return false;
+    // Ignore storage/parse errors.
   }
+  return null;
+}
+
+function findAnchorInScope(
+  scope: Document | HTMLElement,
+  anchorId: string
+): HTMLElement | null {
+  if (!anchorId || anchorId === "__top__") return null;
+  const escaped = CSS.escape(anchorId);
+  const direct = scope.querySelector<HTMLElement>(
+    `#${escaped}, #en-${escaped}`
+  );
+  if (direct) return direct;
+  return document.getElementById(anchorId) || document.getElementById(`en-${anchorId}`);
+}
+
+function readExpandAllPref(defaultAll: boolean): boolean {
+  try {
+    const v = sessionStorage.getItem(TOC_ALL_KEY);
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch {
+    // Ignore storage restrictions.
+  }
+  return defaultAll;
 }
 
 function initReaderPane(
@@ -44,6 +88,7 @@ function initReaderPane(
   const dockTocBtn = scope.querySelector<HTMLButtonElement>("[data-sheet-open]");
   const dockNavEl = scope.querySelector<HTMLElement>("[data-dock-nav]");
   const dockTopBtn = scope.querySelector<HTMLButtonElement>("[data-scroll-top]");
+  const toTopBtn = scope.querySelector<HTMLButtonElement>("[data-to-top]");
   const scrimEl = scope.querySelector<HTMLElement>("[data-sheet-scrim]");
   const tocCloseBtn = tocEl?.querySelector<HTMLButtonElement>(".toc-close") ?? null;
   const expandAllBtn = tocEl?.querySelector<HTMLButtonElement>(".toc-expand-all") ?? null;
@@ -72,59 +117,81 @@ function initReaderPane(
     if (nextEl) dockNavEl.appendChild(nextEl.cloneNode(true));
   }
 
-  // Accordion expand-all persistence in sessionStorage
-  let expandAll = readExpandAllPref();
+  // All TOC sections expanded by default (user mandate #193: Cmd+F & full scannability).
+  // Manual per-section toggle and Collapse-all / Expand-all remain opt-in.
+  let allExpanded = readExpandAllPref(true);
+  let tocHovering = false;
   let spyEntries: SpyEntry[] = [];
   let activeId = "";
   let activeSecId = "";
-  let spyLockUntil = 0;
+  let spyLocked = false;
+  let spySettleTimer = 0;
+  let scrollEndHandler: (() => void) | null = null;
+  let jumpRafId = 0;
+  let cancelUserInterrupt: (() => void) | null = null;
+  let arrivedTimer = 0;
+  let lastArrivedEl: HTMLElement | null = null;
+
+  tocEl?.addEventListener("mouseenter", () => {
+    tocHovering = true;
+  });
+  tocEl?.addEventListener("mouseleave", () => {
+    tocHovering = false;
+  });
 
   const syncExpandAllLabel = (): void => {
     if (!expandAllBtn) return;
+    const anyOpen = tsGroups.some(
+      (g) => !g.hidden && g.dataset.open !== "false"
+    );
+    allExpanded = anyOpen;
     if (paneIsZh()) {
-      expandAllBtn.textContent = expandAll ? "\u5168\u90e8\u6536\u8d77" : "\u5168\u90e8\u5c55\u5f00";
+      expandAllBtn.textContent = anyOpen ? "\u5168\u90e8\u6536\u8d77" : "\u5168\u90e8\u5c55\u5f00";
     } else {
-      expandAllBtn.textContent = expandAll ? "Collapse all" : "Expand all";
+      expandAllBtn.textContent = anyOpen ? "Collapse all" : "Expand all";
     }
-    expandAllBtn.setAttribute("aria-pressed", expandAll ? "true" : "false");
-    expandAllBtn.setAttribute("aria-expanded", expandAll ? "true" : "false");
+    expandAllBtn.setAttribute("aria-pressed", anyOpen ? "true" : "false");
+    expandAllBtn.setAttribute("aria-expanded", anyOpen ? "true" : "false");
   };
 
   const setGroupOpen = (group: HTMLElement, open: boolean): void => {
     const btn = group.querySelector<HTMLButtonElement>(".ts-sec");
-    const list = group.querySelector<HTMLElement>("ol.ts-items");
+    const panel =
+      group.querySelector<HTMLElement>(".ts-panel") ??
+      group.querySelector<HTMLElement>("ol.ts-items");
+    group.dataset.open = open ? "true" : "false";
     if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-    if (list) list.hidden = !open;
-  };
-
-  const applyAccordion = (secId: string): void => {
-    const targetSec = secId || tsGroups.find((g) => !g.hidden)?.dataset.sec || "";
-    for (const grp of tsGroups) {
-      if (grp.hidden) {
-        setGroupOpen(grp, false);
-        continue;
+    if (panel) {
+      if (panel.classList.contains("ts-panel")) {
+        (panel as HTMLElement & { inert: boolean }).inert = !open;
+        panel.setAttribute("aria-hidden", open ? "false" : "true");
+      } else {
+        panel.hidden = !open;
       }
-      const open = expandAll || (targetSec !== "" && grp.dataset.sec === targetSec);
-      setGroupOpen(grp, open);
     }
   };
 
-  // Enforce initial collapsed state unless sessionStorage explicitly enables expand-all
-  syncExpandAllLabel();
-  applyAccordion(tsGroups[0]?.dataset.sec || "");
+  const applyAllGroups = (open: boolean): void => {
+    for (const grp of tsGroups) {
+      setGroupOpen(grp, !grp.hidden && open);
+    }
+    syncExpandAllLabel();
+  };
+
+  // All sections start expanded unless user explicitly collapsed in sessionStorage
+  applyAllGroups(allExpanded);
 
   expandAllBtn?.addEventListener("click", () => {
-    expandAll = !expandAll;
+    const next = !allExpanded;
     try {
-      sessionStorage.setItem(TOC_ALL_KEY, expandAll ? "1" : "0");
+      sessionStorage.setItem(TOC_ALL_KEY, next ? "1" : "0");
     } catch {
       // Ignore storage restrictions.
     }
-    syncExpandAllLabel();
-    applyAccordion(activeSecId);
+    applyAllGroups(next);
   });
 
-  // Individual accordion section toggle
+  // Individual accordion section toggle (purely manual opt-in)
   tocEl?.addEventListener("click", (e: MouseEvent) => {
     const secBtn = (e.target as Element | null)?.closest<HTMLButtonElement>(".ts-sec");
     if (!secBtn) return;
@@ -132,6 +199,7 @@ function initReaderPane(
     if (!grp) return;
     const isOpen = secBtn.getAttribute("aria-expanded") === "true";
     setGroupOpen(grp, !isOpen);
+    syncExpandAllLabel();
   });
 
   // Mobile sheet open / close + inert + focus trap
@@ -195,7 +263,7 @@ function initReaderPane(
         tocEl.querySelectorAll<HTMLElement>(
           'a[href]:not([hidden]), button:not([disabled]):not([hidden]), [tabindex]:not([tabindex="-1"])'
         )
-      ).filter((el) => el.offsetParent !== null);
+      ).filter((el) => el.offsetParent !== null && !el.closest("[inert]"));
       if (focusables.length === 0) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
@@ -209,13 +277,137 @@ function initReaderPane(
     }
   });
 
-  // Scroll-to-top dock button
-  dockTopBtn?.addEventListener("click", () => {
-    window.scrollTo({
-      top: 0,
-      behavior: mast.isReducedMotion() ? "auto" : "smooth",
-    });
-  });
+  // Clean spy-lock and programmatic scroll helpers
+  const clearScrollEndHook = (): void => {
+    if (spySettleTimer) {
+      window.clearTimeout(spySettleTimer);
+      spySettleTimer = 0;
+    }
+    if (scrollEndHandler) {
+      window.removeEventListener("scrollend", scrollEndHandler);
+      scrollEndHandler = null;
+    }
+  };
+
+  const releaseSpyLock = (): void => {
+    clearScrollEndHook();
+    spyLocked = false;
+    mast.setProgrammaticScroll(false);
+  };
+
+  const cancelJumpAnim = (): void => {
+    if (jumpRafId) {
+      window.cancelAnimationFrame(jumpRafId);
+      jumpRafId = 0;
+    }
+    if (cancelUserInterrupt) {
+      cancelUserInterrupt();
+      cancelUserInterrupt = null;
+    }
+    clearScrollEndHook();
+  };
+
+  const armSpySettle = (delayMs: number): void => {
+    clearScrollEndHook();
+    const finish = (): void => {
+      releaseSpyLock();
+    };
+    scrollEndHandler = finish;
+    window.addEventListener("scrollend", finish, { once: true });
+    spySettleTimer = window.setTimeout(finish, delayMs);
+  };
+
+  const triggerArrived = (el: HTMLElement): void => {
+    if (mast.isReducedMotion()) return;
+    if (arrivedTimer) {
+      window.clearTimeout(arrivedTimer);
+      arrivedTimer = 0;
+    }
+    if (lastArrivedEl) {
+      lastArrivedEl.classList.remove("is-arrived");
+      lastArrivedEl = null;
+    }
+    void el.offsetWidth;
+    el.classList.add("is-arrived");
+    lastArrivedEl = el;
+    arrivedTimer = window.setTimeout(() => {
+      el.classList.remove("is-arrived");
+      if (lastArrivedEl === el) lastArrivedEl = null;
+      arrivedTimer = 0;
+    }, 1150);
+  };
+
+  // Distance-adaptive fast scroll:
+  //   <= 900px -> custom rAF cubic-ease-out capped strictly at <= 200ms
+  //   >  900px (or reduced motion) -> 0ms instant jump
+  const fastScrollTo = (
+    destY: number,
+    onLanded?: (wasLongJump: boolean) => void
+  ): void => {
+    cancelJumpAnim();
+    const targetY = Math.max(0, Math.round(destY));
+    const startY = window.scrollY;
+    const dist = Math.abs(targetY - startY);
+
+    spyLocked = true;
+    mast.setProgrammaticScroll(true);
+
+    if (mast.isReducedMotion() || dist > LONG_JUMP_PX || dist < 2) {
+      window.scrollTo({
+        top: targetY,
+        behavior: "instant" as ScrollBehavior,
+      });
+      onLanded?.(dist > LONG_JUMP_PX && !mast.isReducedMotion());
+      armSpySettle(120);
+      return;
+    }
+
+    const duration = Math.min(
+      SHORT_JUMP_MAX_MS,
+      Math.max(90, Math.round(dist * 0.22))
+    );
+    const t0 = performance.now();
+
+    const onInterrupt = (): void => {
+      cancelJumpAnim();
+      releaseSpyLock();
+    };
+    window.addEventListener("wheel", onInterrupt, { once: true, passive: true });
+    window.addEventListener("touchstart", onInterrupt, { once: true, passive: true });
+    window.addEventListener("pointerdown", onInterrupt, { once: true, passive: true });
+    cancelUserInterrupt = () => {
+      window.removeEventListener("wheel", onInterrupt);
+      window.removeEventListener("touchstart", onInterrupt);
+      window.removeEventListener("pointerdown", onInterrupt);
+    };
+
+    const step = (now: number): void => {
+      const p = Math.min(1, (now - t0) / duration);
+      const ease = 1 - (1 - p) * (1 - p) * (1 - p);
+      window.scrollTo(0, Math.round(startY + (targetY - startY) * ease));
+      if (p < 1) {
+        jumpRafId = window.requestAnimationFrame(step);
+      } else {
+        jumpRafId = 0;
+        if (cancelUserInterrupt) {
+          cancelUserInterrupt();
+          cancelUserInterrupt = null;
+        }
+        window.scrollTo(0, targetY);
+        onLanded?.(false);
+        armSpySettle(100);
+      }
+    };
+    jumpRafId = window.requestAnimationFrame(step);
+  };
+
+  // Scroll-to-top buttons (mobile dock + desktop floating pill)
+  const scrollToTop = (): void => {
+    mast.setState("shown");
+    fastScrollTo(0);
+  };
+  dockTopBtn?.addEventListener("click", scrollToTop);
+  toTopBtn?.addEventListener("click", scrollToTop);
 
   // Scroll-spy offset cache + binary search (scoped to active pane)
   const rebuildSpyCache = (): void => {
@@ -252,21 +444,27 @@ function initReaderPane(
     spyEntries = next;
   };
 
-  const keepTocRowInMiddleThird = (link: HTMLElement): void => {
-    if (!tocEl || sheetOpen) return;
+  const keepTocRowVisible = (link: HTMLElement): void => {
+    if (!tocEl || sheetOpen || tocHovering) return;
     if (window.innerWidth < 1024) return;
+    if (link.closest("[inert]")) return;
     const h = tocEl.clientHeight;
     if (h <= 0) return;
-    const linkTop = link.offsetTop;
-    const curScroll = tocEl.scrollTop;
-    const minVisible = curScroll + h / 3;
-    const maxVisible = curScroll + (2 * h) / 3;
-    if (linkTop < minVisible || linkTop > maxVisible) {
-      tocEl.scrollTop = Math.max(0, linkTop - h / 2);
+    const top = link.offsetTop;
+    const bottom = top + link.offsetHeight;
+    const cur = tocEl.scrollTop;
+    const pad = 28;
+    if (top < cur + pad) {
+      tocEl.scrollTop = Math.max(0, top - pad);
+    } else if (bottom > cur + h - pad) {
+      tocEl.scrollTop = Math.max(0, bottom - h + pad);
     }
   };
 
-  const setActiveEntry = (entry: SpyEntry | null): void => {
+  const setActiveEntry = (
+    entry: SpyEntry | null,
+    expandIfClosed = false
+  ): void => {
     if (!entry) return;
     if (entry.id === activeId && entry.secId === activeSecId) return;
     activeId = entry.id;
@@ -274,18 +472,27 @@ function initReaderPane(
     activeSecId = entry.secId;
 
     if (tocEl) {
-      const prev = tocEl.querySelector<HTMLElement>("a.cur");
-      prev?.classList.remove("cur");
+      tocEl.querySelector<HTMLElement>("a.cur")?.classList.remove("cur");
       const nextLink = tocEl.querySelector<HTMLElement>(
         `a[href="#${CSS.escape(entry.id)}"]`
       );
-      if (nextLink) {
-        nextLink.classList.add("cur");
-        if (secChanged) applyAccordion(activeSecId);
-        keepTocRowInMiddleThird(nextLink);
-      } else if (secChanged) {
-        applyAccordion(activeSecId);
+      if (nextLink) nextLink.classList.add("cur");
+
+      if (secChanged) {
+        tocEl.querySelector<HTMLElement>(".ts-sec.cur")?.classList.remove("cur");
+        const grp = activeSecId
+          ? tocEl.querySelector<HTMLElement>(
+              `.ts-group[data-sec="${CSS.escape(activeSecId)}"]`
+            )
+          : null;
+        grp?.querySelector<HTMLElement>(".ts-sec")?.classList.add("cur");
+        // NEVER auto-collapse any section; only open the clicked section if user had collapsed it
+        if (expandIfClosed && grp && grp.dataset.open === "false") {
+          setGroupOpen(grp, true);
+          syncExpandAllLabel();
+        }
       }
+      if (nextLink) keepTocRowVisible(nextLink);
     }
 
     // Update mobile dock label with active section title
@@ -306,8 +513,7 @@ function initReaderPane(
   };
 
   const updateSpy = (): void => {
-    if (!isActive()) return;
-    if (performance.now() < spyLockUntil) return;
+    if (!isActive() || spyLocked) return;
     if (spyEntries.length === 0) return;
     const probeY = window.scrollY + mast.getMastOffset() + 32;
     let lo = 0;
@@ -322,7 +528,7 @@ function initReaderPane(
         hi = mid - 1;
       }
     }
-    setActiveEntry(spyEntries[best]);
+    setActiveEntry(spyEntries[best], false);
   };
 
   const onScroll = (): void => {
@@ -331,19 +537,27 @@ function initReaderPane(
     const prog = docH > 0 ? Math.min(1, Math.max(0, window.scrollY / docH)) : 0;
     root.style.setProperty("--read-prog", prog.toFixed(4));
     if (dockTopBtn) dockTopBtn.hidden = window.scrollY <= 600;
+    if (toTopBtn) {
+      const show = window.scrollY > 420;
+      toTopBtn.classList.toggle("is-show", show);
+      (toTopBtn as HTMLButtonElement & { inert: boolean }).inert = !show;
+      toTopBtn.setAttribute("aria-hidden", show ? "false" : "true");
+    }
     updateSpy();
   };
 
-  // Smooth jump with 650ms spy lock and mast-state prediction
+  // Distance-adaptive TOC / Must-Read / Related jump with full-flight spy lock + arrival pulse
   const jumpToElement = (el: HTMLElement, updateHash = true): void => {
     const doScroll = (): void => {
       const targetY = el.getBoundingClientRect().top + window.scrollY;
       const goingDown = targetY > window.scrollY && !mast.isPinned();
+      const visibleHeaderH = mastEl
+        ? Math.round(mastEl.getBoundingClientRect().height)
+        : mast.getMastHeight();
       const dest = goingDown
         ? targetY - 16
-        : targetY - mast.getMastHeight() - 16;
+        : targetY - visibleHeaderH - 16;
       mast.setState(goingDown ? "hidden" : "shown");
-      spyLockUntil = performance.now() + 650;
       if (updateHash && el.id) {
         try {
           window.history.replaceState(null, "", `#${el.id}`);
@@ -353,16 +567,18 @@ function initReaderPane(
       }
       const sec = el.closest<HTMLElement>("section.sec");
       if (el.id) {
-        setActiveEntry({
-          id: el.id,
-          secId: sec?.id || el.id,
-          el,
-          top: targetY,
-        });
+        setActiveEntry(
+          {
+            id: el.id,
+            secId: sec?.id || el.id,
+            el,
+            top: targetY,
+          },
+          true
+        );
       }
-      window.scrollTo({
-        top: Math.max(0, dest),
-        behavior: mast.isReducedMotion() ? "auto" : "smooth",
+      fastScrollTo(dest, (wasLongJump) => {
+        if (wasLongJump) triggerArrived(el);
       });
     };
 
@@ -556,18 +772,55 @@ function initReaderPane(
 
   return {
     pane: scope,
-    activate() {
-      expandAll = readExpandAllPref();
+    activate(anchorSnap?: LangAnchorSnapshot | null) {
+      allExpanded = readExpandAllPref(true);
       activeId = "";
       activeSecId = "";
       kbdIdx = -1;
-      syncExpandAllLabel();
-      applyAccordion(tsGroups.find((g) => !g.hidden)?.dataset.sec || "");
+      applyAllGroups(allExpanded);
       filter.refreshTags();
       rebuildSpyCache();
+
+      const snap = anchorSnap ?? consumeLangAnchor();
+      if (snap) {
+        spyLocked = true;
+        mast.setProgrammaticScroll(true);
+        if (snap.anchorId === "__top__") {
+          window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+        } else {
+          const el = findAnchorInScope(scope, snap.anchorId);
+          if (el) {
+            const targetY = el.getBoundingClientRect().top + window.scrollY;
+            const dest = Math.max(0, Math.round(targetY - snap.relTop));
+            window.scrollTo({ top: dest, behavior: "instant" as ScrollBehavior });
+            const sec = el.closest<HTMLElement>("section.sec");
+            setActiveEntry(
+              {
+                id: el.id,
+                secId: sec?.id || el.id,
+                el,
+                top: targetY,
+              },
+              true
+            );
+          }
+        }
+        armSpySettle(300);
+      }
+
       onScroll();
     },
     deactivate() {
+      cancelJumpAnim();
+      releaseSpyLock();
+      if (arrivedTimer) {
+        window.clearTimeout(arrivedTimer);
+        arrivedTimer = 0;
+      }
+      if (lastArrivedEl) {
+        lastArrivedEl.classList.remove("is-arrived");
+        lastArrivedEl = null;
+      }
       closeSheet(false);
       if (filter.isOpen()) filter.close(false);
       spyEntries = [];
@@ -654,11 +907,14 @@ function initReader(): void {
 
   const switchToPane = (nextPane: HTMLElement, targetEl?: HTMLElement): void => {
     if (nextPane !== activePane) {
+      const snap = targetEl
+        ? null
+        : captureVisibleAnchor(activePane, mast.getMastHeight());
       paneControllers.get(activePane)?.deactivate();
       activePane = nextPane;
       syncDomForActivePane(activePane);
       mast.syncLang();
-      paneControllers.get(activePane)?.activate();
+      paneControllers.get(activePane)?.activate(snap);
     }
     if (targetEl) {
       paneControllers.get(activePane)?.jumpToElement(targetEl, true);

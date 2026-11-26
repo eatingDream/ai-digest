@@ -505,7 +505,8 @@ fn builtin_unlock(options: UnlockOptions<'_>) -> Result<String> {
 <html lang="{lang}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#141311">
+<meta name="theme-color" content="#121110">
+<meta name="color-scheme" content="dark">
 <script>{boot}</script>
 <title>{title}</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">

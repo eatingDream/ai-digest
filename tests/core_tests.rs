@@ -1664,24 +1664,68 @@ fn reader_toc_collapsed_table_alignment_classes_and_bilingual_pane_hooks() {
     let en = fixture(DAILY_EN, Lang::En);
     let single = render::render_digest_html(&en, Lang::En, &RenderOptions::default());
 
-    // Section 0 expanded, sections 1..N collapsed with hidden <ol class="ts-items">
+    // User mandate: ALL TOC sections expanded by default on SSR regardless of item count (Cmd+F friendly)
+    assert_eq!(
+        single.matches(r#"data-open="true""#).count(),
+        en.sections.len()
+    );
     assert_eq!(
         single
             .matches(r#"class="ts-sec" aria-expanded="true""#)
             .count(),
-        1
-    );
-    assert_eq!(
-        single
-            .matches(r#"class="ts-sec" aria-expanded="false""#)
-            .count(),
-        en.sections.len() - 1
-    );
-    assert_eq!(
-        single.matches(r#"class="ts-items" id=""#).count(),
         en.sections.len()
     );
-    assert_eq!(single.matches(" hidden>\n").count(), en.sections.len() - 1);
+    assert_eq!(
+        single.matches(r#"class="ts-panel" id=""#).count(),
+        en.sections.len()
+    );
+    assert!(single.contains(r#"class="toc-expand-all" aria-expanded="true""#));
+
+    // Even large 25+ / 54-item issues render ALL TOC sections expanded by default on SSR
+    let mut big = en.clone();
+    while big.items().count() < 30 {
+        let next_n = big.items().count() + 1;
+        let mut extra = en.sections[0].entries[0].clone();
+        if let ai_digest::model::SectionEntry::Item(ref mut it) = extra {
+            it.id = format!("extra-{next_n}");
+            it.number = next_n.to_string();
+        }
+        big.sections[0].entries.push(extra);
+    }
+    let big_html = render::render_digest_html(&big, Lang::En, &RenderOptions::default());
+    assert_eq!(
+        big_html.matches(r#"data-open="true""#).count(),
+        big.sections.len()
+    );
+    assert_eq!(
+        big_html
+            .matches(r#"class="ts-sec" aria-expanded="true""#)
+            .count(),
+        big.sections.len()
+    );
+    assert_eq!(
+        big_html
+            .matches(r#"class="ts-sec" aria-expanded="false""#)
+            .count(),
+        0
+    );
+
+    // Leading 3D emojis stripped cleanly from rendered section headings & TOC
+    assert_eq!(render::strip_leading_emoji("🧠 模型与架构"), "模型与架构");
+    assert_eq!(render::strip_leading_emoji("🛠️ 工具与开源"), "工具与开源");
+    assert_eq!(render::strip_leading_emoji("⚡ 算力与芯片"), "算力与芯片");
+    assert_eq!(render::strip_leading_emoji("🛡️ 安全与治理"), "安全与治理");
+    assert_eq!(
+        render::strip_leading_emoji("Models & Benchmarks"),
+        "Models & Benchmarks"
+    );
+
+    assert!(single.contains(r#"<meta name="color-scheme" content="dark">"#));
+    assert!(single.contains(r#"<script type="speculationrules">"#));
+    assert!(single.contains(r#"<div class="filter-inner">"#));
+    assert!(single.contains(r#"class="ctrl-btn to-top" data-to-top"#));
+    assert!(single.contains(r#"class="ts-num num""#));
+    assert!(single.contains(r#"class="sec-cnt num""#));
 
     // Markdown table alignment uses CSS classes ta-l/ta-c/ta-r and zero inline style=
     let table_html = render::render_markdown(
