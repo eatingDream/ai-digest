@@ -15,9 +15,9 @@
 
 ## 路由与可选加密 / Routing & Optional Encryption
 
-- **默认公开模式（`ENCRYPT=0`）**：通过隐私扫描后直接发布 `site/plain/` 到 `site/public/`，无密码输入页、无锁定按钮；`verify_decrypt.mjs` 逐页校验 HTTP 200 及明文完全一致。
-- **可选加密模式（`ENCRYPT=1`）**：每期与目录页先 gzip 再用 AES-256-GCM 加密（`"v":2,"z":"gzip"`），密钥来自 PBKDF2-HMAC-SHA256（共享随机盐，600,000 次迭代），浏览器端用 Web Crypto + `DecompressionStream` 解锁（`/en/` 路径自动显示英文解锁页）。「记住此设备」仅存派生密钥（非密码）于 `localStorage`，「锁定」清除全部缓存。
-- 站内链接无扩展名；`robots.txt` 为 `Disallow: /`；`_headers` 设置 `noindex`、`nosniff`、`no-referrer` 与缓存策略（所有 `latest` 静态页路径均为 `no-store`，刷新即可加载最新一期且 URL 保持在 `latest`）。
+- **默认公开模式（`ENCRYPT=0`）**：通过隐私扫描后直接发布 `site/plain/` 到 `site/public/`，无密码输入页、无锁定按钮；自动生成完整 GEO 产物（含 Content Signals 与 AI 爬虫规则的 `robots.txt`、`sitemap.xml`、`llms.txt`、`llms-full.txt`、`feed.xml`、JSON-LD、全站 `.md` 镜像、`.well-known/agent-skills/index.json`、`search-index.json` 与 Cloudflare Pages `_worker.js` 支持 `Accept: text/markdown` 与 `GET`/`QUERY` `/.well-known/search`）；`verify_decrypt.mjs` 逐页校验 HTTP 200 及明文完全一致。
+- **可选加密模式（`ENCRYPT=1`）**：每期与目录页先 gzip 再用 AES-256-GCM 加密（`"v":2,"z":"gzip"`），密钥来自 PBKDF2-HMAC-SHA256（共享随机盐，600,000 次迭代），浏览器端用 Web Crypto + `DecompressionStream` 解锁（`/en/` 路径自动显示英文解锁页）；自动清除所有公开 GEO 产物，保持 `robots.txt` 为 `Disallow: /` 与 `X-Robots-Tag: noindex, nofollow`。「记住此设备」仅存派生密钥（非密码）于 `localStorage`，「锁定」清除全部缓存。
+- 站内链接无扩展名；`_headers` 保留 `nosniff`、`no-referrer`、SHA-256 CSP 与缓存策略（所有 `latest` 静态页路径均为 `no-store`，刷新即可加载最新一期且 URL 保持在 `latest`；公开模式仅对 `/404.html` 保留 `X-Robots-Tag: noindex, nofollow`）。
 
 ## 发布、演示与轮换 / Publish, Demo & Rotate
 
