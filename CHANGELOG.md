@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.0.1](https://github.com/eatingDream/ai-digest/compare/v1.0.0...v1.0.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* overhaul reader width, unified typography, search bar, always-expanded TOC, and anchor-locked language switching ([#61](https://github.com/eatingDream/ai-digest/issues/61)) ([396b1a3](https://github.com/eatingDream/ai-digest/commit/396b1a3b6d2f8e10feaf9a766d3bc1661962278c))
+
 ## [1.0.0](https://github.com/eatingDream/ai-digest/compare/v0.9.0...v1.0.0) (2026-11-26)
 
 
