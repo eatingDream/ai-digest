@@ -3,7 +3,7 @@
 <!-- Platform-agnostic agent prompt: hand it to any agent runner that has shell and file read/write tools (read-only X/web search tools are optional).
      Placeholders: <SITE_DOMAIN> = site domain, <SITE_SLUG> = site path slug. The time zone comes from the DIGEST_TZ environment
      variable (default UTC). "The reader" = the person or channel that receives the digest; how the runner delivers the final
-     message is up to your deployment. Set DIGEST_LANG=en so fetch/ and publish.py produce English labels and pages. -->
+     message is up to your deployment. Set DIGEST_LANG=en so `ai-digest` produces English labels and pages. -->
 
 ## Run contract
 
@@ -12,13 +12,13 @@
 | Run from | the repository root (all paths below are relative to it) |
 | Environment | `DIGEST_LANG=en`, `DIGEST_TZ=<IANA zone>`; to deploy: `site/CONFIG` and `CLOUDFLARE_API_TOKEN` (password file only when `ENCRYPT=1`) |
 | Tools | shell, file read/write; optional: read-only X search and web fetch |
-| Inputs | the week's `digest-D.md` files, `runs/*/filter-log*.md`, `python3 fetch/weekly_late.py` output, `filter-notes.md` |
+| Inputs | the week's `digest-D.md` files, `runs/*/filter-log*.md`, `ai-digest weekly-late` output, `filter-notes.md` |
 | Outputs | `weekly-L.md`, the published page `weekly/L`, ledger updates |
-| Done when | `python3 publish.py --issue weekly/L --md weekly-L.md` exits 0 and prints the issue URL |
-| Dry run (no deploy) | `python3 render_html.py weekly-L.md /tmp/w.html` |
+| Done when | `ai-digest publish --issue weekly/L --md weekly-L.md` exits 0 and prints the issue URL |
+| Dry run (no deploy) | `ai-digest render weekly-L.md /tmp/w.html` |
 | Never | commit or print secrets, personal data of the reader in the issue, X write actions, other Cloudflare resources |
 
-You write "AI Weekly" for the reader, in English. **You run every Monday at 01:30 (local), after Sunday's daily (triggered at 00:30) has finished,** and summarise the previous week: window = last Monday 00:00 → this Monday 00:00 (local, half-open; the 7 natural days Monday–Sunday, matching the 7 dailies `digest-<Monday>.md … digest-<Sunday>.md` one to one). When done, **immediately** send the reader the URL plus a short summary (one message). First make sure Sunday's daily has **finished**: `runs/<Sunday>/filter-log.md` already contains a `## Source status` or `## Pushed` section (written by the daily's last step `ledger.py add --log` / `cat >>`, which appear later than `digest-<Sunday>.md`; looking only at the md file may show a pre-publish draft and an unbooked ledger). If not, wait a few minutes (use a wait tool, do not poll with a script), at most 20 minutes; if still missing, continue with the dailies you have and say so in `filter-log.md`.
+You write "AI Weekly" for the reader, in English. **You run every Monday at 01:30 (local), after Sunday's daily (triggered at 00:30) has finished,** and summarise the previous week: window = last Monday 00:00 → this Monday 00:00 (local, half-open; the 7 natural days Monday–Sunday, matching the 7 dailies `digest-<Monday>.md … digest-<Sunday>.md` one to one). When done, **immediately** send the reader the URL plus a short summary (one message). First make sure Sunday's daily has **finished**: `runs/<Sunday>/filter-log.md` already contains a `## Source status` or `## Pushed` section (written by the daily's last step `ai-digest ledger add --log` / `cat >>`, which appear later than `digest-<Sunday>.md`; looking only at the md file may show a pre-publish draft and an unbooked ledger). If not, wait a few minutes (use a wait tool, do not poll with a script), at most 20 minutes; if still missing, continue with the dailies you have and say so in `filter-log.md`.
 
 The weekly **complements the dailies**: with a week of hindsight re-assess what the week's dailies pushed (drop what no longer looks worth it, add what the dailies missed), and add new content from inside the window that the dailies did not cover. Daily and weekly windows are both whole natural days; there is no "Sunday 09:00–21:00 belongs to the weekly" or "Monday's daily steers clear of the weekly" overlap rule (the old rules are void). The scope is the whole AI field; training / RSI / harness are preference weights, not boundaries.
 
@@ -26,27 +26,27 @@ Working directory: the repository root. Call last Monday `M` and last Sunday `S`
 
 ## 0. Read before you start
 
-1. `filter-notes.md` (mandatory; the natural-day window rules take precedence) and `x-sources.md` (the preference profile, an example; only a tie-breaker, **no need to read it end to end** — `rg` it when needed). **Do not read `ledger.json` (~140 KB)**: the ledger is already marked into triage as ★/☆ by `fetch.py`; to check one item use `python3 fetch/ledger.py find keyword|arXiv id|URL fragment`, to look back at this week's items use `python3 fetch/ledger.py recent --days 10` (one line per item).
-2. The week's dailies `digest-*.md` and the filter logs `runs/*/filter-log*.md` (especially "Seen, not pushed (for the weekly to re-check)"). Read only the `digest-D.md` (markdown) and filter logs of the 7 days of this week; do not open pages under `html/` or `site/`, and do not read other weeks' files. **Read the 7 dailies + 7 filter logs in one block in parallel** (they do not depend on each other; do not go one by one — cost is driven by turns × context length), each file once. Likewise merge the page Reads of `triage.md` / `triage-papers.md`, the X calls and several `cand.py`/`page.py` calls (`page.py` takes several URLs at once: `page.py URL1 "URL2@@keyword"`) into a few blocks.
+1. `filter-notes.md` (mandatory; the natural-day window rules take precedence) and `x-sources.md` (the preference profile, an example; only a tie-breaker, **no need to read it end to end** — `rg` it when needed). **Do not read `ledger.json` (~140 KB)**: the ledger is already marked into triage as ★/☆ by `ai-digest fetch`; to check one item use `ai-digest ledger find keyword|arXiv id|URL fragment`, to look back at this week's items use `ai-digest ledger recent --days 10` (one line per item).
+2. The week's dailies `digest-*.md` and the filter logs `runs/*/filter-log*.md` (especially "Seen, not pushed (for the weekly to re-check)"). Read only the `digest-D.md` (markdown) and filter logs of the 7 days of this week; do not open pages under `html/` or `site/`, and do not read other weeks' files. **Read the 7 dailies + 7 filter logs in one block in parallel** (they do not depend on each other; do not go one by one — cost is driven by turns × context length), each file once. Likewise merge the page Reads of `triage.md` / `triage-papers.md`, the X calls and several `ai-digest cand` / `ai-digest page` calls (`ai-digest page` takes several URLs at once: `ai-digest page URL1 "URL2@@keyword"`) into a few blocks.
 
-## 1. The "late signal, never pushed" list (script-generated; **no re-fetching and no re-reading of the week's raw triage**)
+## 1. The "late signal, never pushed" list (CLI-generated; **no re-fetching and no re-reading of the week's raw triage**)
 
-The week's raw candidates (paper triage ~500 KB, non-paper triage ~300 KB) were already read day by day by the dailies, so the weekly does not re-read them. The weekly's gap-filling reads only this compact script-generated list (~10–20 KB), built from the fetch results that already exist for each day (`runs/<D>/fetch/`, `fetch-extra/`), with no network:
+The week's raw candidates (paper triage ~500 KB, non-paper triage ~300 KB) were already read day by day by the dailies, so the weekly does not re-read them. The weekly's gap-filling reads only this compact CLI-generated list (~10–20 KB), built from the fetch results that already exist for each day (`runs/<D>/fetch/`, `fetch-extra/`), with no network:
 
 ```bash
-python3 fetch/weekly_late.py
+ai-digest weekly-late
 ```
 
 The default window is last Monday–Sunday (`--day some-date` picks that day's week). The list contains:
 - **Papers** (not "pushed" in the ledger): HF-late items (with preference weight ≥2 or an HF organisation that is a top lab/research institution), same-day HF items with weight ≥3 and no ledger record, items that later also appeared in other sources (multi-source), items mentioned by this week's lab/news/blog candidates (including an arXiv id). ☆ = seen in a daily but not pushed (listed again only when there is a new signal).
 - **Non-papers**: lab / policy / researcher-blog items with no ledger record at all, plus tool-release / newsletter / podcast items with weight ≥3 and no record (the step the old weekly did with `jq`).
-- For abstracts/authors: `python3 fetch/cand.py --since <last Monday's date> <arXiv id|short id> …` (several at once; `--since` searches the directories of each day of the week, so you need no per-day `--dir`).
+- For abstracts/authors: `ai-digest cand --since <last Monday's date> <arXiv id|short id> …` (several at once; `--since` searches the directories of each day of the week, so you need no per-day `--dir`).
 - The list is only a lead: compare it with the week's 7 dailies and the "seen, not pushed" part of `filter-log.md`, and add an item to the weekly (mark it `🆕`) only with new hindsight evidence (independent reproduction, official release, weights published, adoption by a top lab). For suspicious items in the folded tier use `rg -i -n keyword runs/<D>/fetch/triage-papers-rest.md` to look up that day's full paper titles.
-- The list header names "missing: <date>" days — only when a day has no fetch result (that day's daily did not run), run `python3 fetch/fetch.py --daily --day <that day> --reuse` once for it (this creates that day's `fetch/`) and re-run `weekly_late.py`; handle "⚠️ weekday batch … missing" in `report.md` as in the daily (`fetch/troubleshoot-arxiv.md`). Never run `fetch.py --weekly` for the whole week.
+- The list header names "missing: <date>" days — only when a day has no fetch result (that day's daily did not run), run `ai-digest fetch --daily --day <that day> --reuse` once for it (this creates that day's `fetch/`) and re-run `ai-digest weekly-late`; handle "⚠️ weekday batch … missing" in `report.md` as in the daily (`fetch/troubleshoot-arxiv.md`). Never run `ai-digest fetch --weekly` for the whole week.
 
 ## 2. X recall (optional — capability-gated, read-only)
 
-- **Capability gate**: if read-only X connector/search tools (`search_posts_all`, `get_users_posts`, `search_news`, `get_news`) are **not** available in your agent runner, **skip this section cleanly without failing**, note `X recall: skipped (no X search tool)` in `runs/S-weekly/filter-log.md`, and proceed with the week's 7 dailies + `weekly_late.py` (~153 open feeds).
+- **Capability gate**: if read-only X connector/search tools (`search_posts_all`, `get_users_posts`, `search_news`, `get_news`) are **not** available in your agent runner, **skip this section cleanly without failing**, note `X recall: skipped (no X search tool)` in `runs/S-weekly/filter-log.md`, and proceed with the week's 7 dailies + `ai-digest weekly-late` (~155 open feeds).
 - **When X search tools ARE available**: per `fetch/x-recall.md`, run groups A, B, C once each with the whole-week window (UTC: the day before `M` at `T16:00:00Z` → `S` at `T16:00:00Z` for a UTC+8 reader; adjust to your DIGEST_TZ; page as needed), **skipping B2 and/or C1 if they still contain unreplaced `<account_1>` / `<zh_account_1>` placeholders**; run group D (topic search) and group E `search_news` (if available) to fill in industry and policy. X is only a lead; always trace it to a primary source. **Never** perform any write action (post, like, repost, follow, bookmark, DM).
 
 ## 3. Review and gap-filling
@@ -116,18 +116,18 @@ Writing and privacy rules are the same as the daily: only numbers that appear in
 
 ```bash
 # run from the repository root
-python3 publish.py --issue weekly/L --md weekly-L.md
+ai-digest publish --issue weekly/L --md weekly-L.md
 ```
 
-This command renders only this weekly's page, rebuilds the index and every issue's navigation automatically (the "This week's recap" link on the week's dailies is added and updated), and after deployment runs HTTP and page verification checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `verify check: OK` (or `decrypt check: OK` when `ENCRYPT=1`); there is no need to run `render_html.py` or `verify_decrypt.mjs` separately.
+This command renders only this weekly's page, rebuilds the index and every issue's navigation automatically (the "This week's recap" link on the week's dailies is added and updated), and after deployment runs HTTP and page verification checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `verify check: OK` (or `decrypt check: OK` when `ENCRYPT=1`); there is no need to run `ai-digest render` or `ai-digest verify` separately.
 - If the first line is `ERROR`, read the log tail it prints: a privacy-scan hit → fix the draft and re-run the same command; a deploy or check failure may be retried once, and if it still fails attach `html/weekly-L.html` to the push and say the site publish failed.
 - To re-publish after editing, re-run the same command.
 
 On a privacy-scan hit, fix the draft and start over. Never print or echo any password or token; do not touch other Cloudflare resources.
 
 **Token-saving rules**:
-- Write only this issue's single markdown file; do not read, rewrite or regenerate other issues' markdown/HTML (never open files under `html/` or `site/`). Navigation, index and other issues' pages are all updated by `publish.py`.
-- Do not `cat`/print big files (`ledger.json`, `candidates.jsonl`, `triage-papers.md`, `logs/*.log`, HTML). To query the ledger use `python3 fetch/ledger.py find keyword|arXiv id|URL fragment` (never `rg`/`jq` the whole ledger.json); to update it use `python3 fetch/ledger.py add --day <S> <<EOF …` (format in the script header; do not hand-write Python or read the whole file into context and write it back); only the weekly-specific `pushed_weekly` mark needs a small Python snippet.
+- Write only this issue's single markdown file; do not read, rewrite or regenerate other issues' markdown/HTML (never open files under `html/` or `site/`). Navigation, index and other issues' pages are all updated by `ai-digest publish`.
+- Do not `cat`/print big files (`ledger.json`, `candidates.jsonl`, `triage-papers.md`, `logs/*.log`, HTML). To query the ledger use `ai-digest ledger find keyword|arXiv id|URL fragment` (never `rg`/`jq` the whole ledger.json); to update it use `ai-digest ledger add --day <S> <<EOF …` (do not read the whole file into context and write it back); only the weekly-specific `pushed_weekly` mark needs a small JSON snippet if used.
 - The publish command prints about 6 summary lines; no `--verbose`. On failure it prints the last 15 log lines; act on them.
 
 ## 6. Write back lessons (not sent to the reader)

@@ -1,9 +1,9 @@
 # AI digest site config. No secrets here (password/salt/token live outside the repo).
-# Recommended: `python3 publish.py --init` creates site/CONFIG (public root-mounted, ENCRYPT=0).
-# For an opt-in password-protected private site: `python3 publish.py --init --encrypt`
+# Recommended: `ai-digest publish --init` creates site/CONFIG (public root-mounted, ENCRYPT=0).
+# For an opt-in password-protected private site: `ai-digest publish --init --encrypt`
 # (or set ENCRYPT=1 and a random >= 8 char SLUG).
 # If copying this file (`cp site/CONFIG.example site/CONFIG`), replace every <...> placeholder
-# before running publish.py (leave ACCOUNT_ID empty when only running --prepare-only).
+# before running `ai-digest publish` (leave ACCOUNT_ID empty when only running --prepare-only).
 PLATFORM=pages
 PROJECT=ai-digest
 ACCOUNT_ID=<CF_ACCOUNT_ID>

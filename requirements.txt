@@ -1,5 +1,0 @@
-# Runtime
-requests>=2.31
-lxml>=5.0
-markdown>=3.5
-cryptography>=42

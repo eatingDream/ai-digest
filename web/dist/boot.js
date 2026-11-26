@@ -1,0 +1,1 @@
+"use strict";(()=>{try{let t=localStorage.getItem("digest-theme");(t==="light"||t==="dark")&&(document.documentElement.dataset.theme=t);let c=t==="dark"||t!=="light"&&typeof window.matchMedia=="function"&&window.matchMedia("(prefers-color-scheme: dark)").matches,e=document.querySelector('meta[name="theme-color"]');e&&e.setAttribute("content",c?"#141311":"#faf8f4")}catch{}})();
