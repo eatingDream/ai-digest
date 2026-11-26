@@ -514,13 +514,20 @@ function initReaderPane(
     }
   };
 
+  const getFilterHeight = (): number => {
+    if (!filterDrawerEl || !filterDrawerEl.classList.contains("is-open")) return 0;
+    const inner = filterDrawerEl.querySelector<HTMLElement>(".filter-inner");
+    const raw = Math.max(
+      Math.round(filterDrawerEl.getBoundingClientRect().height),
+      inner?.scrollHeight ?? 0
+    );
+    return Math.min(raw, Math.max(0, window.innerHeight - mast.getMastHeight()));
+  };
+
   const updateSpy = (): void => {
     if (!isActive() || spyLocked) return;
     if (spyEntries.length === 0) return;
-    const filterH =
-      filterDrawerEl && filterDrawerEl.classList.contains("is-open")
-        ? Math.round(filterDrawerEl.getBoundingClientRect().height)
-        : 0;
+    const filterH = getFilterHeight();
     const probeY = window.scrollY + mast.getMastOffset() + filterH + 32;
     let lo = 0;
     let hi = spyEntries.length - 1;
@@ -557,10 +564,7 @@ function initReaderPane(
     const doScroll = (): void => {
       const targetY = el.getBoundingClientRect().top + window.scrollY;
       const goingDown = targetY > window.scrollY && !mast.isPinned();
-      const filterH =
-        filterDrawerEl && filterDrawerEl.classList.contains("is-open")
-          ? Math.round(filterDrawerEl.getBoundingClientRect().height)
-          : 0;
+      const filterH = getFilterHeight();
       const visibleHeaderH =
         (mastEl
           ? Math.round(mastEl.getBoundingClientRect().height)

@@ -100,14 +100,14 @@ jobs:
           key: ${{ matrix.target }}
       - name: Build release binary
         run: |
-          RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src" \
+          RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$(pwd -P)=/src --remap-path-prefix=$PWD=/src" \
             cargo build --release --locked --target "${{ matrix.target }}"
       - name: Verify clean binary strings and native --version
         run: |
           bin="target/${{ matrix.target }}/release/ai-digest"
-          if strings "$bin" | grep -Eq '(/Users/|/home/runner)'; then
+          if strings "$bin" | grep -Eq '(/Users/|/home/|/private/(tmp|var)/|C:\\Users\\)'; then
             echo "error: local path leaked into $bin" >&2
-            strings "$bin" | grep -E '(/Users/|/home/runner)' | head -n 20 >&2
+            strings "$bin" | grep -E '(/Users/|/home/|/private/(tmp|var)/|C:\\Users\\)' | head -n 20 >&2
             exit 1
           fi
           archive="ai-digest-${TAG}-${{ matrix.target }}.tar.gz"

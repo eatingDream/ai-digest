@@ -63,7 +63,7 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
       <button type="button" class="ts-sec" aria-expanded="true" aria-controls="ts-list-sec-1">
         <span class="ts-no num">01</span><span class="ts-title">Models</span><span class="ts-cnt num" data-total="1">1</span>
       </button>
-      <div class="ts-panel" id="ts-list-sec-1"><ol class="ts-items"><li><a href="#item-1"><span class="ts-num num">1.</span><span>Title<span class="dot-hot"></span></span></a></li></ol></div>
+      <div class="ts-panel" id="ts-list-sec-1"><ol class="ts-items"><li><a href="#item-1" title="Title"><span class="ts-num num">1.</span><span class="ts-title">Title</span><span class="dot-hot"></span></a></li></ol></div>
     </div>
   </nav>
   <main id="main" class="prose-col">
@@ -354,26 +354,29 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(mobileSlice).toContain("@media(prefers-reduced-motion:reduce)");
     expect(mobileSlice).toContain(".toc-side{opacity:0");
 
-    // Wide layout (>= 84-88% viewport), elevated cards & TOC, no empty 5th rail
-    expect(readerCss).toContain("min(1480px,88vw)");
-    expect(readerCss).toContain("clamp(276px,21vw,320px) minmax(0,1fr)");
+    // Balanced wide editorial shell (~84-88% on 1440px, capped at 880px prose), flush TOC rail & calm stream
+    expect(readerCss).toContain("min(1320px,88vw)");
+    expect(readerCss).toContain("clamp(290px,22vw,330px) minmax(0,880px)");
+    expect(readerCss).toContain(".folio-sections{display:none}");
+    expect(readerCss).toContain("scrollbar-color:var(");
+    expect(readerCss).toContain("max-width:760px");
     expect(readerCss).not.toContain("grid-column:3/6");
     expect(readerCss).not.toContain("text-wrap:balance");
 
-    // Smooth CSS Grid accordions, filter drawer, cross-document view transitions, and desktop to-top
+    // Smooth CSS Grid accordions, fixed overlay filter drawer, cross-document view transitions, and desktop to-top
     expect(readerCss).toContain("@view-transition{navigation:auto}");
     expect(readerCss).toContain("@view-transition{navigation:none}");
     expect(readerCss).toContain("::view-transition-group(root){animation:none}");
     expect(readerCss).toContain("view-transition-name:mast");
     expect(readerCss).toContain(".ts-panel{display:grid;grid:0fr/1fr");
-    expect(readerCss).toContain(".filter-drawer{display:grid;grid:0fr/1fr;position:sticky");
+    expect(readerCss).toContain(".filter-drawer{display:grid;grid:0fr/1fr;position:fixed;inset:var(--mast-h) 0 auto");
     expect(readerCss).toContain(".sr-only{position:fixed;top:0;left:0");
     expect(readerCss).toContain("::-webkit-search-cancel-button");
     expect(readerCss).toContain(".is-arrived{animation:");
     expect(readerCss).toContain(".to-top{position:fixed");
 
     const indexCss = readFileSync(join(DIST, "index.css"), "utf8");
-    expect(indexCss).toContain("min(1480px,88vw)");
+    expect(indexCss).toContain("min(1320px,88vw)");
   });
 });
 
