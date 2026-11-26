@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [0.8.1](https://github.com/eatingDream/ai-digest/compare/v0.8.0...v0.8.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **arch:** decouple fetch helpers, crypto stage, and demo SiteContext ([#35](https://github.com/eatingDream/ai-digest/issues/35)) ([9cb990b](https://github.com/eatingDream/ai-digest/commit/9cb990be709dcb4141ecc1fe2ad5632dee749718))
+
 ## [0.8.0](https://github.com/eatingDream/ai-digest/compare/v0.7.0...v0.8.0) (2026-11-25)
 
 
