@@ -111,6 +111,7 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+import geo
 import i18n
 from render_html import FAVICON_SVG, _TAG_SPLIT_RE
 import site_crypto
@@ -166,10 +167,14 @@ WRANGLER_VERSION = os.environ.get("WRANGLER_VERSION", "4.166.0").strip() or "4.1
 FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/favicon.svg">'
 
 
-def _finalize_csp_headers(ctx: "SiteContext | None" = None) -> None:
+def _finalize_csp_headers(
+    ctx: "SiteContext | None" = None, *, public_indexable: bool = False
+) -> None:
     """Replace script-src 'unsafe-inline' in PUBLIC/_headers with exact build-time SHA-256 hashes."""
     c = ctx or _default_ctx()
-    site_crypto.finalize_csp_headers(c.public, c.plain)
+    site_crypto.finalize_csp_headers(
+        c.public, c.plain, public_indexable=public_indexable
+    )
 
 
 # Output language of the site (en | zh-CN); resolved by load_config() / --lang, see i18n.py.
@@ -200,6 +205,8 @@ class SiteContext:
     password_override: str | None = None
     salt_override: bytes | None = None
     changed_pages: list[str] = field(default_factory=list)
+    geo_pages: list[geo.GeoPage] = field(default_factory=list)
+    defer_geo: bool = False
     env_overrides: dict[str, str | None] | None = None
 
     def env_get(self, key: str, default: str = "") -> str:
@@ -474,6 +481,10 @@ _ENV_KEYS = {
     "DIGEST_LANG_ALT": "LANG_ALT",
     "DIGEST_ROOT_LATEST": "ROOT_LATEST",
     "DIGEST_ENCRYPT": "ENCRYPT",
+    "DIGEST_GEO_AI_TRAIN": "GEO_AI_TRAIN",
+    "DIGEST_CONTENT_SIGNAL": "CONTENT_SIGNAL",
+    "DIGEST_GEO_WORKER": "GEO_WORKER",
+    "DIGEST_GEO_SEARCH": "GEO_SEARCH",
 }
 
 _TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -502,7 +513,9 @@ def _read_config_raw(ctx: SiteContext | None = None) -> dict[str, str]:
 
 _RESERVED_SLUGS = frozenset({
     ".", "..", "_headers", "_redirects", "_worker.js", "_routes.json",
-    "robots.txt", "404.html", "favicon.svg", "zh", "en", "daily", "weekly", "latest",
+    "robots.txt", "404.html", "favicon.svg", "sitemap.xml", "llms.txt",
+    "llms-full.txt", "feed.xml", "search-index.json",
+    "zh", "en", "daily", "weekly", "latest",
 })
 
 
@@ -606,6 +619,12 @@ def load_config(ctx: SiteContext | None = None) -> dict[str, str]:
     data["SLUG"] = slug
     data["ENCRYPT"] = "1" if _parse_bool(data.get("ENCRYPT")) else "0"
     data["ROOT_LATEST"] = "1" if _parse_bool(data.get("ROOT_LATEST")) else "0"
+    data["GEO_SEARCH"] = (
+        "0" if data.get("GEO_SEARCH", "").strip().lower() in ("0", "false", "no", "off") else "1"
+    )
+    data["GEO_WORKER"] = (
+        "0" if data.get("GEO_WORKER", "").strip().lower() in ("0", "false", "no", "off") else "1"
+    )
     try:
         parsed_alt = _parse_lang_alt(data.get("LANG_ALT"), resolved_lang)
     except ValueError as e:
@@ -615,6 +634,20 @@ def load_config(ctx: SiteContext | None = None) -> dict[str, str]:
         LANG = resolved_lang
         LANG_ALT = parsed_alt
     return data
+
+
+def _geo_settings(cfg: dict[str, str]) -> tuple[str, str, bool, bool, bool]:
+    """Return (origin, content_signal, allow_train, search_enabled, worker_enabled)."""
+    origin = geo.site_origin(cfg.get("DOMAIN") or DOMAIN_DEFAULT)
+    sig, allow_train = geo.parse_content_signal(
+        cfg.get("CONTENT_SIGNAL"), ai_train=cfg.get("GEO_AI_TRAIN")
+    )
+    search_enabled = _parse_bool(cfg.get("GEO_SEARCH", "1"))
+    worker_enabled = (
+        cfg.get("PLATFORM", PLATFORM).strip().lower() == "pages"
+        and _parse_bool(cfg.get("GEO_WORKER", "1"))
+    )
+    return origin, sig, allow_train, search_enabled, worker_enabled
 
 
 def write_config(data: dict[str, str], ctx: SiteContext | None = None) -> None:
@@ -1255,15 +1288,14 @@ def write_static_root(
     *,
     root_latest: bool | None = None,
     has_lang_paths: bool | None = None,
+    encrypted: bool | None = None,
+    cfg: dict[str, str] | None = None,
     ctx: SiteContext | None = None,
 ) -> None:
     c = ctx or _default_ctx()
     c.public.mkdir(parents=True, exist_ok=True)
-    (c.public / "robots.txt").write_text(
-        "User-agent: *\nDisallow: /\n", encoding="utf-8"
-    )
     if slug is None:
-        cfg = load_config(ctx)
+        cfg = cfg or load_config(ctx)
         slug = cfg["SLUG"]
         if root_latest is None:
             root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
@@ -1273,6 +1305,21 @@ def write_static_root(
             root_latest = _parse_bool(env_val)
         else:
             root_latest = _parse_bool(_read_config_raw(c).get("ROOT_LATEST"))
+    if encrypted is None:
+        if cfg is not None:
+            is_enc = _parse_bool(cfg.get("ENCRYPT"))
+        else:
+            env_enc = c.env_get("DIGEST_ENCRYPT", "").strip()
+            raw_cfg = _read_config_raw(c)
+            if env_enc:
+                is_enc = _parse_bool(env_enc)
+            elif "ENCRYPT" in raw_cfg:
+                is_enc = _parse_bool(raw_cfg.get("ENCRYPT"))
+            else:
+                is_enc = True
+    else:
+        is_enc = bool(encrypted)
+
     if issues is None:
         issues = list_sources(ctx=c) if c.sources.is_dir() else []
     if has_lang_paths is None:
@@ -1283,6 +1330,24 @@ def write_static_root(
         headers_text += _ROOT_LATEST_HEADERS
         if has_lang_paths:
             headers_text += _ROOT_LANG_LATEST_HEADERS
+    if is_enc:
+        (c.public / "robots.txt").write_text(
+            "User-agent: *\nDisallow: /\n", encoding="utf-8"
+        )
+        geo.clean_stale_geo_files(c.public, keep_rels=None)
+    else:
+        eff_cfg = cfg if cfg is not None else _read_config_raw(c)
+        origin, sig, allow_train, search_enabled, _ = _geo_settings(eff_cfg)
+        (c.public / "robots.txt").write_text(
+            geo.render_robots_txt(
+                origin=origin, content_signal=sig, allow_train=allow_train
+            ),
+            encoding="utf-8",
+        )
+        headers_text += geo.render_geo_headers(
+            content_signal=sig,
+            link_header=geo.build_link_header(search_enabled=search_enabled),
+        )
     (c.public / "_headers").write_text(headers_text, encoding="utf-8")
     (c.public / "404.html").write_text(
         "<!DOCTYPE html>\n"
@@ -2289,12 +2354,32 @@ def _render_issue_page(
     url_prefix: str | None = None,
     lang_href: str | None = None,
     lang_code: str | None = None,
+    geo_page: geo.GeoPage | None = None,
+    geo_origin: str = "",
+    geo_search: bool = True,
     ctx: SiteContext | None = None,
 ) -> str:
+    c = ctx or _default_ctx()
     abs_links = alias_rel is not None
     html = issue.source.read_text(encoding="utf-8")
     html = strip_injections(html)
-    html = ensure_noindex(html)
+    if geo_page is not None:
+        eff_lang = i18n.normalize_lang(lang) if lang is not None else c.lang
+        parsed = geo.parse_issue_html(html, lang=eff_lang)
+        geo_page.parsed = parsed
+        jld = geo.build_issue_json_ld(parsed, page=geo_page, origin=geo_origin)
+        page_title = f"{parsed['title']} — AI Digest"
+        html = geo.inject_geo_head(
+            html,
+            page=geo_page,
+            origin=geo_origin,
+            page_title=page_title,
+            description=parsed["description"],
+            search_enabled=geo_search,
+            json_ld=jld,
+        )
+    else:
+        html = ensure_noindex(html)
     html = ensure_favicon(html)
     html = ensure_nav_css(html)
     html = inject_nav(
@@ -2308,23 +2393,77 @@ def _render_issue_page(
         url_prefix=url_prefix,
         lang_href=lang_href,
         lang_code=lang_code,
-        ctx=ctx,
+        ctx=c,
     )
     html = inject_perf_hints(
-        html, issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix, ctx=ctx
+        html, issue, issues, slug=slug, abs_links=abs_links, url_prefix=url_prefix, ctx=c
     )
     return minify_css(html)
 
 
-def rebuild_all(cfg: dict[str, str], ctx: SiteContext | None = None) -> list[Issue]:
+def _apply_index_geo(
+    html: str,
+    *,
+    page: geo.GeoPage,
+    origin: str,
+    issues_meta: list[dict],
+    search_enabled: bool = True,
+) -> str:
+    if page.lang == "zh-CN":
+        title = "AI 精选日报与周报归档 — AI Digest"
+        desc = "每日与每周精选前沿 AI 动态，覆盖模型发布、研究论文、工程实践与产业趋势。"
+    else:
+        title = "Curated AI Briefings Archive — AI Digest"
+        desc = (
+            "Curated daily and weekly briefings on frontier AI models, research papers, "
+            "systems engineering, and industry developments."
+        )
+    jld = geo.build_index_json_ld(
+        page=page, origin=origin, issues_meta=issues_meta, search_enabled=search_enabled
+    )
+    return geo.inject_geo_head(
+        html,
+        page=page,
+        origin=origin,
+        page_title=title,
+        description=desc,
+        search_enabled=search_enabled,
+        json_ld=jld,
+    )
+
+
+def _rel_to_url_path(rel_html: str) -> str:
+    rel = rel_html.lstrip("/")
+    if rel == "index.html":
+        return "/"
+    if rel.endswith("/index.html"):
+        return "/" + rel[: -len("index.html")]
+    if rel.endswith(".html"):
+        return "/" + rel[:-5]
+    return "/" + rel
+
+
+def _rel_to_md(rel_html: str) -> str:
+    rel = rel_html.lstrip("/")
+    return (rel[:-5] + ".md") if rel.endswith(".html") else (rel + ".md")
+
+
+def rebuild_all(
+    cfg: dict[str, str],
+    ctx: SiteContext | None = None,
+) -> list[Issue]:
     """Build pure plaintext (nav already injected, no encryption/lock logic) under site/plain/.
 
     Does not write issue HTML into public/; publish_plain_pages or site_crypto.encrypt_all_pages does that.
-    Root files (robots.txt, 404, base _headers, _redirects) are written unencrypted to public/.
+    Root files (robots.txt, 404, base _headers, _redirects, and public GEO assets when ENCRYPT=0)
+    are written unencrypted to public/.
     """
     c = ctx or _default_ctx()
+    c.geo_pages.clear()
     slug = cfg["SLUG"]
+    is_enc = _parse_bool(cfg.get("ENCRYPT"))
     root_latest = _parse_bool(cfg.get("ROOT_LATEST"))
+    origin, sig, allow_train, search_enabled, _ = _geo_settings(cfg)
     issues = list_sources(ctx=c)
     en_issues = list_en_sources(ctx=c)
     has_lang_paths = bool(en_issues) and c.lang == "zh-CN"
@@ -2333,6 +2472,8 @@ def rebuild_all(cfg: dict[str, str], ctx: SiteContext | None = None) -> list[Iss
         issues=issues,
         root_latest=root_latest,
         has_lang_paths=has_lang_paths,
+        encrypted=is_enc,
+        cfg=cfg,
         ctx=c,
     )
     plain_dir = _site_dir(c.plain, slug)
@@ -2346,6 +2487,7 @@ def rebuild_all(cfg: dict[str, str], ctx: SiteContext | None = None) -> list[Iss
     zh_keys = {(i.kind, i.label) for i in issues}
     en_daily, en_weekly, en_any = _latest_issues(en_issues)
     zh_daily, zh_weekly, zh_any = _latest_issues(issues)
+    base_prefix = _url_prefix(slug)
     zh_base = _url_prefix(slug, "zh")
     en_base = _url_prefix(slug, "en")
 
@@ -2368,46 +2510,145 @@ def rebuild_all(cfg: dict[str, str], ctx: SiteContext | None = None) -> list[Iss
             return f"{base_zh}/weekly/latest" if zh_weekly else (f"{base_zh}/latest" if root_level else f"{base_zh}/")
         return f"{base_zh}/latest" if zh_any else (f"{base_zh}/latest" if root_level else f"{base_zh}/")
 
+    def _issue_alts(kind: str, label: str, lang_cur: str, self_path: str) -> dict[str, str]:
+        if has_lang_paths:
+            alts: dict[str, str] = {}
+            if (kind, label) in zh_keys:
+                alts["zh-CN"] = f"{zh_base}/{kind}/{label}"
+                alts["x-default"] = f"{zh_base}/{kind}/{label}"
+            if (kind, label) in en_keys:
+                alts["en"] = f"{en_base}/{kind}/{label}"
+                alts.setdefault("x-default", f"{en_base}/{kind}/{label}")
+            return alts
+        if c.lang_alt:
+            alt_base = c.lang_alt["base"].rstrip("/")
+            return {
+                lang_cur: self_path,
+                c.lang_alt["code"]: f"{alt_base}/{kind}/{label}",
+            }
+        return {}
+
+    def _index_alts(lang_cur: str, self_path: str) -> dict[str, str]:
+        if has_lang_paths:
+            return {
+                "zh-CN": f"{zh_base}/",
+                "en": f"{en_base}/",
+                "x-default": f"{base_prefix}/",
+            }
+        if c.lang_alt:
+            return {lang_cur: self_path, c.lang_alt["code"]: c.lang_alt["base"]}
+        return {}
+
+    def _reg_geo(page: geo.GeoPage | None) -> geo.GeoPage | None:
+        if page is not None:
+            c.geo_pages.append(page)
+        return page
+
     # 1. Legacy unprefixed paths under plain_dir (root when SLUG='', or /{slug}/ when SLUG is set)
+    leg_issues_meta: list[dict] = []
     for issue in issues:
         leg_href = None if c.lang_alt else (_en_target_for(issue.kind, issue.label) if has_lang_paths else None)
         leg_code = "en" if leg_href else None
-        html = _render_issue_page(
-            issue, issues, slug=slug, lang_href=leg_href, lang_code=leg_code, ctx=c
-        )
         dest = plain_dir / issue.kind / f"{issue.label}.html"
+        rel_html = dest.relative_to(c.plain).as_posix()
+        gp: geo.GeoPage | None = None
+        if not is_enc:
+            url_p = _rel_to_url_path(rel_html)
+            canon_p = f"{zh_base}/{issue.kind}/{issue.label}" if has_lang_paths else url_p
+            gp = _reg_geo(geo.GeoPage(
+                rel_html=rel_html,
+                url_path=url_p,
+                canonical_path=canon_p,
+                rel_md=_rel_to_md(rel_html),
+                lang=c.lang,
+                page_type="issue",
+                kind=issue.kind,
+                label=issue.label,
+                date_iso=issue.end.isoformat(),
+                is_canonical=not has_lang_paths,
+                alternates=_issue_alts(issue.kind, issue.label, c.lang, url_p),
+                feed_path="/zh/feed.xml" if has_lang_paths else "/feed.xml",
+            ))
+        html = _render_issue_page(
+            issue, issues, slug=slug, lang_href=leg_href, lang_code=leg_code,
+            geo_page=gp, geo_origin=origin, geo_search=search_enabled, ctx=c,
+        )
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(html, encoding="utf-8")
+        if gp and gp.parsed:
+            leg_issues_meta.append({"title": gp.parsed["title"], "url_path": gp.canonical_path})
 
     for rel_path, issue, lang_rel, is_root in _latest_alias_specs(
         slug, issues, include_root=root_latest and bool(slug)
     ):
         dest = c.plain / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
+        gp_lat: geo.GeoPage | None = None
+        if not is_enc:
+            url_p = _rel_to_url_path(rel_path)
+            canon_p = f"{zh_base}/{issue.kind}/{issue.label}" if has_lang_paths else f"{base_prefix}/{issue.kind}/{issue.label}"
+            gp_lat = _reg_geo(geo.GeoPage(
+                rel_html=rel_path,
+                url_path=url_p,
+                canonical_path=canon_p,
+                rel_md=_rel_to_md(rel_path),
+                lang=c.lang,
+                page_type="issue",
+                kind=issue.kind,
+                label=issue.label,
+                date_iso=issue.end.isoformat(),
+                is_canonical=False,
+                alternates=_issue_alts(issue.kind, issue.label, c.lang, canon_p),
+                feed_path="/zh/feed.xml" if has_lang_paths else "/feed.xml",
+            ))
         if is_root and has_lang_paths:
             lh = _en_latest_target(lang_rel, root_level=True)
             html = _render_issue_page(
                 issue, issues, slug=slug, alias_rel=lang_rel,
-                url_prefix=zh_base, lang_href=lh, lang_code="en", ctx=c,
+                url_prefix=zh_base, lang_href=lh, lang_code="en",
+                geo_page=gp_lat, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
         elif not is_root and has_lang_paths and not c.lang_alt:
             lh = _en_latest_target(lang_rel, root_level=False)
             html = _render_issue_page(
                 issue, issues, slug=slug, alias_rel=lang_rel,
-                lang_href=lh, lang_code="en", ctx=c,
+                lang_href=lh, lang_code="en",
+                geo_page=gp_lat, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
         else:
             html = _render_issue_page(
-                issue, issues, slug=slug, alias_rel=lang_rel, ctx=c
+                issue, issues, slug=slug, alias_rel=lang_rel,
+                geo_page=gp_lat, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
         dest.write_text(html, encoding="utf-8")
 
     leg_idx_href = None if c.lang_alt else (f"{en_base}/" if has_lang_paths else None)
     leg_idx_code = "en" if leg_idx_href else None
-    (plain_dir / "index.html").write_text(
-        minify_css(index_html(cfg, issues, lang_href=leg_idx_href, lang_code=leg_idx_code, ctx=c)),
-        encoding="utf-8",
-    )
+    idx_dest = plain_dir / "index.html"
+    idx_html = index_html(cfg, issues, lang_href=leg_idx_href, lang_code=leg_idx_code, ctx=c)
+    if not is_enc:
+        idx_rel = idx_dest.relative_to(c.plain).as_posix()
+        idx_url = _rel_to_url_path(idx_rel)
+        idx_gp = _reg_geo(geo.GeoPage(
+            rel_html=idx_rel,
+            url_path=idx_url,
+            canonical_path=idx_url,
+            rel_md=_rel_to_md(idx_rel),
+            lang=c.lang,
+            page_type="index",
+            date_iso=zh_any.end.isoformat() if zh_any else "",
+            is_canonical=True,
+            alternates=_index_alts(c.lang, idx_url),
+            feed_path="/feed.xml",
+        ))
+        idx_html = _apply_index_geo(
+            idx_html,
+            page=idx_gp,
+            origin=origin,
+            issues_meta=leg_issues_meta,
+            search_enabled=search_enabled,
+        )
+    idx_dest.write_text(minify_css(idx_html), encoding="utf-8")
 
     # 2. Symmetric /zh/ and /en/ URL trees whenever companion English sources exist
     if has_lang_paths:
@@ -2416,66 +2657,239 @@ def rebuild_all(cfg: dict[str, str], ctx: SiteContext | None = None) -> list[Iss
         for d in (zh_dir / "daily", zh_dir / "weekly", en_dir / "daily", en_dir / "weekly"):
             d.mkdir(parents=True, exist_ok=True)
 
+        zh_meta: list[dict] = []
         for issue in issues:
+            dest = zh_dir / issue.kind / f"{issue.label}.html"
+            rel_html = dest.relative_to(c.plain).as_posix()
+            gp_zh: geo.GeoPage | None = None
+            if not is_enc:
+                url_p = _rel_to_url_path(rel_html)
+                gp_zh = _reg_geo(geo.GeoPage(
+                    rel_html=rel_html,
+                    url_path=url_p,
+                    canonical_path=url_p,
+                    rel_md=_rel_to_md(rel_html),
+                    lang="zh-CN",
+                    page_type="issue",
+                    kind=issue.kind,
+                    label=issue.label,
+                    date_iso=issue.end.isoformat(),
+                    is_canonical=True,
+                    alternates=_issue_alts(issue.kind, issue.label, "zh-CN", url_p),
+                    feed_path="/zh/feed.xml",
+                ))
             html = _render_issue_page(
                 issue, issues, slug=slug, lang="zh-CN",
-                lang_href=_en_target_for(issue.kind, issue.label), lang_code="en", ctx=c,
+                lang_href=_en_target_for(issue.kind, issue.label), lang_code="en",
+                geo_page=gp_zh, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
-            (zh_dir / issue.kind / f"{issue.label}.html").write_text(html, encoding="utf-8")
-        (zh_dir / "index.html").write_text(
-            minify_css(index_html(cfg, issues, lang="zh-CN", lang_href=f"{en_base}/", lang_code="en", ctx=c)),
-            encoding="utf-8",
-        )
+            dest.write_text(html, encoding="utf-8")
+            if gp_zh and gp_zh.parsed:
+                zh_meta.append({"title": gp_zh.parsed["title"], "url_path": gp_zh.canonical_path})
+
+        zh_idx_dest = zh_dir / "index.html"
+        zh_idx_html = index_html(cfg, issues, lang="zh-CN", lang_href=f"{en_base}/", lang_code="en", ctx=c)
+        if not is_enc:
+            rel_html = zh_idx_dest.relative_to(c.plain).as_posix()
+            url_p = _rel_to_url_path(rel_html)
+            gp_zh_idx = _reg_geo(geo.GeoPage(
+                rel_html=rel_html,
+                url_path=url_p,
+                canonical_path=url_p,
+                rel_md=_rel_to_md(rel_html),
+                lang="zh-CN",
+                page_type="index",
+                date_iso=zh_any.end.isoformat() if zh_any else "",
+                is_canonical=True,
+                alternates=_index_alts("zh-CN", url_p),
+                feed_path="/zh/feed.xml",
+            ))
+            zh_idx_html = _apply_index_geo(
+                zh_idx_html, page=gp_zh_idx, origin=origin, issues_meta=zh_meta, search_enabled=search_enabled
+            )
+        zh_idx_dest.write_text(minify_css(zh_idx_html), encoding="utf-8")
 
         for alias_rel, issue in (("daily/latest", zh_daily), ("weekly/latest", zh_weekly), ("latest", zh_any)):
             if not issue:
                 continue
+            p_slug = zh_dir / f"{alias_rel}.html"
+            rel_s = p_slug.relative_to(c.plain).as_posix()
+            gp_s = (
+                _reg_geo(geo.GeoPage(
+                    rel_html=rel_s,
+                    url_path=_rel_to_url_path(rel_s),
+                    canonical_path=f"{zh_base}/{issue.kind}/{issue.label}",
+                    rel_md=_rel_to_md(rel_s),
+                    lang="zh-CN",
+                    page_type="issue",
+                    kind=issue.kind,
+                    label=issue.label,
+                    date_iso=issue.end.isoformat(),
+                    is_canonical=False,
+                    alternates=_issue_alts(issue.kind, issue.label, "zh-CN", f"{zh_base}/{issue.kind}/{issue.label}"),
+                    feed_path="/zh/feed.xml",
+                ))
+                if not is_enc
+                else None
+            )
             html_slug = _render_issue_page(
                 issue, issues, slug=slug, alias_rel=alias_rel, lang="zh-CN",
-                url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=False), lang_code="en", ctx=c,
+                url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=False), lang_code="en",
+                geo_page=gp_s, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
-            p_slug = zh_dir / f"{alias_rel}.html"
             p_slug.parent.mkdir(parents=True, exist_ok=True)
             p_slug.write_text(html_slug, encoding="utf-8")
             if root_latest and slug:
+                p_root = c.plain / "zh" / f"{alias_rel}.html"
+                rel_r = p_root.relative_to(c.plain).as_posix()
+                gp_r = (
+                    _reg_geo(geo.GeoPage(
+                        rel_html=rel_r,
+                        url_path=_rel_to_url_path(rel_r),
+                        canonical_path=f"{zh_base}/{issue.kind}/{issue.label}",
+                        rel_md=_rel_to_md(rel_r),
+                        lang="zh-CN",
+                        page_type="issue",
+                        kind=issue.kind,
+                        label=issue.label,
+                        date_iso=issue.end.isoformat(),
+                        is_canonical=False,
+                        alternates=_issue_alts(issue.kind, issue.label, "zh-CN", f"{zh_base}/{issue.kind}/{issue.label}"),
+                        feed_path="/zh/feed.xml",
+                    ))
+                    if not is_enc
+                    else None
+                )
                 html_root = _render_issue_page(
                     issue, issues, slug=slug, alias_rel=alias_rel, lang="zh-CN",
-                    url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=True), lang_code="en", ctx=c,
+                    url_prefix=zh_base, lang_href=_en_latest_target(alias_rel, root_level=True), lang_code="en",
+                    geo_page=gp_r, geo_origin=origin, geo_search=search_enabled, ctx=c,
                 )
-                p_root = c.plain / "zh" / f"{alias_rel}.html"
                 p_root.parent.mkdir(parents=True, exist_ok=True)
                 p_root.write_text(html_root, encoding="utf-8")
 
+        en_meta: list[dict] = []
         for issue in en_issues:
             zh_href = f"{zh_base}/{issue.kind}/{issue.label}" if (issue.kind, issue.label) in zh_keys else f"{zh_base}/"
+            dest = en_dir / issue.kind / f"{issue.label}.html"
+            rel_html = dest.relative_to(c.plain).as_posix()
+            gp_en: geo.GeoPage | None = None
+            if not is_enc:
+                url_p = _rel_to_url_path(rel_html)
+                gp_en = _reg_geo(geo.GeoPage(
+                    rel_html=rel_html,
+                    url_path=url_p,
+                    canonical_path=url_p,
+                    rel_md=_rel_to_md(rel_html),
+                    lang="en",
+                    page_type="issue",
+                    kind=issue.kind,
+                    label=issue.label,
+                    date_iso=issue.end.isoformat(),
+                    is_canonical=True,
+                    alternates=_issue_alts(issue.kind, issue.label, "en", url_p),
+                    feed_path="/en/feed.xml",
+                ))
             html = _render_issue_page(
                 issue, en_issues, slug=slug, lang="en",
-                lang_href=zh_href, lang_code="zh-CN", ctx=c,
+                lang_href=zh_href, lang_code="zh-CN",
+                geo_page=gp_en, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
-            (en_dir / issue.kind / f"{issue.label}.html").write_text(html, encoding="utf-8")
-        (en_dir / "index.html").write_text(
-            minify_css(index_html(cfg, en_issues, lang="en", lang_href=f"{zh_base}/", lang_code="zh-CN", ctx=c)),
-            encoding="utf-8",
-        )
+            dest.write_text(html, encoding="utf-8")
+            if gp_en and gp_en.parsed:
+                en_meta.append({"title": gp_en.parsed["title"], "url_path": gp_en.canonical_path})
+
+        en_idx_dest = en_dir / "index.html"
+        en_idx_html = index_html(cfg, en_issues, lang="en", lang_href=f"{zh_base}/", lang_code="zh-CN", ctx=c)
+        if not is_enc:
+            rel_html = en_idx_dest.relative_to(c.plain).as_posix()
+            url_p = _rel_to_url_path(rel_html)
+            gp_en_idx = _reg_geo(geo.GeoPage(
+                rel_html=rel_html,
+                url_path=url_p,
+                canonical_path=url_p,
+                rel_md=_rel_to_md(rel_html),
+                lang="en",
+                page_type="index",
+                date_iso=en_any.end.isoformat() if en_any else "",
+                is_canonical=True,
+                alternates=_index_alts("en", url_p),
+                feed_path="/en/feed.xml",
+            ))
+            en_idx_html = _apply_index_geo(
+                en_idx_html, page=gp_en_idx, origin=origin, issues_meta=en_meta, search_enabled=search_enabled
+            )
+        en_idx_dest.write_text(minify_css(en_idx_html), encoding="utf-8")
 
         for alias_rel, issue in (("daily/latest", en_daily), ("weekly/latest", en_weekly), ("latest", en_any)):
             if not issue:
                 continue
+            p_slug = en_dir / f"{alias_rel}.html"
+            rel_s = p_slug.relative_to(c.plain).as_posix()
+            gp_s = (
+                _reg_geo(geo.GeoPage(
+                    rel_html=rel_s,
+                    url_path=_rel_to_url_path(rel_s),
+                    canonical_path=f"{en_base}/{issue.kind}/{issue.label}",
+                    rel_md=_rel_to_md(rel_s),
+                    lang="en",
+                    page_type="issue",
+                    kind=issue.kind,
+                    label=issue.label,
+                    date_iso=issue.end.isoformat(),
+                    is_canonical=False,
+                    alternates=_issue_alts(issue.kind, issue.label, "en", f"{en_base}/{issue.kind}/{issue.label}"),
+                    feed_path="/en/feed.xml",
+                ))
+                if not is_enc
+                else None
+            )
             html_slug = _render_issue_page(
                 issue, en_issues, slug=slug, alias_rel=alias_rel, lang="en",
-                url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=False), lang_code="zh-CN", ctx=c,
+                url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=False), lang_code="zh-CN",
+                geo_page=gp_s, geo_origin=origin, geo_search=search_enabled, ctx=c,
             )
-            p_slug = en_dir / f"{alias_rel}.html"
             p_slug.parent.mkdir(parents=True, exist_ok=True)
             p_slug.write_text(html_slug, encoding="utf-8")
             if root_latest and slug:
+                p_root = c.plain / "en" / f"{alias_rel}.html"
+                rel_r = p_root.relative_to(c.plain).as_posix()
+                gp_r = (
+                    _reg_geo(geo.GeoPage(
+                        rel_html=rel_r,
+                        url_path=_rel_to_url_path(rel_r),
+                        canonical_path=f"{en_base}/{issue.kind}/{issue.label}",
+                        rel_md=_rel_to_md(rel_r),
+                        lang="en",
+                        page_type="issue",
+                        kind=issue.kind,
+                        label=issue.label,
+                        date_iso=issue.end.isoformat(),
+                        is_canonical=False,
+                        alternates=_issue_alts(issue.kind, issue.label, "en", f"{en_base}/{issue.kind}/{issue.label}"),
+                        feed_path="/en/feed.xml",
+                    ))
+                    if not is_enc
+                    else None
+                )
                 html_root = _render_issue_page(
                     issue, en_issues, slug=slug, alias_rel=alias_rel, lang="en",
-                    url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=True), lang_code="zh-CN", ctx=c,
+                    url_prefix=en_base, lang_href=_zh_latest_target(alias_rel, root_level=True), lang_code="zh-CN",
+                    geo_page=gp_r, geo_origin=origin, geo_search=search_enabled, ctx=c,
                 )
-                p_root = c.plain / "en" / f"{alias_rel}.html"
                 p_root.parent.mkdir(parents=True, exist_ok=True)
                 p_root.write_text(html_root, encoding="utf-8")
+
+    if not is_enc and not c.defer_geo:
+        geo.write_public_geo_bundle(
+            public_dir=c.public,
+            pages=c.geo_pages,
+            origin=origin,
+            content_signal=sig,
+            allow_train=allow_train,
+            has_lang_paths=has_lang_paths,
+            search_enabled=search_enabled,
+        )
 
     return issues
 
@@ -2511,6 +2925,14 @@ def content_type_for(path: Path, rel: str) -> str:
         return "text/plain; charset=utf-8"
     if name.endswith(".html"):
         return "text/html; charset=utf-8"
+    if name.endswith(".md"):
+        return "text/markdown; charset=utf-8"
+    if name == "feed.xml":
+        return "application/atom+xml; charset=utf-8"
+    if name.endswith(".xml"):
+        return "application/xml; charset=utf-8"
+    if name.endswith(".json"):
+        return "application/json; charset=utf-8"
     if name.endswith(".svg"):
         return "image/svg+xml"
     if name.endswith(".txt"):
@@ -2624,7 +3046,10 @@ def deploy_with_wrangler(cfg: dict[str, str], token: str, commit_message: str) -
         "--commit-dirty=true",
         "--commit-message", commit_message or "ai-digest publish",
     ]
-    print("deploying with wrangler pages deploy (static only, no Functions)", file=sys.stderr)
+    mode_lbl = (
+        "static + GEO _worker.js" if (PUBLIC / "_worker.js").is_file() else "static only, no Functions"
+    )
+    print(f"deploying with wrangler pages deploy ({mode_lbl})", file=sys.stderr)
     proc = subprocess.run(
         cmd,
         env=env,
@@ -3105,11 +3530,20 @@ def prepare(
     privacy_scan(iter_plain_files(c) + iter_unencrypted_public(c), ctx=c)
     if _parse_bool(cfg.get("ENCRYPT")):
         encrypt_all_pages(cfg, ctx=c)
-        _finalize_csp_headers(c)
+        geo.clean_stale_geo_files(c.public, keep_rels=None)
+        _finalize_csp_headers(c, public_indexable=False)
         assert_public_is_encrypted(cfg, ctx=c)
     else:
+        origin, sig, _, search_enabled, worker_enabled = _geo_settings(cfg)
         publish_plain_pages(cfg, ctx=c)
-        _finalize_csp_headers(c)
+        _finalize_csp_headers(c, public_indexable=True)
+        geo.finalize_public_worker(
+            c.public,
+            origin=origin,
+            content_signal=sig,
+            search_enabled=search_enabled,
+            enable_worker=worker_enabled,
+        )
         assert_public_matches_plain(cfg, ctx=c)
     idx_path = f"{_url_prefix(cfg['SLUG'])}/"
     print(f"prepared {len(issues)} issue(s); index at {idx_path}", file=sys.stderr)
@@ -3276,6 +3710,8 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
 
         slugs = {lg: (lg if multi else (saved_slug or "demo")) for lg in langs}
         total_issues = total_pages = 0
+        all_demo_geo_pages: list[geo.GeoPage] = []
+        last_demo_cfg: dict[str, str] | None = None
         for lg in langs:
             other = next((o for o in langs if o != lg), None)
             lang_alt = {"code": other, "base": f"/{slugs[other]}/"} if multi and other else None
@@ -3292,6 +3728,7 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                 cli_lang=lg,
                 lang_alt=lang_alt,
                 demo_mode=True,
+                defer_geo=multi,
                 password_override=demo_pw,
                 salt_override=demo_salt,
                 env_overrides=env_overrides,
@@ -3319,7 +3756,9 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
                 render_html.render_file(md, h, lg, year=issue_year)
                 save_source(h, kind, label, ctx=ctx)
             cfg = load_config(ctx)
+            last_demo_cfg = cfg
             issues = rebuild_all(cfg, ctx=ctx)
+            all_demo_geo_pages.extend(ctx.geo_pages)
             privacy_scan(iter_plain_files(ctx) + iter_unencrypted_public(ctx), ctx=ctx)
             if encrypted:
                 encrypt_all_pages(cfg, ctx=ctx)
@@ -3333,10 +3772,39 @@ def build_demo(out: Path, examples: Path, daily_label: str, weekly_label: str,
         # Pages: send the site root to the (first language's) index; per-language latest aliases
         # are static HTML pages served directly at HTTP 200 (URL stays on latest).
         (demo_public / "_redirects").write_text(f"/ /{entry}/ 302\n", encoding="utf-8")
-        if multi:  # one _headers with cache rules for every language prefix
-            rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
-            (demo_public / "_headers").write_text(rules, encoding="utf-8")
-        site_crypto.finalize_csp_headers(demo_public, demo_plain)
+        if encrypted:
+            if multi:  # one _headers with cache rules for every language prefix
+                rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
+                (demo_public / "_headers").write_text(rules, encoding="utf-8")
+            geo.clean_stale_geo_files(demo_public, keep_rels=None)
+            site_crypto.finalize_csp_headers(demo_public, demo_plain, public_indexable=False)
+        else:
+            eff_cfg = last_demo_cfg or {}
+            origin, sig, allow_train, search_enabled, worker_enabled = _geo_settings(eff_cfg)
+            if multi:
+                geo.write_public_geo_bundle(
+                    public_dir=demo_public,
+                    pages=all_demo_geo_pages,
+                    origin=origin,
+                    content_signal=sig,
+                    allow_train=allow_train,
+                    has_lang_paths=False,
+                    search_enabled=search_enabled,
+                )
+                rules = "".join(_slug_cache_headers(sl) for sl in slugs.values())
+                rules += geo.render_geo_headers(
+                    content_signal=sig,
+                    link_header=geo.build_link_header(search_enabled=search_enabled),
+                )
+                (demo_public / "_headers").write_text(rules, encoding="utf-8")
+            site_crypto.finalize_csp_headers(demo_public, demo_plain, public_indexable=True)
+            geo.finalize_public_worker(
+                demo_public,
+                origin=origin,
+                content_signal=sig,
+                search_enabled=search_enabled,
+                enable_worker=worker_enabled,
+            )
         if out.exists():
             shutil.rmtree(out)
         shutil.copytree(demo_public, out)

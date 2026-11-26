@@ -30,7 +30,7 @@
 
 - **暖纸杂志级单文件阅读器（`render_html.py`）** — 暖纸浅色与暖炭黑陶土深色双主题、知乎式全宽自动显隐顶栏（下滑隐藏、上滑或停顿 3 秒浮现）、收拢进顶栏的折叠搜索抽屉（快捷键 `/`，正文顶部零占位）与按频次排序的原子去重标签、丝滑跟滚的完整标题侧栏目录、锚点直链复制、可点击回首页的 `AI Digest` 标识与内置 `/favicon.svg`。
 - **原生双语路径与静态 `latest` 入口** — 自动配对同目录 `<同名>.en.md` 生成对称 `/zh/` 与 `/en/` 站点目录（亦支持 `--md-en` 单页双语或 `LANG_ALT` 伴生互链），直接以 HTTP 200 提供 `/daily/latest`、`/weekly/latest`、`/zh/daily/latest`、`/en/daily/latest`（`no-store` 实时更新，URL 稳定不跳转）。
-- **默认公开、纵深加固的静态发布（`publish.py`）** — 默认发布免密码根路径公开站点（`ENCRYPT=0`、`SLUG=`），内置构建期 SHA-256 哈希锁定 CSP（零 `'unsafe-inline'` 脚本）、HSTS/COOP/CORP/Permissions-Policy、Markdown XSS 与原始 `<img>` 拦截及 HTML 实体解码隐私扫描；需私密部署时一条参数即可开启客户端 AES-256-GCM 加密与随机 `SLUG`（`--init --encrypt` / `ENCRYPT=1`）。
+- **默认公开、纵深加固的静态发布与 GEO（`publish.py`、`geo.py`）** — 默认发布免密码根路径公开站点（`ENCRYPT=0`、`SLUG=`），内置构建期 SHA-256 哈希锁定 CSP（零 `'unsafe-inline'` 脚本）、HSTS/COOP/CORP/Permissions-Policy、Markdown XSS 与原始 `<img>` 拦截、HTML 实体解码隐私扫描，以及内置 **GEO / Agent 就绪能力**（含 Content Signals 与 AI 爬虫规则的 `robots.txt`、多语言 `sitemap.xml`、`llms.txt`/`llms-full.txt`、Atom 订阅、JSON-LD、全站 `.md` 镜像、Agent Skills 发现与零依赖 Cloudflare Pages `_worker.js` 支持 `Accept: text/markdown` 与 `GET`/`QUERY` `/.well-known/search`）；需私密部署时一条参数即可开启客户端 AES-256-GCM 加密与随机 `SLUG`（`--init --encrypt` / `ENCRYPT=1`，自动禁用公开 GEO 并保持 `Disallow: /`）。
 - **广覆盖公开召回 + 无 Grok Bot 的安全 X 方案（`fetch/`）** — 10–40 秒并行抓取约 155 个零密钥公开信源（RSS/Atom/arXiv/HF/GitHub/官博/HN/Reddit），搭配 `ledger.py` 去重账本（★ 已推 / ☆ 看过未推）。可选 X 召回**不依赖 Grok Bot**，同时提供免费与付费安全路径（详见[没有 Grok Bot 时如何安全抓取 X 信源](#没有-grok-bot-时如何安全抓取-x-信源)）。
 
 ## 整体架构
@@ -115,7 +115,9 @@ X/Twitter 召回是**完全可选的增强项**，不依赖 Grok Bot，也绝不
 |---|---|---|---|
 | `SITE_DOMAIN` | `DOMAIN` | 站点域名 | `digest.example.com` |
 | `SITE_SLUG` | `SLUG` | 可选路径前缀（留空即挂载在根路径 `/`；非空需至少 8 位 URL 安全字符） | 留空（`--init --encrypt` 生成随机前缀） |
-| `DIGEST_ENCRYPT` | `ENCRYPT` | 可选开启客户端 AES-256-GCM 密码加密（`1`/`true`/`yes`/`on`） | `0`（免密码公开） |
+| `DIGEST_ENCRYPT` | `ENCRYPT` | 可选开启客户端 AES-256-GCM 密码加密（`1`/`true`/`yes`/`on`；开启后自动禁用公开 GEO） | `0`（免密码公开） |
+| `DIGEST_GEO_AI_TRAIN` | `GEO_AI_TRAIN` | 公开站 `Content-Signal` 与训练爬虫策略（`yes` 或 `no`；仅 `ENCRYPT=0` 生效） | `yes` |
+| `DIGEST_GEO_WORKER` | `GEO_WORKER` | 为公开 Pages 站生成 `_worker.js`（`Accept: text/markdown` 与 `/.well-known/search`；仅 `ENCRYPT=0`） | `1`（开启） |
 | `CF_ACCOUNT_ID` | `ACCOUNT_ID` | Cloudflare 账号 ID | — |
 | `CF_ZONE_ID` | `ZONE_ID` | 域名所在的 zone（可选） | — |
 | `CF_PAGES_PROJECT` | `PROJECT` | Cloudflare Pages 项目名 | `ai-digest` |

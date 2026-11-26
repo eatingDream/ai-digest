@@ -41,7 +41,7 @@ LOCK_JS_BLOCK = f"{LOCK_MARK_START}\n<script>{LOCK_JS}</script>\n{LOCK_MARK_END}
 _FAVICON_HEADER = "/favicon.svg\n  Cache-Control: public, max-age=86400\n"
 _SCRIPT_TAG_RE = re.compile(r"<script([^>]*)>(.*?)</script>", re.I | re.S)
 _SCRIPT_NONEXEC_RE = re.compile(
-    r"""\btype\s*=\s*["']?(?:application/json|speculationrules)\b""", re.I
+    r"""\btype\s*=\s*["']?(?:application/(?:ld\+)?json|speculationrules)\b""", re.I
 )
 _SCRIPT_SRC_RE = re.compile(r"\bsrc\s*=", re.I)
 
@@ -103,25 +103,51 @@ def _prune_empty_dirs(root: Path) -> None:
 
 
 def iter_unencrypted_public(public_dir: Path) -> list[Path]:
-    """Root files that stay in plaintext: robots.txt, 404.html, favicon.svg, _headers, _redirects."""
+    """Unencrypted root & public GEO files scanned by privacy_scan."""
+    seen: set[Path] = set()
     out: list[Path] = []
-    for name in ("robots.txt", "_headers", "404.html", "favicon.svg", "_redirects"):
+    fixed = (
+        "robots.txt",
+        "_headers",
+        "404.html",
+        "favicon.svg",
+        "_redirects",
+        "sitemap.xml",
+        "llms.txt",
+        "llms-full.txt",
+        "feed.xml",
+        "zh/feed.xml",
+        "en/feed.xml",
+        "search-index.json",
+        ".well-known/agent-skills/index.json",
+        ".well-known/agent-skills/ai-digest-reader/SKILL.md",
+    )
+    for name in fixed:
         p = public_dir / name
-        if p.is_file():
+        if p.is_file() and p not in seen:
+            seen.add(p)
             out.append(p)
+    if public_dir.is_dir():
+        for p in sorted(public_dir.rglob("*.md")):
+            if p.is_file() and p not in seen:
+                seen.add(p)
+                out.append(p)
     return out
 
 
-def _render_security_headers(script_hashes: Iterable[str] = ()) -> str:
+def _render_security_headers(
+    script_hashes: Iterable[str] = (), *, noindex: bool = True
+) -> str:
     hashes = sorted(set(script_hashes))
     script_src = (
         " ".join(hashes) + " 'inline-speculation-rules'"
         if hashes
         else "'unsafe-inline'"
     )
+    robots_line = "  X-Robots-Tag: noindex, nofollow\n" if noindex else ""
     return (
         "/*\n"
-        "  X-Robots-Tag: noindex, nofollow\n"
+        f"{robots_line}"
         "  X-Content-Type-Options: nosniff\n"
         "  Referrer-Policy: no-referrer\n"
         "  X-Frame-Options: DENY\n"
@@ -158,7 +184,9 @@ def _collect_inline_script_hashes(paths: Iterable[Path]) -> list[str]:
     return sorted(hashes)
 
 
-def finalize_csp_headers(public_dir: Path, plain_dir: Path) -> None:
+def finalize_csp_headers(
+    public_dir: Path, plain_dir: Path, *, public_indexable: bool = False
+) -> None:
     """Attach security headers and exact build-time SHA-256 script-src hashes into PUBLIC/_headers."""
     hp = public_dir / "_headers"
     if not hp.is_file():
@@ -178,7 +206,7 @@ def finalize_csp_headers(public_dir: Path, plain_dir: Path) -> None:
             count=1,
         )
     else:
-        updated = _render_security_headers(hashes) + text
+        updated = _render_security_headers(hashes, noindex=not public_indexable) + text
     if updated != text:
         hp.write_text(updated, encoding="utf-8")
 

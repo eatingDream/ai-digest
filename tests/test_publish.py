@@ -620,7 +620,7 @@ def test_security_hardening_csp_hashes_privacy_and_brand_links(monkeypatch, tmp_
         if page.name == "404.html":
             continue
         doc = page.read_text(encoding="utf-8")
-        assert "<title>AI Digest</title>" in doc and publish.FAVICON_LINK in doc
+        assert "AI Digest</title>" in doc and publish.FAVICON_LINK in doc
         assert '<span class="ai">AI</span> Digest</a>' in doc
         for attrs, body in publish._SCRIPT_TAG_RE.findall(doc):
             if publish._SCRIPT_SRC_RE.search(attrs) or publish._SCRIPT_NONEXEC_RE.search(attrs):
