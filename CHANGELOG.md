@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.2.0](https://github.com/eatingDream/ai-digest/compare/v1.1.1...v1.2.0) (2026-11-27)
+
+
+### Features
+
+* add Level 5 GEO, technical SEO, refreshed screenshots, and strict TS build ([#70](https://github.com/eatingDream/ai-digest/issues/70)) ([ba9d8d2](https://github.com/eatingDream/ai-digest/commit/ba9d8d2b63318c0f5eead6c851a05fd0d5441a1a))
+
 ## [1.1.1](https://github.com/eatingDream/ai-digest/compare/v1.1.0...v1.1.1) (2026-11-27)
 
 
