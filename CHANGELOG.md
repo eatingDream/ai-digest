@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.1.0](https://github.com/eatingDream/ai-digest/compare/v1.0.2...v1.1.0) (2026-11-27)
+
+
+### Features
+
+* upgrade AI Digest UX, multi-source citations, and injection/link-hijack hardening ([#65](https://github.com/eatingDream/ai-digest/issues/65)) ([abb91cd](https://github.com/eatingDream/ai-digest/commit/abb91cd2276b1d05a6f1fb3be9d756e5f2f27100))
+
 ## [1.0.2](https://github.com/eatingDream/ai-digest/compare/v1.0.1...v1.0.2) (2026-11-26)
 
 
