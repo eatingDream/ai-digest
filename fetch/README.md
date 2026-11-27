@@ -44,7 +44,7 @@ Environment variables (`DIGEST_TZ`, `DIGEST_ROOT`, `LEDGER_PATH`, `DIGEST_PREFER
 
 ---
 
-# AI精选 召回层（fetch）
+# AI Digest 召回层（fetch）
 
 [English](#ai-digest-recall-layer-fetch) | 简体中文
 

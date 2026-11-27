@@ -1449,7 +1449,7 @@ async fn hf_daily(ctx: &SourceContext, src: &SourceSpec) -> Result<Vec<Cand>> {
                 continue;
             }
             let title = first_value(str_field(p, "title"), str_field(item, "title"));
-            let summary = first_value(str_field(p, "ai_summary"), str_field(p, "summary"));
+            let summary = first_value(str_field(p, "summary"), str_field(p, "ai_summary"));
             let mut c = candidate(
                 ctx,
                 src,

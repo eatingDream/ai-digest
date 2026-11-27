@@ -33,7 +33,7 @@ function initArchive(): void {
 
   initFilter({
     mast,
-    onFilter: (query, activeTags) => {
+    onFilter: (query, activeTags, _activeCat) => {
       const qLow = normSearch(query);
       const hasFilter = qLow.length > 0 || activeTags.size > 0;
       let matched = 0;

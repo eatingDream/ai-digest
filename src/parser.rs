@@ -6,6 +6,7 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use chrono::{Datelike, NaiveDate};
 use html5gum::Token;
+use pulldown_cmark::{Event, Options as MdOptions, Parser as MdParser, Tag, TagEnd};
 use regex::Regex;
 
 use crate::{
@@ -26,7 +27,6 @@ static FIELD: LazyLock<Regex> = LazyLock::new(|| {
         .join("|");
     Regex::new(&format!(r"^\*\*({labels})\s*[：:]\*\*\s*(.*)$")).unwrap()
 });
-static LINKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 static SHORT_DATE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"([0-9]{1,2})/([0-9]{1,2})").unwrap());
 static LEAD_EMOJI: LazyLock<Regex> = LazyLock::new(|| {
@@ -63,7 +63,11 @@ pub fn parse_digest_md(md: &str, lang: Lang, fallback_year: Option<i32>) -> Resu
         .trim()
         .trim_matches('*')
         .trim();
-    let (title, period) = raw_title.split_once('·').unwrap_or((raw_title, ""));
+    let (title, period) = match raw_title.rsplit_once('·') {
+        Some((head, tail)) if tail.chars().any(|c| c.is_ascii_digit()) => (head, tail),
+        Some((head, tail)) if !i18n::looks_weekly(tail) => (head, tail),
+        _ => (raw_title, ""),
+    };
     let weekly = i18n::looks_weekly(title);
     let mut digest = Digest {
         lang,
@@ -328,6 +332,38 @@ fn parse_toc(lines: &[&str], digest: &mut Digest) {
     digest.toc_note = notes.join("\n");
 }
 
+fn parse_markdown_links(line: &str) -> Vec<LinkItem> {
+    let mut links = Vec::new();
+    let mut active_url: Option<String> = None;
+    let mut active_label = String::new();
+    for event in MdParser::new_ext(line, MdOptions::empty()) {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                active_url = Some(dest_url.into_string());
+                active_label.clear();
+            }
+            Event::Text(text) | Event::Code(text) if active_url.is_some() => {
+                active_label.push_str(&text);
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(url) = active_url.take() {
+                    let label = active_label.trim();
+                    let url = url.trim();
+                    if !label.is_empty() && !url.is_empty() {
+                        links.push(LinkItem {
+                            label: label.into(),
+                            url: url.into(),
+                        });
+                    }
+                }
+                active_label.clear();
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
 fn finish_item(sections: &mut [Section], current: Option<Item>, body: &mut Vec<&str>) {
     let Some(mut it) = current else {
         return;
@@ -367,10 +403,7 @@ fn finish_item(sections: &mut [Section], current: Option<Item>, body: &mut Vec<&
     for line in lines {
         let s = line.trim();
         if s.starts_with("🔗") {
-            it.links.extend(LINKS.captures_iter(s).map(|m| LinkItem {
-                label: m[1].trim().into(),
-                url: m[2].trim().into(),
-            }));
+            it.links.extend(parse_markdown_links(s));
         } else if let Some(m) = FIELD.captures(s) {
             pending = i18n::LABEL_MAP
                 .iter()

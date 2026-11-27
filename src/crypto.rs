@@ -553,6 +553,7 @@ fn attr<'a>(tag: &'a html5gum::StartTag, name: &[u8]) -> &'a [u8] {
 struct Script {
     body: String,
     executable: bool,
+    speculation_rules: bool,
     envelope: bool,
 }
 
@@ -570,6 +571,7 @@ fn scripts(html: &str) -> Result<Vec<Script>> {
                 active = Some(Script {
                     body: String::new(),
                     executable: !external && !DATA_SCRIPT_TYPES.contains(&kind.as_bytes()),
+                    speculation_rules: !external && kind == "speculationrules",
                     envelope: !external && kind == "application/json" && attr(&tag, b"id") == b"c",
                 });
             }
@@ -710,6 +712,18 @@ const COMPANION_HEADERS: &[(&str, &str)] = &[
     ),
 ];
 
+fn collect_speculation_rules_hashes(html: &str) -> Result<Vec<String>> {
+    let mut hashes = Vec::new();
+    for script in scripts(html)?.into_iter().filter(|s| s.speculation_rules) {
+        ensure!(
+            normalize_lines(&script.body) == crate::model::SPECULATION_RULES_JSON,
+            "unexpected inline speculationrules script"
+        );
+        hashes.push(script_hash(&script.body));
+    }
+    Ok(hashes)
+}
+
 pub fn expected_security_headers(
     public: &Path,
     plain: &Path,
@@ -725,14 +739,20 @@ pub fn expected_security_headers(
                 path.file_name().unwrap_or_default().to_string_lossy()
             )
         })?);
+        hashes.extend(collect_speculation_rules_hashes(&html).with_context(|| {
+            format!(
+                "CSP speculationrules validation failed for {}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )
+        })?);
     }
+    let script_src = if hashes.is_empty() {
+        "'none'".to_owned()
+    } else {
+        hashes.into_iter().collect::<Vec<_>>().join(" ")
+    };
     let policy = format!(
-        "default-src 'none'; script-src {}'inline-speculation-rules'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests",
-        if hashes.is_empty() {
-            String::new()
-        } else {
-            format!("{} ", hashes.into_iter().collect::<Vec<_>>().join(" "))
-        }
+        "default-src 'none'; script-src {script_src}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests"
     );
     let mut expected = BTreeMap::from([("Content-Security-Policy".to_owned(), policy)]);
     expected.extend(

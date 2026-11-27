@@ -32,9 +32,11 @@ use crate::crypto::{self, ScriptAllowlist, UnlockOptions};
 use crate::geo::{self, GeoPage, PageType};
 use crate::i18n::{self, Lang};
 use crate::model::{
-    atomic_write_bytes, atomic_write_text, files_under, DigestPaths, FileLock, LangAlt, LinkItem,
-    ParsedIssue, SiteConfig, SiteContext,
+    atomic_write_bytes, atomic_write_text, canon_url, files_under, full_width_len,
+    is_wrapper_or_shortener_url, safe_external_url, strip_tracking_params, Digest, DigestPaths,
+    FileLock, LangAlt, LinkItem, ParsedIssue, SectionEntry, SiteConfig, SiteContext,
 };
+use crate::net::SafeHttpClient;
 use crate::parser::{parse_digest_html_with_lang, parse_digest_md};
 use crate::render::{self, ArchiveIssue, NavOptions, RenderOptions};
 use crate::verify;
@@ -94,6 +96,11 @@ pub struct PublishArgs {
     pub rotate_password: bool,
     #[arg(long, help = "Skip local and deployed byte-for-byte verification")]
     pub no_verify: bool,
+    #[arg(
+        long,
+        help = "Verify external URLs in --md via live HTTP checks before publishing"
+    )]
+    pub verify_urls: bool,
     #[arg(long, help = "Also write incremental progress to stderr")]
     pub verbose: bool,
     #[arg(long, conflicts_with_all = ["init", "html", "rebuild", "rerender_all", "rotate_password"], help = "Build an offline example site")]
@@ -284,29 +291,214 @@ pub fn discover_english_md(
     Ok(None)
 }
 
-fn read_md(path: &Path, lang: Lang, year: i32) -> Result<crate::model::Digest> {
-    let input =
-        fs::read_to_string(path).with_context(|| format!("read markdown {}", path.display()))?;
-    parse_digest_md(&input, lang, Some(year))
-        .with_context(|| format!("parse markdown {}", path.display()))
+fn extract_markdown_external_urls(text: &str) -> Vec<String> {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+    let mut urls = Vec::new();
+    for event in Parser::new_ext(text, Options::empty()) {
+        if let Event::Start(Tag::Link { dest_url, .. }) = event {
+            let u = dest_url.trim();
+            if u.contains(':') || u.starts_with("//") {
+                urls.push(u.to_owned());
+            }
+        }
+    }
+    urls
 }
 
-fn render_issue_inputs(
+fn load_grounded_urls(runs_dir: &Path, issue_label: &str) -> BTreeSet<String> {
+    let mut grounded = BTreeSet::new();
+    let run_dir = runs_dir.join(issue_label);
+    let cand_file = run_dir.join("fetch/candidates.jsonl");
+    if let Ok(text) = fs::read_to_string(&cand_file) {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if let Some(u) = v.get("url").and_then(Value::as_str) {
+                grounded.insert(canon_url(u));
+            }
+            if let Some(extra) = v.get("extra").and_then(Value::as_object) {
+                for key in ["github", "project", "url"] {
+                    if let Some(u) = extra.get(key).and_then(Value::as_str) {
+                        grounded.insert(canon_url(u));
+                    }
+                }
+            }
+        }
+    }
+    let x_raw = run_dir.join("x-raw.md");
+    if let Ok(text) = fs::read_to_string(&x_raw) {
+        static RAW_URL: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"https?://[^\s<>)"'`]+"#).unwrap());
+        for m in RAW_URL.find_iter(&text) {
+            grounded.insert(canon_url(m.as_str()));
+        }
+    }
+    grounded
+}
+
+fn sanitize_and_validate_digest(
+    digest: &mut Digest,
+    runs_dir: Option<&Path>,
+    issue_label: Option<&str>,
+    strict_urls: bool,
+) -> Result<Vec<String>> {
+    let mut external_urls = Vec::new();
+    let mut seen_urls = BTreeSet::new();
+    for section in &mut digest.sections {
+        for entry in &mut section.entries {
+            let SectionEntry::Item(item) = entry else {
+                continue;
+            };
+            let fw = full_width_len(&item.title);
+            if fw > 30.0 {
+                eprintln!(
+                    "warn: item #{} title exceeds 30 full-width chars ({fw:.1} FW): {}",
+                    item.number, item.title
+                );
+            }
+            for link in &mut item.links {
+                let Some(safe) = safe_external_url(&link.url) else {
+                    if strict_urls {
+                        bail!(
+                            "unsafe or non-HTTP(S) URL in item #{}: {}",
+                            item.number,
+                            link.url
+                        );
+                    }
+                    continue;
+                };
+                if strict_urls && is_wrapper_or_shortener_url(&safe) {
+                    bail!(
+                        "redirect-wrapper/shortener URL rejected in item #{}: {safe}",
+                        item.number
+                    );
+                }
+                let cleaned = strip_tracking_params(&safe);
+                link.url = cleaned.clone();
+                if seen_urls.insert(cleaned.clone()) {
+                    external_urls.push(cleaned);
+                }
+            }
+            for field in [
+                &item.dek,
+                &item.look,
+                &item.detail,
+                &item.followup,
+                &item.extra,
+            ] {
+                for raw in extract_markdown_external_urls(field) {
+                    let Some(safe) = safe_external_url(&raw) else {
+                        if strict_urls {
+                            bail!(
+                                "unsafe or non-HTTP(S) prose URL in item #{}: {raw}",
+                                item.number
+                            );
+                        }
+                        continue;
+                    };
+                    if strict_urls && is_wrapper_or_shortener_url(&safe) {
+                        bail!(
+                            "redirect-wrapper/shortener prose URL rejected in item #{}: {safe}",
+                            item.number
+                        );
+                    }
+                    let cleaned = strip_tracking_params(&safe);
+                    if seen_urls.insert(cleaned.clone()) {
+                        external_urls.push(cleaned);
+                    }
+                }
+            }
+        }
+    }
+    if let (Some(runs), Some(label)) = (runs_dir, issue_label) {
+        let grounded = load_grounded_urls(runs, label);
+        if !grounded.is_empty() {
+            for u in &external_urls {
+                if !grounded.contains(&canon_url(u)) {
+                    eprintln!("warn: external URL not found in runs/{label} candidates: {u}");
+                }
+            }
+        }
+    }
+    Ok(external_urls)
+}
+
+async fn verify_external_urls_live(urls: &[String]) -> Result<()> {
+    let client = SafeHttpClient::new(
+        Duration::from_secs(20),
+        1,
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+    );
+    let headers = reqwest::header::HeaderMap::new();
+    for raw in urls {
+        let parsed = Url::parse(raw).with_context(|| format!("invalid external URL: {raw}"))?;
+        let resp = client
+            .get_with_headers(&parsed, None, &headers)
+            .await
+            .with_context(|| format!("live URL check failed for {raw}"))?;
+        ensure!(
+            resp.status().is_success(),
+            "live URL check returned HTTP {} for {raw}",
+            resp.status()
+        );
+    }
+    Ok(())
+}
+
+fn read_md(path: &Path, lang: Lang, year: i32) -> Result<Digest> {
+    let input =
+        fs::read_to_string(path).with_context(|| format!("read markdown {}", path.display()))?;
+    let mut digest = parse_digest_md(&input, lang, Some(year))
+        .with_context(|| format!("parse markdown {}", path.display()))?;
+    let _ = sanitize_and_validate_digest(&mut digest, None, None, false)?;
+    Ok(digest)
+}
+
+async fn render_issue_inputs(
     issue: &IssueRef,
     md: &Path,
     english: Option<&Path>,
     lang: Lang,
+    runs_dir: &Path,
+    verify_urls: bool,
 ) -> Result<(String, Option<String>, usize)> {
-    let primary = read_md(md, lang, issue.start.year())?;
-    let en = english
-        .map(|path| read_md(path, Lang::En, issue.start.year()))
+    let input =
+        fs::read_to_string(md).with_context(|| format!("read markdown {}", md.display()))?;
+    let mut primary = parse_digest_md(&input, lang, Some(issue.start.year()))
+        .with_context(|| format!("parse markdown {}", md.display()))?;
+    let mut urls =
+        sanitize_and_validate_digest(&mut primary, Some(runs_dir), Some(&issue.label), true)?;
+    let mut en = english
+        .map(|path| -> Result<Digest> {
+            let text = fs::read_to_string(path)
+                .with_context(|| format!("read markdown {}", path.display()))?;
+            let mut doc = parse_digest_md(&text, Lang::En, Some(issue.start.year()))
+                .with_context(|| format!("parse markdown {}", path.display()))?;
+            urls.extend(sanitize_and_validate_digest(
+                &mut doc,
+                Some(runs_dir),
+                Some(&issue.label),
+                true,
+            )?);
+            Ok(doc)
+        })
         .transpose()?;
+    if verify_urls {
+        let unique: Vec<String> = urls
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        verify_external_urls_live(&unique).await?;
+    }
     let count = primary.items().count();
     let opts = RenderOptions::default();
     if lang == Lang::ZhCn {
         Ok((
             render::render_digest_html(&primary, lang, &opts),
-            en.map(|doc| render::render_digest_html(&doc, Lang::En, &opts)),
+            en.take()
+                .map(|doc| render::render_digest_html(&doc, Lang::En, &opts)),
             count,
         ))
     } else if let Some(en) = en {
@@ -2501,8 +2693,15 @@ async fn run_site(
                 .as_deref()
                 .map(|path| resolve_input(&ctx.root, path));
             let en = discover_english_md(&md, explicit.as_deref(), ctx.lang)?;
-            let (primary, english, count) =
-                render_issue_inputs(&issue, &md, en.as_deref(), ctx.lang)?;
+            let (primary, english, count) = render_issue_inputs(
+                &issue,
+                &md,
+                en.as_deref(),
+                ctx.lang,
+                &ctx.paths.runs,
+                args.verify_urls,
+            )
+            .await?;
             changes.remember(&primary_html)?;
             atomic_write_text(&primary_html, &primary)?;
             if let Some(html) = &english {

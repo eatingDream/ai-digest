@@ -91,6 +91,19 @@ function initReaderPane(
   const expandAllBtn = tocEl?.querySelector<HTMLButtonElement>(".toc-expand-all") ?? null;
   const liveEl = scope.querySelector<HTMLElement>("[aria-live='polite'].sr-only, #liveAnnounce");
 
+  const readMetaEl = scope.querySelector<HTMLElement>('.issue-meta [data-k="read"]');
+  const countMetaEl = scope.querySelector<HTMLElement>('.issue-meta [data-k="count"]');
+  const metaCats = Array.from(scope.querySelectorAll<HTMLElement>(".meta-cat[data-cat]"));
+  const catChips = Array.from(scope.querySelectorAll<HTMLButtonElement>(".chip[data-cat]"));
+  const hlSection = scope.querySelector<HTMLElement>("section.highlights");
+  const hlList = hlSection?.querySelector<HTMLElement>(".hl-list") ?? null;
+  const hlItems = hlSection
+    ? Array.from(hlSection.querySelectorAll<HTMLElement>("li[data-item-id]"))
+    : [];
+  const hlCountEl = hlSection?.querySelector<HTMLElement>(".hl-count") ?? null;
+  const hlEmptyEl = hlSection?.querySelector<HTMLElement>(".hl-empty") ?? null;
+  const hlMoreBtn = hlSection?.querySelector<HTMLButtonElement>("[data-hl-more]") ?? null;
+
   const paneIsZh = (): boolean => {
     if (scope instanceof HTMLElement) {
       const lang = scope.getAttribute("lang") || scope.dataset.lang || "";
@@ -105,7 +118,11 @@ function initReaderPane(
     ? Array.from(tocEl.querySelectorAll<HTMLElement>(".ts-group"))
     : [];
 
-  // Mirror prev/next links from nav.issue-nav.top into .dock-nav (single source of truth)
+  const validCategories = new Set<string>(
+    sections.map((s) => s.dataset.category || s.id).filter(Boolean)
+  );
+
+  // Mirror prev/next links from nav.issue-nav.top into .dock-nav
   const topNav = scope.querySelector<HTMLElement>("nav.issue-nav.top");
   if (topNav && dockNavEl) {
     const prevEl = topNav.querySelector('a[rel="prev"], [data-nav="prev"]');
@@ -114,8 +131,6 @@ function initReaderPane(
     if (nextEl) dockNavEl.appendChild(nextEl.cloneNode(true));
   }
 
-  // All TOC sections expanded by default (user mandate #193: Cmd+F & full scannability).
-  // Manual per-section toggle and Collapse-all / Expand-all remain opt-in.
   let allExpanded = readExpandAllPref(true);
   let tocHovering = false;
   let spyEntries: SpyEntry[] = [];
@@ -128,6 +143,7 @@ function initReaderPane(
   let cancelUserInterrupt: (() => void) | null = null;
   let arrivedTimer = 0;
   let lastArrivedEl: HTMLElement | null = null;
+  let lastVisibleCount = stories.length;
 
   tocEl?.addEventListener("mouseenter", () => {
     tocHovering = true;
@@ -135,6 +151,14 @@ function initReaderPane(
   tocEl?.addEventListener("mouseleave", () => {
     tocHovering = false;
   });
+
+  const announce = (msg: string): void => {
+    if (!liveEl) return;
+    liveEl.textContent = "";
+    window.requestAnimationFrame(() => {
+      liveEl.textContent = msg;
+    });
+  };
 
   const syncExpandAllLabel = (): void => {
     if (!expandAllBtn) return;
@@ -175,7 +199,6 @@ function initReaderPane(
     syncExpandAllLabel();
   };
 
-  // All sections start expanded unless user explicitly collapsed in sessionStorage
   applyAllGroups(allExpanded);
 
   expandAllBtn?.addEventListener("click", () => {
@@ -188,7 +211,6 @@ function initReaderPane(
     applyAllGroups(next);
   });
 
-  // Individual accordion section toggle (purely manual opt-in)
   tocEl?.addEventListener("click", (e: MouseEvent) => {
     const secBtn = (e.target as Element | null)?.closest<HTMLButtonElement>(".ts-sec");
     if (!secBtn) return;
@@ -199,12 +221,22 @@ function initReaderPane(
     syncExpandAllLabel();
   });
 
+  // Mobile highlights expand/collapse
+  hlMoreBtn?.addEventListener("click", () => {
+    if (!hlSection) return;
+    const expanded = hlSection.classList.toggle("is-expanded");
+    hlMoreBtn.textContent = expanded
+      ? hlMoreBtn.dataset.lessLabel || "Less"
+      : hlMoreBtn.dataset.moreLabel || "Show all";
+    hlMoreBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+  });
+
   // Mobile sheet open / close + inert + focus trap
   let sheetOpen = false;
   const setInert = (val: boolean): void => {
     for (const el of [mainEl, mastEl, filterDrawerEl, dockEl]) {
       if (!el) continue;
-      if (el === filterDrawerEl && !val && !el.classList.contains("is-open")) {
+      if (el === filterDrawerEl && !val && el.hidden) {
         continue;
       }
       (el as HTMLElement & { inert: boolean }).inert = val;
@@ -221,7 +253,6 @@ function initReaderPane(
     }
     root.classList.remove("is-sheet-open");
     setInert(false);
-    mast.setPinned("sheet", false);
     dockTocBtn?.setAttribute("aria-expanded", "false");
     if (restoreFocus) dockTocBtn?.focus();
   };
@@ -237,7 +268,6 @@ function initReaderPane(
     tocEl.classList.add("is-open");
     root.classList.add("is-sheet-open");
     setInert(true);
-    mast.setPinned("sheet", true);
     dockTocBtn?.setAttribute("aria-expanded", "true");
     const curLink = tocEl.querySelector<HTMLElement>("a.cur");
     const target =
@@ -252,7 +282,6 @@ function initReaderPane(
   tocCloseBtn?.addEventListener("click", () => closeSheet(true));
   scrimEl?.addEventListener("click", () => closeSheet(true));
 
-  // Focus trap inside open sheet + Esc dismiss
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (!sheetOpen || !tocEl || !isActive()) return;
     if (e.key === "Escape") {
@@ -279,7 +308,7 @@ function initReaderPane(
     }
   });
 
-  // Clean spy-lock and programmatic scroll helpers
+  // Spy lock & fast scroll
   const clearScrollEndHook = (): void => {
     if (spySettleTimer) {
       window.clearTimeout(spySettleTimer);
@@ -294,7 +323,6 @@ function initReaderPane(
   const releaseSpyLock = (): void => {
     clearScrollEndHook();
     spyLocked = false;
-    mast.setProgrammaticScroll(false);
   };
 
   const cancelJumpAnim = (): void => {
@@ -336,12 +364,9 @@ function initReaderPane(
       el.classList.remove("is-arrived");
       if (lastArrivedEl === el) lastArrivedEl = null;
       arrivedTimer = 0;
-    }, 1150);
+    }, 1200);
   };
 
-  // Distance-adaptive fast scroll:
-  //   <= 900px -> custom rAF cubic-ease-out capped strictly at <= 200ms
-  //   >  900px (or reduced motion) -> 0ms instant jump
   const fastScrollTo = (
     destY: number,
     onLanded?: (wasLongJump: boolean) => void
@@ -352,7 +377,6 @@ function initReaderPane(
     const dist = Math.abs(targetY - startY);
 
     spyLocked = true;
-    mast.setProgrammaticScroll(true);
 
     if (mast.isReducedMotion() || dist > LONG_JUMP_PX || dist < 2) {
       window.scrollTo({
@@ -403,15 +427,12 @@ function initReaderPane(
     jumpRafId = window.requestAnimationFrame(step);
   };
 
-  // Scroll-to-top buttons (mobile dock + desktop floating pill)
   const scrollToTop = (): void => {
-    mast.setState("shown");
     fastScrollTo(0);
   };
   dockTopBtn?.addEventListener("click", scrollToTop);
   toTopBtn?.addEventListener("click", scrollToTop);
 
-  // Scroll-spy offset cache + binary search (scoped to active pane)
   const rebuildSpyCache = (): void => {
     if (!isActive()) {
       spyEntries = [];
@@ -452,15 +473,25 @@ function initReaderPane(
     if (link.closest("[inert]")) return;
     const h = tocEl.clientHeight;
     if (h <= 0) return;
+    const stickyTop =
+      tocEl.querySelector<HTMLElement>(".toc-top")?.offsetHeight ?? 0;
     const top = link.offsetTop;
     const bottom = top + link.offsetHeight;
     const cur = tocEl.scrollTop;
-    const pad = 28;
-    if (top < cur + pad) {
-      tocEl.scrollTop = Math.max(0, top - pad);
+    const pad = 16;
+    if (top < cur + stickyTop + pad) {
+      tocEl.scrollTop = Math.max(0, top - stickyTop - pad);
     } else if (bottom > cur + h - pad) {
       tocEl.scrollTop = Math.max(0, bottom - h + pad);
     }
+  };
+
+  const updateDockCountLabel = (visibleCount: number): void => {
+    if (!dockTocBtn) return;
+    const labelSpan = dockTocBtn.querySelector<HTMLElement>("span");
+    if (!labelSpan) return;
+    const prefix = paneIsZh() ? "\u76ee\u5f55" : "Contents";
+    labelSpan.textContent = `${prefix} \u00b7 ${visibleCount}`;
   };
 
   const setActiveEntry = (
@@ -488,7 +519,6 @@ function initReaderPane(
             )
           : null;
         grp?.querySelector<HTMLElement>(".ts-sec")?.classList.add("cur");
-        // NEVER auto-collapse any section; only open the clicked section if user had collapsed it
         if (expandIfClosed && grp && grp.dataset.open === "false") {
           setGroupOpen(grp, true);
           syncExpandAllLabel();
@@ -496,39 +526,12 @@ function initReaderPane(
       }
       if (nextLink) keepTocRowVisible(nextLink);
     }
-
-    // Update mobile dock label with active section title
-    if (dockTocBtn && activeSecId) {
-      const grp = tocEl?.querySelector<HTMLElement>(
-        `.ts-group[data-sec="${CSS.escape(activeSecId)}"] .ts-title`
-      );
-      const secHeading = scope.querySelector<HTMLElement>(
-        `#${CSS.escape(activeSecId)} .sec-head h2`
-      );
-      const title = grp?.textContent?.trim() || secHeading?.textContent?.trim() || "";
-      const labelSpan = dockTocBtn.querySelector<HTMLElement>("span");
-      if (labelSpan && title) {
-        const prefix = paneIsZh() ? "\u76ee\u5f55 \u00b7 " : "Contents \u00b7 ";
-        labelSpan.textContent = prefix + title;
-      }
-    }
-  };
-
-  const getFilterHeight = (): number => {
-    if (!filterDrawerEl || !filterDrawerEl.classList.contains("is-open")) return 0;
-    const inner = filterDrawerEl.querySelector<HTMLElement>(".filter-inner");
-    const raw = Math.max(
-      Math.round(filterDrawerEl.getBoundingClientRect().height),
-      inner?.scrollHeight ?? 0
-    );
-    return Math.min(raw, Math.max(0, window.innerHeight - mast.getMastHeight()));
   };
 
   const updateSpy = (): void => {
     if (!isActive() || spyLocked) return;
     if (spyEntries.length === 0) return;
-    const filterH = getFilterHeight();
-    const probeY = window.scrollY + mast.getMastOffset() + filterH + 32;
+    const probeY = window.scrollY + mast.getTopOffset() + 28;
     let lo = 0;
     let hi = spyEntries.length - 1;
     let best = 0;
@@ -559,23 +562,225 @@ function initReaderPane(
     updateSpy();
   };
 
-  // Distance-adaptive TOC / Must-Read / Related jump with full-flight spy lock + arrival pulse
-  const jumpToElement = (el: HTMLElement, updateHash = true): void => {
+  // Pre-build search cache + per-story metadata
+  const normSearch = (s: string): string => s.replace(/\u2011/g, "-").toLowerCase();
+  const storyMeta = new Map<
+    HTMLElement,
+    { text: string; tags: Set<string>; category: string; words: number }
+  >();
+  const storyById = new Map<string, HTMLElement>();
+  for (const st of stories) {
+    const rawTags = (st.dataset.tags || "")
+      .split("|")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const category =
+      st.dataset.category ||
+      st.closest<HTMLElement>("section.sec")?.dataset.category ||
+      "";
+    const words = Number.parseInt(st.dataset.words || "0", 10) || 0;
+    storyMeta.set(st, {
+      text: normSearch(`${st.textContent || ""} ${rawTags.join(" ")}`),
+      tags: new Set(rawTags),
+      category,
+      words,
+    });
+    if (st.id) storyById.set(st.id, st);
+  }
+
+  let hasRunInitialFilter = false;
+  const filter = initFilter({
+    mast,
+    root: scope,
+    isActive,
+    validCategories,
+    onFilter: (query, activeTags, activeCat) => {
+      const qLow = normSearch(query);
+      const hasAnyFilter =
+        qLow.length > 0 || activeTags.size > 0 || activeCat !== "all";
+      let matched = 0;
+      let totalWords = 0;
+      const facetedCounts = new Map<string, number>();
+      let facetAll = 0;
+
+      for (const st of stories) {
+        const meta = storyMeta.get(st);
+        let matchesTagQ = true;
+        if (meta) {
+          for (const t of activeTags) {
+            if (!meta.tags.has(t)) {
+              matchesTagQ = false;
+              break;
+            }
+          }
+          if (matchesTagQ && qLow && !meta.text.includes(qLow)) {
+            matchesTagQ = false;
+          }
+        }
+        if (matchesTagQ && meta) {
+          facetAll++;
+          facetedCounts.set(
+            meta.category,
+            (facetedCounts.get(meta.category) || 0) + 1
+          );
+        }
+        const ok =
+          matchesTagQ &&
+          (activeCat === "all" || (meta?.category ?? "") === activeCat);
+        st.hidden = !ok;
+        if (ok) {
+          matched++;
+          totalWords += meta?.words ?? 0;
+        }
+
+        if (tocEl && st.id) {
+          const tocLink = tocEl.querySelector<HTMLElement>(
+            `a[href="#${CSS.escape(st.id)}"]`
+          );
+          const li = tocLink?.closest("li");
+          if (li) li.hidden = !ok;
+        }
+      }
+
+      // Sync sections & TOC groups
+      for (const sec of sections) {
+        const secStories = Array.from(
+          sec.querySelectorAll<HTMLElement>("article.story")
+        );
+        const visCount = secStories.filter((s) => !s.hidden).length;
+        sec.hidden = visCount === 0;
+        const grp = tocEl?.querySelector<HTMLElement>(
+          `.ts-group[data-sec="${CSS.escape(sec.id)}"]`
+        );
+        if (grp) {
+          grp.hidden = visCount === 0;
+          const cnt = grp.querySelector<HTMLElement>(".ts-cnt");
+          if (cnt) {
+            const total = Number(cnt.dataset.total || String(secStories.length));
+            cnt.textContent = hasAnyFilter ? `${visCount}/${total}` : `${total}`;
+          }
+        }
+      }
+
+      // Sync clickable category chips (TOC + mobile strip) with faceted counts
+      for (const chip of catChips) {
+        const cat = chip.dataset.cat || "all";
+        const n = cat === "all" ? facetAll : facetedCounts.get(cat) || 0;
+        const pressed = cat === activeCat;
+        chip.setAttribute("aria-pressed", pressed ? "true" : "false");
+        if (n === 0 && cat !== "all") {
+          chip.setAttribute("aria-disabled", "true");
+        } else {
+          chip.removeAttribute("aria-disabled");
+        }
+        const numEl = chip.querySelector<HTMLElement>(".n");
+        if (numEl) numEl.textContent = String(n);
+      }
+
+      // Sync header per-category counts
+      for (const mc of metaCats) {
+        const cat = mc.dataset.cat || "";
+        const n = facetedCounts.get(cat) || 0;
+        const b = mc.querySelector<HTMLElement>("b");
+        if (b) b.textContent = String(n);
+        mc.hidden = n === 0 && hasAnyFilter;
+      }
+
+      // Dynamic read time + visible/total count in header
+      if (readMetaEl) {
+        const mins = matched > 0 ? Math.max(1, Math.round(totalWords / 400)) : 0;
+        const tpl = readMetaEl.dataset.readTpl || "{m} min";
+        const parts = tpl.split("{m}");
+        readMetaEl.textContent = "";
+        readMetaEl.append(parts[0] || "");
+        const b = document.createElement("b");
+        b.textContent = String(mins);
+        readMetaEl.append(b, parts[1] || "");
+      }
+      if (countMetaEl) {
+        const total = stories.length;
+        const unit = paneIsZh()
+          ? " \u6761"
+          : matched === 1 && !hasAnyFilter
+            ? " item"
+            : " items";
+        countMetaEl.textContent = "";
+        const b = document.createElement("b");
+        b.textContent = hasAnyFilter ? `${matched} / ${total}` : `${total}`;
+        countMetaEl.append(b, unit);
+      }
+
+      // Dynamic Top Highlights sync
+      if (hlSection) {
+        if (matched === 0) {
+          hlSection.hidden = true;
+        } else {
+          hlSection.hidden = false;
+          let visHl = 0;
+          for (const li of hlItems) {
+            const id = li.dataset.itemId || "";
+            const st = storyById.get(id);
+            const show = st ? !st.hidden : false;
+            li.hidden = !show;
+            if (show) visHl++;
+          }
+          if (hlCountEl) hlCountEl.textContent = `(${visHl})`;
+          if (hlList) hlList.hidden = visHl === 0;
+          if (hlEmptyEl) {
+            hlEmptyEl.hidden = visHl > 0;
+            const b = hlEmptyEl.querySelector<HTMLElement>("b");
+            if (b) b.textContent = String(matched);
+          }
+          if (hlMoreBtn) {
+            hlMoreBtn.hidden = visHl <= 3;
+          }
+        }
+      }
+
+      lastVisibleCount = matched;
+      updateDockCountLabel(matched);
+      if (hasRunInitialFilter) {
+        announce(
+          paneIsZh()
+            ? `\u663e\u793a ${matched} \u6761`
+            : `Showing ${matched} items`
+        );
+      }
+      hasRunInitialFilter = true;
+
+      rebuildSpyCache();
+      updateSpy();
+      return { matched, total: stories.length };
+    },
+    onFirstMatchScroll: () => {
+      const first = stories.find((s) => !s.hidden);
+      if (first) jumpToElement(first, false);
+    },
+  });
+
+  // Wire category chips clicks (TOC + mobile strip)
+  for (const chip of catChips) {
+    chip.addEventListener("click", () => {
+      const cat = chip.dataset.cat || "all";
+      const isZero = chip.getAttribute("aria-disabled") === "true";
+      filter.setCategory(cat, isZero);
+    });
+  }
+
+  // Persistent mast jump: always land exactly 12px below mast (+ mobile strip)
+  const jumpToElement = (el: HTMLElement, updateHash = true, flash = false): void => {
+    // If target story is currently hidden by filters, reset filters first
+    const targetStory = el.closest<HTMLElement>("article.story") ?? (el.matches("article.story") ? el : null);
+    if (targetStory && targetStory.hidden && filter.hasActiveFilters()) {
+      filter.clear();
+    }
     const doScroll = (): void => {
       const targetY = el.getBoundingClientRect().top + window.scrollY;
-      const goingDown = targetY > window.scrollY && !mast.isPinned();
-      const filterH = getFilterHeight();
-      const visibleHeaderH =
-        (mastEl
-          ? Math.round(mastEl.getBoundingClientRect().height)
-          : mast.getMastHeight()) + filterH;
-      const dest = goingDown
-        ? targetY - 16
-        : targetY - visibleHeaderH - 16;
-      mast.setState(goingDown ? "hidden" : "shown");
+      const topOffset = mast.getTopOffset();
+      const dest = targetY - topOffset - 12;
       if (updateHash && el.id) {
         try {
-          window.history.replaceState(null, "", `#${el.id}`);
+          window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${el.id}`);
         } catch {
           // Ignore history restrictions.
         }
@@ -593,7 +798,7 @@ function initReaderPane(
         );
       }
       fastScrollTo(dest, (wasLongJump) => {
-        if (wasLongJump) triggerArrived(el);
+        if (flash || wasLongJump) triggerArrived(el);
       });
     };
 
@@ -605,13 +810,25 @@ function initReaderPane(
     }
   };
 
-  // Intercept in-page anchor clicks scoped to this pane
+  // Intercept in-page anchor clicks + source expand + copy link
   const clickScope: EventTarget = scope instanceof Element ? scope : document;
   clickScope.addEventListener("click", (e: Event) => {
     if (!isActive()) return;
-    const link = (e.target as Element | null)?.closest<HTMLAnchorElement>(
-      'a[href^="#"]'
-    );
+    const targetNode = e.target as Element | null;
+
+    const srcMore = targetNode?.closest<HTMLButtonElement>("[data-src-more]");
+    if (srcMore) {
+      const footer = srcMore.closest<HTMLElement>(".story-links");
+      if (footer) {
+        for (const extra of Array.from(footer.querySelectorAll<HTMLElement>("[data-src-extra]"))) {
+          extra.hidden = false;
+        }
+      }
+      srcMore.hidden = true;
+      return;
+    }
+
+    const link = targetNode?.closest<HTMLAnchorElement>('a[href^="#"]');
     if (!link) return;
     if (link.classList.contains("skip-link")) return;
     const hash = link.getAttribute("href") || "";
@@ -624,17 +841,9 @@ function initReaderPane(
       onCrossPaneTarget(target);
       return;
     }
-    jumpToElement(target, true);
+    const fromHighlight = Boolean(link.closest("section.highlights"));
+    jumpToElement(target, true, fromHighlight);
   });
-
-  // Copy anchor link button + live-region announcement
-  const announce = (msg: string): void => {
-    if (!liveEl) return;
-    liveEl.textContent = "";
-    window.requestAnimationFrame(() => {
-      liveEl.textContent = msg;
-    });
-  };
 
   clickScope.addEventListener("click", (e: Event) => {
     if (!isActive()) return;
@@ -662,88 +871,6 @@ function initReaderPane(
     } else {
       finish();
     }
-  });
-
-  // Filter integration (stories + sections + TOC mirror)
-  const normSearch = (s: string): string => s.replace(/\u2011/g, "-").toLowerCase();
-  const storySearchCache = new Map<HTMLElement, { text: string; tags: Set<string> }>();
-  for (const st of stories) {
-    const rawTags = (st.dataset.tags || "")
-      .split("|")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    storySearchCache.set(st, {
-      text: normSearch(`${st.textContent || ""} ${rawTags.join(" ")}`),
-      tags: new Set(rawTags),
-    });
-  }
-
-  const filter = initFilter({
-    mast,
-    root: scope,
-    isActive,
-    onResize: () => {
-      if (isActive()) {
-        rebuildSpyCache();
-        updateSpy();
-      }
-    },
-    onFilter: (query, activeTags) => {
-      const qLow = normSearch(query);
-      const hasFilter = qLow.length > 0 || activeTags.size > 0;
-      let matched = 0;
-
-      for (const st of stories) {
-        const meta = storySearchCache.get(st);
-        let ok = true;
-        if (meta) {
-          for (const t of activeTags) {
-            if (!meta.tags.has(t)) {
-              ok = false;
-              break;
-            }
-          }
-          if (ok && qLow && !meta.text.includes(qLow)) ok = false;
-        }
-        st.hidden = !ok;
-        if (ok) matched++;
-
-        if (tocEl && st.id) {
-          const tocLink = tocEl.querySelector<HTMLElement>(
-            `a[href="#${CSS.escape(st.id)}"]`
-          );
-          const li = tocLink?.closest("li");
-          if (li) li.hidden = !ok;
-        }
-      }
-
-      for (const sec of sections) {
-        const secStories = Array.from(
-          sec.querySelectorAll<HTMLElement>("article.story")
-        );
-        const visCount = secStories.filter((s) => !s.hidden).length;
-        sec.hidden = visCount === 0;
-        const grp = tocEl?.querySelector<HTMLElement>(
-          `.ts-group[data-sec="${CSS.escape(sec.id)}"]`
-        );
-        if (grp) {
-          grp.hidden = visCount === 0;
-          const cnt = grp.querySelector<HTMLElement>(".ts-cnt");
-          if (cnt) {
-            const total = Number(cnt.dataset.total || String(secStories.length));
-            cnt.textContent = hasFilter ? `${visCount}/${total}` : `${total}`;
-          }
-        }
-      }
-
-      rebuildSpyCache();
-      updateSpy();
-      return { matched, total: stories.length };
-    },
-    onFirstMatchScroll: () => {
-      const first = stories.find((s) => !s.hidden);
-      if (first) jumpToElement(first, false);
-    },
   });
 
   // Keyboard shortcuts: j/k (next/prev story), [/] (prev/next issue)
@@ -801,12 +928,12 @@ function initReaderPane(
       kbdIdx = -1;
       applyAllGroups(allExpanded);
       filter.refreshTags();
+      updateDockCountLabel(lastVisibleCount);
       rebuildSpyCache();
 
       const snap = anchorSnap ?? consumeLangAnchor();
       if (snap) {
         spyLocked = true;
-        mast.setProgrammaticScroll(true);
         if (snap.anchorId === "__top__") {
           window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
         } else {
@@ -828,6 +955,11 @@ function initReaderPane(
           }
         }
         armSpySettle(300);
+      } else if (window.location.hash.length > 1) {
+        const target = document.getElementById(window.location.hash.slice(1));
+        if (target && (scope === document || (scope instanceof HTMLElement && scope.contains(target)))) {
+          jumpToElement(target, false, true);
+        }
       }
 
       onScroll();
@@ -858,7 +990,6 @@ function initReader(): void {
   const panes = Array.from(document.querySelectorAll<HTMLElement>(".lang-pane"));
 
   if (panes.length === 0) {
-    // Single-language page: identical behavior scoped to document
     const ctrl = initReaderPane(document, mast, () => true);
     let scrollRaf = 0;
     window.addEventListener(
@@ -879,7 +1010,6 @@ function initReader(): void {
     return;
   }
 
-  // Single-page bilingual mode (--md-en): scope TOC, filter, search & scroll-spy to active .lang-pane
   const zhRadio = document.getElementById("language-zh") as HTMLInputElement | null;
   const enRadio = document.getElementById("en-language") as HTMLInputElement | null;
   const paneControllers = new Map<HTMLElement, PaneController>();
@@ -975,8 +1105,6 @@ function initReader(): void {
   zhRadio?.addEventListener("change", onRadioChange);
   enRadio?.addEventListener("change", onRadioChange);
 
-  // Intercept bilingual <label for="language-zh|en-language"> clicks so browser
-  // never focus-scrolls to the radio input; switch panes + restore anchor synchronously.
   document.addEventListener("click", (e: MouseEvent) => {
     const label = (e.target as Element | null)?.closest<HTMLLabelElement>(
       'label[for="language-zh"], label[for="en-language"]'

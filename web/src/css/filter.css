@@ -1,23 +1,35 @@
-.mast,.filter-drawer{background:var(--mast-bg);backdrop-filter:blur(12px)}
-.filter-drawer,.filter-input-wrap{transition:var(--tm)}
-.filter-drawer{display:grid;grid:0fr/1fr;position:fixed;inset:var(--mast-h) 0 auto;z-index:39;visibility:hidden;&.is-open{grid-template-rows:1fr;max-height:calc(100dvh - var(--mast-h));overflow:auto;overscroll-behavior:contain;border-bottom:var(--b);box-shadow:var(--shadow-1);visibility:visible}}
-.filter-inner{min-height:0;overflow:hidden;width:100%;max-width:760px;margin:auto;padding:0 var(--pad-x)}
+.search-scrim{position:fixed;inset:var(--mast-h) 0 0;z-index:45;background:light-dark(rgb(0 0 0/.18),rgb(0 0 0/.35))}
+.filter-drawer,.search-panel{position:fixed;top:calc(var(--mast-h) + 8px);left:50%;translate:-50% 0;z-index:50;width:min(720px,100vw - 32px);max-height:min(70vh,560px);overflow:auto;overscroll-behavior:contain;background:var(--surface);border:var(--b);border-radius:10px;box-shadow:0 12px 32px rgb(0 0 0/.16);transition:opacity .16s var(--ease),translate .16s var(--ease)}
+@starting-style{.search-panel{opacity:0;translate:-50% -6px}}
+.filter-inner{width:100%;padding:14px 16px}
 .filter-input-wrap,.filter-tags{display:flex;align-items:center}
-.filter-input-wrap{gap:8px;height:40px;margin-top:12px;padding:0 10px 0 14px;background:var(--well);border:var(--b);border-radius:10px;&>svg{color:var(--ink-4)}&:focus-within{border-color:var(--accent)}}
-.filter-input{flex:1;min-width:0;font-size:14px;outline:0;&::-webkit-search-cancel-button,&::-webkit-search-decoration{-webkit-appearance:none;appearance:none}}
+.filter-input-wrap{gap:8px;height:40px;padding:0 10px 0 14px;background:var(--well);border:var(--b);border-radius:10px;transition:border-color .16s var(--ease)}
+.filter-input-wrap>svg{color:var(--ink-4)}
+.filter-input-wrap:focus-within{border-color:var(--accent)}
+.filter-input{flex:1;min-width:0;font-size:14px;outline:0}
+.filter-input::-webkit-search-cancel-button,.filter-input::-webkit-search-decoration{-webkit-appearance:none;appearance:none}
 .filter-count,.filter-clear,.filter-close,.filter-tag{border-radius:9em}
 .filter-count,.filter-clear,.filter-tag{white-space:nowrap}
 .filter-count,.filter-tag,.filter-empty{background:var(--surface);border:var(--b)}
 .filter-count,.filter-close,.filter-more,.filter-empty{color:var(--ink-3)}
 .filter-count,.filter-clear{font-size:12px}
 .filter-count{padding:2px 8px}
-.filter-clear{padding:3px 9px;color:var(--accent-ink);&:hover{background:var(--accent-soft)}}
-.filter-close{display:grid;place-items:center;width:26px;height:26px;&:hover{background:var(--bg-muted);color:var(--ink)}}
-.filter-tags{flex-wrap:wrap;gap:7px;margin:12px 0}
+.filter-clear{padding:3px 9px;color:var(--accent-ink)}
+.filter-clear:hover{background:var(--accent-soft)}
+.filter-close{display:grid;place-items:center;width:26px;height:26px}
+.filter-close:hover{background:var(--bg-muted);color:var(--ink)}
+.filter-tags{flex-wrap:wrap;gap:7px;margin-top:12px}
 .search-btn[aria-expanded=true],.filter-tag:is(:hover,.is-active){background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
-.filter-tag{position:relative;display:inline-flex;align-items:center;height:28px;padding:0 11px;font-size:12.5px;color:var(--ink-2);&:active{scale:.98}&.is-active::after{content:"×";margin-left:5px}}
+.filter-tag{position:relative;display:inline-flex;align-items:center;height:28px;padding:0 11px;font-size:12.5px;color:var(--ink-2)}
+.filter-tag:active{scale:.98}
+.filter-tag.is-active::after{content:"×";margin-left:5px}
 .tag-cnt{color:var(--ink-4);font-size:11px;margin-left:5px}
 .filter-more{background:0;border-color:var(--line-strong)}
-.filter-empty{margin:24px 0;padding:24px;border-radius:12px;text-align:center;& p{margin:0 0 12px}}
+.filter-empty{margin:24px 0;padding:24px;border-radius:12px;text-align:center}
+.filter-empty p{margin:0 0 12px}
+@media(max-width:960px){
+  .filter-drawer,.search-panel{top:var(--mast-h);left:0;translate:none;width:100%;max-height:calc(100dvh - var(--mast-h));border-radius:0 0 12px 12px;border-top:0}
+  @starting-style{.search-panel{opacity:0;translate:0 -6px}}
+}
 @media(pointer:coarse){.filter-input-wrap{height:44px}.filter-input{font-size:16px}.filter-close,.filter-clear{min-width:40px;min-height:40px}.filter-tag::before{content:"";position:absolute;inset:-8px 0}}
-@media print{.filter-drawer,.filter-empty{display:none!important}}
+@media print{.search-scrim,.filter-drawer,.filter-empty{display:none!important}}

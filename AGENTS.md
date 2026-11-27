@@ -63,7 +63,7 @@ Times are local (`DIGEST_TZ`, default UTC); natural-day windows are half-open `[
 
 File names: daily `digest-YYYY-MM-DD.md`, weekly `weekly-YYYY-MM-DD_MM-DD.md`; issue ids `daily/YYYY-MM-DD`, `weekly/YYYY-MM-DD_MM-DD`.
 
-Markdown contract (parsed by `src/parser.rs` in either language): title `**AI Daily · M/D**` or `**AI Weekly · MM/DD–MM/DD**` (zh: `**AI精选日报 · M/D**`); seven `##` sections (Models, Papers, Tools & Projects, Industry & Products, Compute & Infrastructure, Safety & Policy, Opinions & Essays); numbered `###` items with a metadata line and fields In brief / Why it matters / Details (/ Follow-up in weeklies). Follow `examples/sample-digest.en.md`.
+Markdown contract (parsed by `src/parser.rs` in either language): title `**AI Digest · Daily · M/D**` or `**AI Digest · Weekly · MM/DD–MM/DD**` (zh: `**AI Digest · 日报 · M/D**`); seven `##` sections (Models, Papers, Tools & Projects, Industry & Products, Compute & Infrastructure, Safety & Policy, Opinions & Essays); numbered `###` items with a metadata line and fields In brief / Why it matters / Details (/ Follow-up in weeklies). Follow `examples/sample-digest.en.md`.
 
 ## Conventions
 

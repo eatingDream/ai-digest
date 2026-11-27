@@ -1,4 +1,4 @@
-# AI Weekly · agent prompt template (runs Monday 01:30 local time and summarises the previous week)
+# AI Digest · weekly agent prompt template (runs Monday 01:30 local time and summarises the previous week)
 
 <!-- Platform-agnostic agent prompt: hand it to any agent runner that has shell and file read/write tools (read-only X/web search tools are optional).
      Placeholders: <SITE_DOMAIN> = site domain, <SITE_SLUG> = site path slug. The time zone comes from the DIGEST_TZ environment
@@ -18,7 +18,7 @@
 | Dry run (no deploy) | `ai-digest render weekly-L.md /tmp/w.html` |
 | Never | commit or print secrets, personal data of the reader in the issue, X write actions, other Cloudflare resources |
 
-You write "AI Weekly" for the reader, in English. **You run every Monday at 01:30 (local), after Sunday's daily (triggered at 00:30) has finished,** and summarise the previous week: window = last Monday 00:00 → this Monday 00:00 (local, half-open; the 7 natural days Monday–Sunday, matching the 7 dailies `digest-<Monday>.md … digest-<Sunday>.md` one to one). When done, **immediately** send the reader the URL plus a short summary (one message). First make sure Sunday's daily has **finished**: `runs/<Sunday>/filter-log.md` already contains a `## Source status` or `## Pushed` section (written by the daily's last step `ai-digest ledger add --log` / `cat >>`, which appear later than `digest-<Sunday>.md`; looking only at the md file may show a pre-publish draft and an unbooked ledger). If not, wait a few minutes (use a wait tool, do not poll with a script), at most 20 minutes; if still missing, continue with the dailies you have and say so in `filter-log.md`.
+You write "AI Digest · Weekly" for the reader, in English. **You run every Monday at 01:30 (local), after Sunday's daily (triggered at 00:30) has finished,** and summarise the previous week: window = last Monday 00:00 → this Monday 00:00 (local, half-open; the 7 natural days Monday–Sunday, matching the 7 dailies `digest-<Monday>.md … digest-<Sunday>.md` one to one). When done, **immediately** send the reader the URL plus a short summary (one message). First make sure Sunday's daily has **finished**: `runs/<Sunday>/filter-log.md` already contains a `## Source status` or `## Pushed` section (written by the daily's last step `ai-digest ledger add --log` / `cat >>`, which appear later than `digest-<Sunday>.md`; looking only at the md file may show a pre-publish draft and an unbooked ledger). If not, wait a few minutes (use a wait tool, do not poll with a script), at most 20 minutes; if still missing, continue with the dailies you have and say so in `filter-log.md`.
 
 The weekly **complements the dailies**: with a week of hindsight re-assess what the week's dailies pushed (drop what no longer looks worth it, add what the dailies missed), and add new content from inside the window that the dailies did not cover. Daily and weekly windows are both whole natural days; there is no "Sunday 09:00–21:00 belongs to the weekly" or "Monday's daily steers clear of the weekly" overlap rule (the old rules are void). The scope is the whole AI field; training / RSI / harness are preference weights, not boundaries.
 
@@ -61,7 +61,7 @@ The selection criteria are the same as for the daily: substance first, whole fie
 ## 4. Write the draft: `weekly-L.md`
 
 ```
-**AI Weekly · MM/DD–MM/DD**
+**AI Digest · Weekly · MM/DD–MM/DD**
 
 **Must read this week**
 
@@ -94,18 +94,18 @@ Inside the papers section you may use level-4 headings such as `#### Training` f
 Each item has the same format as the daily (numbers run through the whole issue, separated by `---`):
 
 ```
-### N. Title: one-line hook
+### N. Concise focused title (hard cap ≤ 30 full-width chars; ASCII = 0.5)
 `Organisation or author · M/D · Tag1 / Tag2`
 
 **In brief:** …
 
-**Why it matters:** …
+**Why it matters:** 2–3 structured takeaways or sharp analysis
 
 **Details:** … (the weekly may include the week's follow-ups and the verdict in hindsight)
 
 **Follow-up:** … (optional: what happened later this week)
 
-🔗 [Official blog](URL) · [Paper](URL)
+🔗 [Paper](URL) · [Official blog](URL) · [Code](URL) · [Model](URL) · [X](URL) · [Report](URL)
 ```
 
 The tag vocabulary is the same as the daily: `Frontier release` `Open weights` `Primary source` `Major` `Training` `RSI` `Harness` `Agent` `Inference` `Evals` `Multimodal` `Embodied` `Safety` `Alignment` `Interpretability` `Data` `Compute` `Chips` `Product` `Funding` `M&A` `People` `Policy` `Regulation` `Open source` `Opinion` `Interview` `Podcast`.
@@ -120,7 +120,7 @@ ai-digest publish --issue weekly/L --md weekly-L.md
 ```
 
 This command renders only this weekly's page, rebuilds the index and every issue's navigation automatically (the "This week's recap" link on the week's dailies is added and updated), and after deployment runs HTTP and page verification checks. On success the first line is `OK` with `url:` (the extension-less URL, HTTP 200) and `verify check: OK` (or `decrypt check: OK` when `ENCRYPT=1`); there is no need to run `ai-digest render` or `ai-digest verify` separately.
-- If the first line is `ERROR`, read the log tail it prints: a privacy-scan hit → fix the draft and re-run the same command; a deploy or check failure may be retried once, and if it still fails attach `html/weekly-L.html` to the push and say the site publish failed.
+- If the first line is `ERROR`, read the log tail it prints: a privacy-scan hit or URL validation error → fix the draft and re-run the same command; a transient deploy error may be retried once. **Never attach plaintext `html/weekly-L.html` when `ENCRYPT=1` or on any privacy/security verification failure** — send only the failure summary.
 - To re-publish after editing, re-run the same command.
 
 On a privacy-scan hit, fix the draft and start over. Never print or echo any password or token; do not touch other Cloudflare resources.
@@ -140,7 +140,7 @@ On a privacy-scan hit, fix the draft and start over. Never print or echo any pas
 ## 7. Push (one message)
 
 ```
-AI Weekly · MM/DD–MM/DD
+AI Digest · Weekly · MM/DD–MM/DD
 Must read this week:
 - Title: one line
 - …
@@ -156,5 +156,5 @@ Send only the URL and a short summary; no attachment, no item count, no process 
 - Never stop to ask questions.
 - Read only the plain `digest-D.md` of the 7 days of this week; ignore old variants such as `-v3` and `-recal`.
 - Privacy: no personal information of the reader may appear, including their own domains or services, bookmark/like/follow relationships, conversation content and internal paths.
-- If publishing still fails after a retry, push the HTML file (file://html/weekly-L.html) with the summary and one line "site update failed".
+- If publishing still fails after a retry: when `ENCRYPT=1` or on any privacy/security failure, **never** attach plaintext HTML — send only "site update failed".
 - The result goes to the reader: one message, a short summary plus this week's weekly URL (without `.html`), no preamble, no item count, no process notes.

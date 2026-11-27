@@ -1,4 +1,4 @@
-# AI精选 信源注册表（ai-digest fetch 读取）
+# AI Digest 信源注册表（ai-digest fetch 读取）
 # 每个 [[source]] 一条。字段：
 #   id        唯一 id（报告与 candidates.jsonl 的 source 字段）
 #   name      显示名

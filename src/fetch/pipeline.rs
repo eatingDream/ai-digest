@@ -97,16 +97,10 @@ pub fn dedupe(mut rows: Vec<Cand>) -> Vec<Cand> {
     ];
     rows.sort_by_key(|c| RANK.iter().position(|k| *k == c.kind).unwrap_or(99));
     let mut keys = HashMap::<String, usize>::new();
-    let mut titles = HashMap::<String, usize>::new();
     let mut output: Vec<Cand> = Vec::new();
     for mut row in rows {
         let key = candidate_key(&row);
-        let title = norm_title(&row.title);
-        let title_key = (title.chars().count() >= 16).then_some(title);
-        let hit = keys
-            .get(&key)
-            .or_else(|| title_key.as_ref().and_then(|title| titles.get(title)));
-        if let Some(&hit) = hit {
+        if let Some(&hit) = keys.get(&key) {
             let existing = &mut output[hit];
             for source in std::iter::once(&row.source).chain(&row.also_in) {
                 if *source != existing.source && !existing.also_in.contains(source) {
@@ -132,9 +126,6 @@ pub fn dedupe(mut rows: Vec<Cand>) -> Vec<Cand> {
         }
         row.id = hex::encode(&Sha1::digest(key.as_bytes())[..6]);
         keys.insert(key, output.len());
-        if let Some(title) = title_key {
-            titles.insert(title, output.len());
-        }
         output.push(row);
     }
     output

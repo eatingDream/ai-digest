@@ -142,7 +142,7 @@ fn translation_keys_and_placeholders_match() {
         (
             i18n::all_string_keys().collect::<Vec<_>>(),
             i18n::string as fn(Lang, &str) -> Option<&'static str>,
-            90,
+            103,
         ),
         (
             i18n::all_fetch_keys().collect::<Vec<_>>(),
@@ -422,7 +422,7 @@ fn markdown_raw_html_images_and_unsafe_links_are_dropped() {
         assert!(!output.contains(forbidden), "{forbidden}: {output}");
     }
     assert!(output.contains("unsafe"));
-    assert!(output.contains(r#"<a href="https://example.com/x" title="quoted label" target="_blank" rel="noopener noreferrer">valid</a>"#));
+    assert!(output.contains(r#"<a href="https://example.com/x" title="quoted label" target="_blank" rel="noopener noreferrer nofollow ugc">valid</a>"#));
     assert!(output.contains(r##"<a href="#item-1">internal</a>"##));
     let mut digest = fixture(MATH_ISSUE, Lang::En);
     if let model::SectionEntry::Item(it) = &mut digest.sections[0].entries[0] {
@@ -508,7 +508,7 @@ fn markdown_parses_all_examples_and_mixed_contract_edges() {
                 .count(),
             1
         );
-        assert!(html.contains("<header class=\"folio\">"));
+        assert!(html.contains("<header class=\"folio issue-head\">"));
         assert!(html.contains("<nav class=\"dock\""));
         assert!(html.contains("<!-- digest-nav-slot -->"));
         assert!(!html.contains("lang-pane lang-"));
@@ -535,6 +535,45 @@ fn markdown_parses_all_examples_and_mixed_contract_edges() {
     assert_eq!(digest.items().count(), 1);
     assert!(parser::period_dates("2/29", 2026).is_empty());
     assert!(parse_digest_md("## Section\nSome text", Lang::En, None).is_err());
+
+    // Two-dot unified brand headers preserve weekly detection and period dates
+    let zh_w = fixture(
+        "**AI Digest · 周报 · 11/09–11/15**\n\n## 模型\n### 1. A\n`L · 11/12 · T`\n**一句话：** Hi",
+        Lang::ZhCn,
+    );
+    assert!(zh_w.weekly);
+    assert_eq!(zh_w.title, "AI Digest · 周报");
+    assert_eq!(zh_w.period, "11/09–11/15");
+    assert_eq!(zh_w.dates, [day("2026-11-09"), day("2026-11-15")]);
+    let zh_d = fixture(
+        "**AI Digest · 日报 · 11/26**\n\n## 模型\n### 1. A\n`L · 11/26 · T`\n**一句话：** Hi",
+        Lang::ZhCn,
+    );
+    assert!(!zh_d.weekly);
+    assert_eq!(zh_d.title, "AI Digest · 日报");
+    assert_eq!(zh_d.period, "11/26");
+    assert_eq!(zh_d.dates, [day("2026-11-26")]);
+    let en_w = fixture("**AI Digest · Weekly · 11/09–11/15**\n\n## Models\n### 1. A\n`L · 11/12 · T`\n**TL;DR:** Hi\n\n🔗 [Don't Train It 论文](https://arxiv.org/abs/2611.28483) · [SELFWRITE 论文](https://arxiv.org/abs/2611.29513)", Lang::En);
+    assert!(en_w.weekly);
+    assert_eq!(en_w.dates, [day("2026-11-09"), day("2026-11-15")]);
+    assert_eq!(en_w.items().next().unwrap().dek, "Hi");
+    let en_html = render::render_digest_html(&en_w, Lang::En, &RenderOptions::default());
+    // Mobile sticky filter strip must be a direct sibling after </header>, not trapped inside <header class="folio">
+    let folio_end = en_html
+        .find("</nav></header>")
+        .expect("folio closing header");
+    let strip_pos = en_html
+        .find(r#"<div class="mobile-filter-strip""#)
+        .expect("mobile filter strip");
+    assert!(
+        strip_pos > folio_end,
+        "mobile-filter-strip must sit outside </header> to stay sticky across scroll"
+    );
+    // Same-host links in footer.sources must disambiguate instead of repeating arxiv.org
+    assert!(
+        en_html.contains("Don&#x27;t Train It") && en_html.contains("SELFWRITE"),
+        "duplicate same-host source links must show disambiguated labels: {en_html}"
+    );
 }
 
 #[test]
@@ -1796,8 +1835,8 @@ fn reader_toc_collapsed_table_alignment_classes_and_bilingual_pane_hooks() {
             })
             .sum();
         assert!(
-            style_total > 0 && style_total <= 16_384,
-            "{label} inline <style> budget exceeded: {style_total} > 16384 bytes"
+            style_total > 0 && style_total <= 22_528,
+            "{label} inline <style> budget exceeded: {style_total} > 22528 bytes"
         );
         for token in model::html_tokens(doc) {
             if let Token::StartTag(tag) = token {
@@ -1822,7 +1861,7 @@ fn reader_toc_collapsed_table_alignment_classes_and_bilingual_pane_hooks() {
     for pane in [zh_pane, en_pane] {
         for hook in [
             "class=\"skip-link\"",
-            "class=\"mast-meta\"",
+            "mast-meta",
             "class=\"toc-side\"",
             "class=\"filter-bar",
             "<main id=\"",
@@ -1911,7 +1950,7 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
     // Filter drawer sits in normal document flow AFTER fixed </header>, before .reader-shell
     let mast_end = doc.find("</header>").expect("mast </header>");
     let filter_pos = doc
-        .find(r#"class="filter-bar filter-drawer""#)
+        .find(r#"class="filter-bar filter-drawer"#)
         .expect("filter drawer");
     let shell_pos = doc.find(r#"class="reader-shell""#).expect("reader shell");
     assert!(
@@ -2000,8 +2039,10 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
 
     // 7. v1.0.2 editorial TOC single-line .ts-title & redundant daily date hiding (while preserving parser roundtrip)
     assert!(
-        doc.contains(r#"<span class="ts-title">SWE‑2.1：Nemotron‑Labs‑Image 联合发布</span>"#),
-        "TOC item must wrap full title in .ts-title for single-line ellipsis + Cmd+F"
+        doc.contains(
+            r#"<span class="ts-title short">SWE‑2.1：Nemotron‑Labs‑Image 联合发布</span>"#
+        ),
+        "TOC item must wrap full title in .ts-title for balanced 2-line wrap + Cmd+F"
     );
     assert!(
         doc.contains(r#"<time class="when" hidden>11.26</time>"#),

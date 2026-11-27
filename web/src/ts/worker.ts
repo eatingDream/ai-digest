@@ -76,6 +76,16 @@ function matchCacheRule(pathname: string): string | null {
   return matched;
 }
 
+const ALT_MD_LINK_RE = /<[^>]+>;\s*rel="alternate";\s*type="text\/markdown"/;
+
+function localizeLinkHeader(base: string, mdPath: string | null): string {
+  if (!mdPath || !ALT_MD_LINK_RE.test(base)) return base;
+  return base.replace(
+    ALT_MD_LINK_RE,
+    `<${mdPath}>; rel="alternate"; type="text/markdown"`
+  );
+}
+
 function applyBaseHeaders(
   headers: Headers,
   pathname: string,
@@ -190,20 +200,37 @@ async function readBodyWithLimit(
   return new TextDecoder("utf-8").decode(merged);
 }
 
+function escapeMdQuery(text: string): string {
+  return text.replace(/[\\[\]()<>#*_`"]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function escapeMdInline(text: string): string {
+  return String(text || "").replace(/[\\[\]<>]/g, (ch) => "\\" + ch);
+}
+
+function makeSearchResponse(
+  body: string | null,
+  status: number,
+  pathname: string,
+  extra: Record<string, string>
+): Response {
+  const headers = new Headers();
+  applyBaseHeaders(headers, pathname, status, extra);
+  return new Response(body, { status, headers });
+}
+
 async function handleSearch(
   request: Request,
   env: WorkerEnv,
   url: URL
 ): Promise<Response> {
   const method = request.method.toUpperCase();
+  const pathname = url.pathname;
   if (method !== "GET" && method !== "HEAD" && method !== "QUERY") {
-    return new Response("Method Not Allowed\n", {
-      status: 405,
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        Allow: "GET, HEAD, QUERY",
-        "Accept-Query": "text/plain, application/json",
-      },
+    return makeSearchResponse("Method Not Allowed\n", 405, pathname, {
+      "Content-Type": "text/plain; charset=utf-8",
+      Allow: "GET, HEAD, QUERY",
+      "Accept-Query": "text/plain, application/json",
     });
   }
 
@@ -214,13 +241,15 @@ async function handleSearch(
   if (method === "QUERY") {
     const raw = await readBodyWithLimit(request, 4096);
     if (raw === null) {
-      return new Response("Query body too large (max 4096 bytes).\n", {
-        status: 413,
-        headers: {
+      return makeSearchResponse(
+        "Query body too large (max 4096 bytes).\n",
+        413,
+        pathname,
+        {
           "Content-Type": "text/markdown; charset=utf-8",
           "Accept-Query": "text/plain, application/json",
-        },
-      });
+        }
+      );
     }
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json") || raw.trim().startsWith("{")) {
@@ -238,13 +267,15 @@ async function handleSearch(
           limit = body.limit;
         }
       } catch {
-        return new Response('Invalid JSON body; expected {"q": "..."}.\n', {
-          status: 400,
-          headers: {
+        return makeSearchResponse(
+          'Invalid JSON body; expected {"q": "..."}.\n',
+          400,
+          pathname,
+          {
             "Content-Type": "text/markdown; charset=utf-8",
             "Accept-Query": "text/plain, application/json",
-          },
-        });
+          }
+        );
       }
     } else {
       q = raw.trim();
@@ -258,8 +289,6 @@ async function handleSearch(
   const baseMdHeaders: Record<string, string> = {
     "Content-Type": "text/markdown; charset=utf-8",
     "Accept-Query": "text/plain, application/json",
-    "Content-Signal": CFG.contentSignal,
-    "X-Content-Type-Options": "nosniff",
     "Cache-Control": "public, max-age=300",
   };
 
@@ -268,18 +297,22 @@ async function handleSearch(
       "# Search for Agents\n\n" +
       "Provide a query via `GET /.well-known/search?q=<query>` or `QUERY /.well-known/search` " +
       'with `text/plain` or JSON `{"q": "..."}`.\n';
-    return new Response(method === "HEAD" ? null : usage, {
-      status: 400,
-      headers: baseMdHeaders,
-    });
+    return makeSearchResponse(
+      method === "HEAD" ? null : usage,
+      400,
+      pathname,
+      baseMdHeaders
+    );
   }
 
   const idx = await loadSearchIndex(env, url.origin);
   if (!idx || !Array.isArray(idx.docs)) {
-    return new Response(method === "HEAD" ? null : "Search index unavailable.\n", {
-      status: 503,
-      headers: { ...baseMdHeaders, "Retry-After": "60" },
-    });
+    return makeSearchResponse(
+      method === "HEAD" ? null : "Search index unavailable.\n",
+      503,
+      pathname,
+      { ...baseMdHeaders, "Retry-After": "60" }
+    );
   }
 
   const qLow = q.toLowerCase();
@@ -318,7 +351,7 @@ async function handleSearch(
   const top = scored.slice(0, limit);
   const maxScore = top.length ? top[0].score : 1;
 
-  const escQ = q.replace(/"/g, "'");
+  const escQ = escapeMdQuery(q);
   const lines: string[] = [`# Search results for: "${escQ}"`, ""];
   if (!top.length) {
     lines.push(
@@ -327,20 +360,23 @@ async function handleSearch(
   } else {
     for (const { score, doc } of top) {
       const norm = (score / maxScore).toFixed(3);
-      const relMd = (doc.m || "").replace(/^\//, "");
-      const tags = (doc.g || []).join(", ");
+      const relMd = escapeMdInline((doc.m || "").replace(/^\//, ""));
+      const tags = (doc.g || []).map(escapeMdInline).join(", ");
       lines.push(`## ${relMd} (score: ${norm})`);
       lines.push("");
-      lines.push(`### ${doc.t || ""}`);
-      const meta = [`Date: ${doc.d || ""}`, `Lang: ${doc.l || ""}`];
-      if (doc.s) meta.push(`Source: ${doc.s}`);
+      lines.push(`### ${escapeMdInline(doc.t || "")}`);
+      const meta = [
+        `Date: ${escapeMdInline(doc.d || "")}`,
+        `Lang: ${escapeMdInline(doc.l || "")}`,
+      ];
+      if (doc.s) meta.push(`Source: ${escapeMdInline(doc.s)}`);
       if (tags) meta.push(`Tags: ${tags}`);
       lines.push(`- ${meta.join(" | ")}`);
       lines.push(`- URL: ${doc.u || ""}`);
       lines.push(`- Markdown: ${CFG.origin}${doc.m || ""}`);
       if (doc.p) {
         lines.push("");
-        lines.push(doc.p);
+        lines.push(escapeMdInline(doc.p));
       }
       if (Array.isArray(doc.lk) && doc.lk.length) {
         lines.push("");
@@ -354,9 +390,15 @@ async function handleSearch(
 
   const body = lines.join("\n").trimEnd() + "\n";
   const byteLen = new TextEncoder().encode(body).byteLength;
-  const headers = new Headers(baseMdHeaders);
-  headers.set("x-markdown-tokens", String(Math.max(1, Math.floor(byteLen / 4))));
-  return new Response(method === "HEAD" ? null : body, { status: 200, headers });
+  return makeSearchResponse(
+    method === "HEAD" ? null : body,
+    200,
+    pathname,
+    {
+      ...baseMdHeaders,
+      "x-markdown-tokens": String(Math.max(1, Math.floor(byteLen / 4))),
+    }
+  );
 }
 
 export default {
@@ -369,8 +411,18 @@ export default {
     }
 
     for (const [src, dst, code] of CFG.redirects) {
-      if (pathname === src) {
-        return Response.redirect(new URL(dst, url.origin).toString(), code);
+      if (
+        pathname === src &&
+        dst.startsWith("/") &&
+        !dst.startsWith("//") &&
+        !dst.includes("\\") &&
+        (code === 301 || code === 302 || code === 307 || code === 308)
+      ) {
+        const headers = new Headers();
+        applyBaseHeaders(headers, pathname, code, {
+          Location: new URL(dst, url.origin).toString(),
+        });
+        return new Response(null, { status: code, headers });
       }
     }
 
@@ -389,6 +441,7 @@ export default {
           applyBaseHeaders(headers, pathname, 200, {
             "Content-Type": "text/markdown; charset=utf-8",
             "x-markdown-tokens": String(tok),
+            Link: localizeLinkHeader(CFG.linkHeader, cand),
           });
           return new Response(buf, { status: 200, headers });
         }
@@ -413,6 +466,7 @@ export default {
           applyBaseHeaders(headers, pathname, 200, {
             "Content-Type": "text/markdown; charset=utf-8",
             "x-markdown-tokens": String(tok),
+            Link: localizeLinkHeader(CFG.linkHeader, cand),
           });
           return new Response(buf, { status: 200, headers });
         }
@@ -421,7 +475,30 @@ export default {
 
     const assetResp = await env.ASSETS.fetch(request);
     const headers = new Headers(assetResp.headers);
-    applyBaseHeaders(headers, pathname, assetResp.status);
+    let mdAlt: string | null = null;
+    if (
+      assetResp.status === 200 &&
+      ALT_MD_LINK_RE.test(CFG.linkHeader) &&
+      (assetResp.headers.get("content-type") || "")
+        .toLowerCase()
+        .includes("text/html")
+    ) {
+      for (const cand of mapToMdCandidates(pathname)) {
+        const probe = await env.ASSETS.fetch(
+          new Request(new URL(cand, url.origin), { method: "HEAD" })
+        );
+        if (probe.ok) {
+          mdAlt = cand;
+          break;
+        }
+      }
+    }
+    applyBaseHeaders(
+      headers,
+      pathname,
+      assetResp.status,
+      mdAlt ? { Link: localizeLinkHeader(CFG.linkHeader, mdAlt) } : undefined
+    );
     return new Response(assetResp.body, {
       status: assetResp.status,
       statusText: assetResp.statusText,

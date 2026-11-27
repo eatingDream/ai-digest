@@ -11,7 +11,7 @@ const DIST = join(WEB_DIR, "dist");
 const CSS_BUNDLES = [
   {
     out: "reader.css",
-    limit: 16384,
+    limit: 22528,
     parts: ["tokens.css", "base.css", "mast.css", "filter.css", "reader.css"],
   },
   {
@@ -49,8 +49,7 @@ function byteLen(text) {
 
 const PRESERVED_CSS_VARS = new Set([
   "--mast-h",
-  "--mast-offset",
-  "--filter-h",
+  "--strip-h",
   "--read-prog",
 ]);
 
@@ -189,6 +188,7 @@ async function buildCss() {
       .join("\n");
     const first = await esbuild.transform(raw, {
       loader: "css",
+      target: ["chrome115", "safari16", "firefox115"],
       minify: true,
       legalComments: "none",
       charset: "utf8",
@@ -196,6 +196,7 @@ async function buildCss() {
     const merged = mergeTopLevelBlocks(compactCssVars(first.code));
     const second = await esbuild.transform(merged, {
       loader: "css",
+      target: ["chrome115", "safari16", "firefox115"],
       minify: true,
       legalComments: "none",
       charset: "utf8",

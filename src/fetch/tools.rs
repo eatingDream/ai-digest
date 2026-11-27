@@ -253,6 +253,7 @@ pub struct CheckResult {
     pub pushed: usize,
     pub unknown: Vec<String>,
     pub duplicates: Vec<String>,
+    pub malformed: Vec<String>,
     pub problems: Vec<String>,
     pub r#final: Option<PathBuf>,
 }
@@ -297,13 +298,22 @@ pub fn check_candidates(args: &CheckArgs, paths: &DigestPaths, lang: Lang) -> Re
     let mut strong = false;
     let mut counts = BTreeMap::new();
     for line in input.lines() {
-        if let Some(tier) = line.strip_prefix("## ") {
-            let tier = tier.to_lowercase();
-            strong = CHECK_CANDS_STRONG_TIER_WORDS
-                .iter()
-                .any(|word| tier.contains(word));
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed.starts_with('>')
+            || trimmed == "---"
+        {
+            if let Some(tier) = line.strip_prefix("## ") {
+                let tier = tier.to_lowercase();
+                strong = CHECK_CANDS_STRONG_TIER_WORDS
+                    .iter()
+                    .any(|word| tier.contains(word));
+            }
+            continue;
         }
         let Some(m) = CHECK_LINE.captures(line) else {
+            result.malformed.push(trimmed.to_owned());
             continue;
         };
         let aid = m[1].to_owned();
@@ -335,6 +345,13 @@ pub fn check_candidates(args: &CheckArgs, paths: &DigestPaths, lang: Lang) -> Re
                 ids[..ids.len().min(10)].join(" ")
             ));
         }
+    }
+    if !result.malformed.is_empty() {
+        result.problems.push(format!(
+            "malformed lines ({}): {}",
+            result.malformed.len(),
+            result.malformed[..result.malformed.len().min(3)].join(" | ")
+        ));
     }
     if !(10..=60).contains(&result.n) {
         result.problems.push(fmt_label(
@@ -396,6 +413,11 @@ pub struct PageArgs {
     pub ctx: usize,
     #[arg(long)]
     pub meta: bool,
+    #[arg(
+        long,
+        help = "Exit non-zero if any URL fails and report final resolved URL, status, and host"
+    )]
+    pub strict: bool,
     #[arg(long, global = true)]
     pub lang: Option<String>,
 }
@@ -550,13 +572,20 @@ fn page_meta(doc: &Document, lang: Lang) -> String {
 static ARXIV_PATH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^/(?:abs|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?/?$").unwrap());
 
+struct FetchedPage {
+    final_url: String,
+    status: u16,
+    host: String,
+    body: String,
+}
+
 async fn page_url(
     http: &SafeHttpClient,
     input: &str,
     args: &PageArgs,
     find: Option<&str>,
     lang: Lang,
-) -> Result<String> {
+) -> Result<FetchedPage> {
     let url = Url::parse(input)?;
     validate_target(&url)?;
     let fetch = |url: Url| async move {
@@ -569,15 +598,26 @@ async fn page_url(
             .get_with_headers(&url, None, &headers)
             .await?
             .error_for_status()?;
-        Ok::<_, anyhow::Error>(read_text_limited(resp, MAX_BODY_BYTES).await?)
+        let final_url = resp.url().to_string();
+        let status = resp.status().as_u16();
+        let host = resp.url().host_str().unwrap_or("").to_owned();
+        let text = read_text_limited(resp, MAX_BODY_BYTES).await?;
+        Ok::<_, anyhow::Error>(FetchedPage {
+            final_url,
+            status,
+            host,
+            body: text,
+        })
     };
     if matches!(url.host_str(), Some("arxiv.org" | "www.arxiv.org")) {
         if let Some(aid) = ARXIV_PATH.captures(url.path()) {
-            let html = fetch(Url::parse(&format!("https://arxiv.org/abs/{}", &aid[1]))?).await?;
-            if html.trim().is_empty() {
-                return Ok(fmt_label(lang, "pg_short", &[("n", "0")]));
+            let mut fetched =
+                fetch(Url::parse(&format!("https://arxiv.org/abs/{}", &aid[1]))?).await?;
+            if fetched.body.trim().is_empty() {
+                fetched.body = fmt_label(lang, "pg_short", &[("n", "0")]);
+                return Ok(fetched);
             }
-            let doc = Document::parse_strict(&html)?;
+            let doc = Document::parse_strict(&fetched.body)?;
             let date = doc
                 .class_text("dateline")
                 .map(clean_text)
@@ -600,11 +640,12 @@ async fn page_url(
                         .join(", ")
                 })
                 .unwrap_or_default();
-            return Ok(format!(
+            fetched.body = format!(
                 "# {}\n{date} | {authors}\n{}",
                 page_title(&doc),
                 short(&abs, args.chars)
-            ));
+            );
+            return Ok(fetched);
         }
     }
     if url.host_str() == Some("github.com") && url.query().is_none() && url.fragment().is_none() {
@@ -620,25 +661,26 @@ async fn page_url(
                     let raw = Url::parse(&format!(
                         "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
                     ))?;
-                    if let Ok(text) = fetch(raw).await {
+                    if let Ok(mut fetched) = fetch(raw).await {
                         let head = format!("# {owner}/{repo} README");
-                        return Ok(if args.meta {
+                        let text = fetched.body;
+                        fetched.body = if args.meta {
                             head
                         } else if let Some(find) = find {
                             format!("{head}\n{}", page_find(&text, find, args.ctx, lang))
                         } else {
                             format!("{head}\n{}", short(&text, args.chars))
-                        });
+                        };
+                        return Ok(fetched);
                     }
                 }
             }
         }
     }
-    let html = fetch(url).await?;
-    let _ = Document::parse_strict(&html)?;
-    Ok(page_text(
-        &html, args.chars, find, args.ctx, args.meta, lang,
-    ))
+    let mut fetched = fetch(url).await?;
+    let _ = Document::parse_strict(&fetched.body)?;
+    fetched.body = page_text(&fetched.body, args.chars, find, args.ctx, args.meta, lang);
+    Ok(fetched)
 }
 
 pub async fn pages(args: &PageArgs, lang: Lang) -> (bool, String) {
@@ -665,7 +707,17 @@ pub async fn pages_with_client(
                 Some(kw)
             };
             let (ok, body) = match page_url(http, url, args, find, lang).await {
-                Ok(text) => (true, text),
+                Ok(fetched) => {
+                    let body = if args.strict {
+                        format!(
+                            "Final-URL: {} | Status: {} | Host: {}\n{}",
+                            fetched.final_url, fetched.status, fetched.host, fetched.body
+                        )
+                    } else {
+                        fetched.body
+                    };
+                    (true, body)
+                }
                 Err(e) => (
                     false,
                     format!(
@@ -688,7 +740,11 @@ pub async fn pages_with_client(
         .collect::<Vec<_>>()
         .await;
     (
-        multi || results.iter().all(|(ok, _)| *ok),
+        if args.strict {
+            results.iter().all(|(ok, _)| *ok)
+        } else {
+            multi || results.iter().all(|(ok, _)| *ok)
+        },
         results
             .into_iter()
             .map(|(_, s)| s)

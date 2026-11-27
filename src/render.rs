@@ -15,7 +15,8 @@ use crate::{
     i18n::{self, t, Lang},
     math::{math_ranges, render_inline_math},
     model::{
-        html_escape as esc, normalized_safe_url, strip_marked, Digest, Item, LangAlt, LinkItem,
+        canon_url, full_width_len, html_escape as esc, normalized_safe_url, safe_external_url,
+        safe_internal_url, strip_marked, strip_tracking_params, Digest, Item, LangAlt, LinkItem,
         SectionEntry,
     },
 };
@@ -320,20 +321,40 @@ fn protect_math<'a>(text: &'a str, options: Options, slot: &str) -> (Cow<'a, str
 }
 
 fn link_markup(url: &str, title: &str, prefix: &str, all_external: bool) -> Option<String> {
-    let url = normalized_safe_url(url)?;
     let external = all_external
-        || url.to_ascii_lowercase().starts_with("http://")
-        || url.to_ascii_lowercase().starts_with("https://");
+        || url.trim().to_ascii_lowercase().starts_with("http://")
+        || url.trim().to_ascii_lowercase().starts_with("https://");
+    let url = if external {
+        safe_external_url(url)?
+    } else {
+        safe_internal_url(url)?
+    };
     let url = prefix_fragment(url, prefix);
     let mut out = format!(r#"<a href="{}""#, esc(&url));
     if !title.is_empty() {
         write!(out, r#" title="{}""#, esc(title)).unwrap();
     }
     if external {
-        out.push_str(r#" target="_blank" rel="noopener noreferrer""#);
+        out.push_str(r#" target="_blank" rel="noopener noreferrer nofollow ugc""#);
     }
     out.push('>');
     Some(out)
+}
+
+pub fn compact_tab_title(digest: &Digest) -> String {
+    if digest.weekly {
+        digest
+            .dates
+            .last()
+            .map(|d| format!("AI Digest · W{:02}", d.iso_week().week()))
+            .unwrap_or_else(|| "AI Digest · Weekly".into())
+    } else {
+        digest
+            .dates
+            .last()
+            .map(|d| format!("AI Digest · D{:02}/{:02}", d.month(), d.day()))
+            .unwrap_or_else(|| "AI Digest".into())
+    }
 }
 
 fn prefix_fragment(url: String, prefix: &str) -> String {
@@ -345,6 +366,8 @@ fn prefix_fragment(url: String, prefix: &str) -> String {
 
 pub(crate) const GEO_SLOT: &str = "<!-- digest-geo-head:start --><!-- digest-geo-head:end -->";
 
+pub use crate::model::SPECULATION_RULES_JSON;
+
 fn page_head(
     lang: Lang,
     title: &str,
@@ -354,7 +377,7 @@ fn page_head(
 ) -> String {
     let mut out = format!(
         r##"<!doctype html>
-<html lang="{lang}" data-mast="shown"><head>
+<html lang="{lang}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#121110">
@@ -379,7 +402,11 @@ fn page_head(
     }
     write!(out, "{GEO_SLOT}\n<style>{css}</style>\n").unwrap();
     if !noindex {
-        out.push_str("<script type=\"speculationrules\">{\"prefetch\":[{\"where\":{\"and\":[{\"href_matches\":\"/*\"},{\"not\":{\"selector_matches\":\"[target=_blank],[download]\"}}]},\"eagerness\":\"moderate\"}]}</script>\n");
+        writeln!(
+            out,
+            "<script type=\"speculationrules\">{SPECULATION_RULES_JSON}</script>"
+        )
+        .unwrap();
     }
     out.push_str("</head>\n<body>\n");
     out
@@ -507,7 +534,8 @@ fn filter_panel(
             "filter_label"
         },
     );
-    writeln!(out, r#"<div class="filter-bar filter-drawer" id="{prefix}digestFilterBar" aria-label="{}" aria-hidden="true" inert><div class="filter-inner"><div class="filter-input-wrap">{}<input type="search" class="filter-input" placeholder="{}" aria-label="{}" autocomplete="off"><span class="filter-count num" aria-live="polite" data-total="{total}">{total}</span><button type="button" class="filter-clear" hidden>{}</button><button type="button" class="filter-close" aria-label="{}">{}</button></div><div class="filter-tags">"#,
+    writeln!(out, r#"<div class="search-scrim" data-search-scrim hidden></div>
+<div class="filter-bar filter-drawer search-panel" id="{prefix}digestFilterBar" role="dialog" aria-modal="false" aria-label="{}" hidden aria-hidden="true" inert><div class="filter-inner"><div class="filter-input-wrap">{}<input type="search" class="filter-input" placeholder="{}" aria-label="{}" autocomplete="off"><span class="filter-count num" aria-live="polite" data-total="{total}">{total}</span><button type="button" class="filter-clear" hidden>{}</button><button type="button" class="filter-close" aria-label="{}">{}</button></div><div class="filter-tags">"#,
         esc(label), icon("search"), esc(placeholder), esc(label), t(lang, "filter_clear"), esc(t(lang, "search_close")), icon("close")).unwrap();
     for (tag, count) in tags {
         let tag = esc(tag);
@@ -527,6 +555,224 @@ fn tools(out: &mut String, lang: Lang, prefix: &str, alt: Option<&LangAlt>, bili
         esc(t(lang, "theme_toggle_title")), icon("theme")).unwrap();
 }
 
+fn short_section_label(title: &str) -> String {
+    let clean = strip_leading_emoji(title).trim();
+    let trimmed = clean.split(['（', '(']).next().unwrap_or(clean).trim();
+    if trimmed.is_empty() {
+        clean.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn render_cat_chips(out: &mut String, digest: &Digest, lang: Lang) {
+    let total = digest.items().count();
+    write!(
+        out,
+        r#"<button type="button" class="chip" data-cat="all" aria-pressed="true">{} <b class="n num">{total}</b></button>"#,
+        t(lang, "filter_all")
+    )
+    .unwrap();
+    for sec in &digest.sections {
+        let count = sec.items().count();
+        if count == 0 {
+            continue;
+        }
+        let cat = esc(&sec.id);
+        let label = esc(&protect_technical_hyphens(&short_section_label(&sec.title)));
+        write!(
+            out,
+            r#"<button type="button" class="chip" data-cat="{cat}" aria-pressed="false">{label} <b class="n num">{count}</b></button>"#
+        )
+        .unwrap();
+    }
+}
+
+fn item_word_units(item: &Item) -> usize {
+    static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new("[A-Za-z0-9]+").unwrap());
+    let (mut cjk, mut latin) = (0usize, 0usize);
+    for text in [
+        &item.title,
+        &item.dek,
+        &item.look,
+        &item.detail,
+        &item.followup,
+        &item.extra,
+    ] {
+        cjk += text
+            .chars()
+            .filter(|ch| ('\u{4e00}'..='\u{9fff}').contains(ch))
+            .count();
+        latin += WORD.find_iter(text).count();
+    }
+    cjk + ((latin as f64) * 1.5).round() as usize
+}
+
+fn pick_highlights(digest: &Digest) -> Vec<(&crate::model::Section, &Item)> {
+    let mut picked: Vec<(&crate::model::Section, &Item)> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::<&str>::new();
+    let mut per_cat = HashMap::<&str, usize>::new();
+    let target = digest.items().count().min(5);
+    if target == 0 {
+        return picked;
+    }
+
+    // 1. Explicit digest.must anchors first
+    for must in &digest.must {
+        if picked.len() >= target {
+            break;
+        }
+        let Some(anchor) = must.anchor.strip_prefix('#') else {
+            continue;
+        };
+        for sec in &digest.sections {
+            if let Some(item) = sec.items().find(|it| it.id == anchor) {
+                let cnt = per_cat.entry(sec.id.as_str()).or_insert(0);
+                if *cnt < 2 && seen_ids.insert(item.id.as_str()) {
+                    *cnt += 1;
+                    picked.push((sec, item));
+                }
+                break;
+            }
+        }
+    }
+    // 2. Hot / new items next (max 2 per category)
+    for sec in &digest.sections {
+        for item in sec.items().filter(|it| it.is_new) {
+            if picked.len() >= target {
+                break;
+            }
+            let cnt = per_cat.entry(sec.id.as_str()).or_insert(0);
+            if *cnt < 2 && seen_ids.insert(item.id.as_str()) {
+                *cnt += 1;
+                picked.push((sec, item));
+            }
+        }
+    }
+    // 3. Round-robin lead items per section until reaching target (max 2 per category)
+    for pass in 0..2 {
+        for sec in &digest.sections {
+            if picked.len() >= target {
+                break;
+            }
+            if let Some(item) = sec.items().nth(pass) {
+                let cnt = per_cat.entry(sec.id.as_str()).or_insert(0);
+                if *cnt < 2 && seen_ids.insert(item.id.as_str()) {
+                    *cnt += 1;
+                    picked.push((sec, item));
+                }
+            }
+        }
+    }
+    picked
+}
+
+fn classify_source(url: &str, label: &str) -> (&'static str, u8, &'static str, String) {
+    let parsed = url::Url::parse(url).ok();
+    let host = parsed
+        .as_ref()
+        .and_then(|u| u.host_str())
+        .unwrap_or("")
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let host_clean = host.strip_prefix("www.").unwrap_or(&host).to_owned();
+    let path = parsed
+        .as_ref()
+        .map(|u| u.path().to_ascii_lowercase())
+        .unwrap_or_default();
+    let label_low = label.to_ascii_lowercase();
+
+    let is_paper = matches!(
+        host_clean.as_str(),
+        "arxiv.org"
+            | "openreview.net"
+            | "aclanthology.org"
+            | "proceedings.mlr.press"
+            | "nature.com"
+            | "science.org"
+            | "biorxiv.org"
+            | "medrxiv.org"
+            | "alphaxiv.org"
+    ) || (host_clean == "huggingface.co" && path.starts_with("/papers"));
+
+    let is_code = matches!(
+        host_clean.as_str(),
+        "github.com" | "gitlab.com" | "codeberg.org"
+    );
+
+    let is_model = matches!(
+        host_clean.as_str(),
+        "huggingface.co" | "modelscope.cn" | "ollama.com"
+    ) && !is_paper;
+
+    let is_x = matches!(
+        host_clean.as_str(),
+        "x.com" | "twitter.com" | "mobile.twitter.com"
+    );
+
+    let is_wechat = host_clean == "mp.weixin.qq.com";
+
+    let is_official_host = matches!(
+        host_clean.as_str(),
+        "openai.com"
+            | "anthropic.com"
+            | "deepmind.google"
+            | "blog.google"
+            | "research.google"
+            | "ai.meta.com"
+            | "deepseek.com"
+            | "qwen.ai"
+            | "qwenlm.github.io"
+            | "mistral.ai"
+            | "x.ai"
+            | "nvidia.com"
+            | "blogs.nvidia.com"
+            | "developer.nvidia.com"
+            | "microsoft.com"
+            | "blogs.microsoft.com"
+            | "apple.com"
+            | "machinelearning.apple.com"
+            | "moonshot.cn"
+            | "zhipuai.cn"
+            | "z.ai"
+            | "minimax.io"
+            | "bytedance.com"
+            | "seed.bytedance.com"
+            | "cohere.com"
+            | "allenai.org"
+            | "thinkingmachines.ai"
+            | "cursor.com"
+            | "vercel.com"
+            | "cloudflare.com"
+            | "blog.cloudflare.com"
+    ) || label.contains("官方")
+        || label.contains("官网")
+        || label_low.contains("official")
+        || label_low.contains("blog");
+
+    let (kind, rank, key) = if is_paper {
+        ("paper", 0, "src_paper")
+    } else if is_official_host && !is_code && !is_model && !is_x && !is_wechat {
+        ("official", 1, "src_official")
+    } else if is_code {
+        ("code", 2, "src_code")
+    } else if is_model {
+        ("model", 3, "src_model")
+    } else if is_x {
+        ("x", 4, "src_x")
+    } else if is_wechat {
+        ("wechat", 5, "src_wechat")
+    } else {
+        ("media", 6, "src_media")
+    };
+    let display = if host_clean.is_empty() {
+        label.to_owned()
+    } else {
+        host_clean
+    };
+    (kind, rank, key, display)
+}
+
 struct Reader<'a> {
     digest: &'a Digest,
     lang: Lang,
@@ -544,7 +790,6 @@ impl Reader<'_> {
             prefix,
             bilingual,
         } = *self;
-        let title = esc(&protect_technical_hyphens(&digest.full_title()));
         let total = digest.items().count();
         let home = prefix_fragment(
             normalized_safe_url(&opts.home_href).unwrap_or_else(|| "./".into()),
@@ -569,7 +814,8 @@ impl Reader<'_> {
         } else {
             esc(&date)
         };
-        writeln!(out, r#"<header class="mast"><div class="mast-row"><h1 class="np"><a class="np-link" href="{}" data-brand-home><span class="ai">AI</span> Digest</a></h1><span class="edition" data-kind="{kind}">{edition}{}{date}</span><span class="mast-sep" aria-hidden="true"></span>{TOP_SLOT}"#, esc(&home), if date.is_empty() { "" } else { " · " }).unwrap();
+        out.push_str("<div class=\"mast-sentinel\" aria-hidden=\"true\"></div>\n");
+        writeln!(out, r#"<header class="mast" role="banner"><div class="mast-row"><span class="np"><a class="np-link" href="{}" data-brand-home><span class="ai">AI</span> Digest</a></span><span class="edition" data-kind="{kind}">{edition}{}{date}</span><span class="mast-sep" aria-hidden="true"></span>{TOP_SLOT}"#, esc(&home), if date.is_empty() { "" } else { " · " }).unwrap();
         tools(out, lang, prefix, opts.lang_alt.as_ref(), bilingual);
         out.push_str("</div></header>\n<div class=\"read-prog\" aria-hidden=\"true\"><div class=\"read-prog-fill\"></div></div>\n");
         filter_panel(
@@ -582,16 +828,6 @@ impl Reader<'_> {
         );
         out.push_str("<div class=\"reader-shell\">\n");
         self.toc(out);
-        writeln!(out, r#"<main id="{prefix}main" class="prose-col"><header class="folio"><p class="folio-kicker">{edition}{} </p><h1>{title}</h1>"#,
-            opts.edition_number.map_or_else(String::new, |n| match lang { Lang::En => format!(" · No. {n}"), Lang::ZhCn => format!(" · 第 {n} 期") })).unwrap();
-        if !opts.folio_dek.is_empty() {
-            writeln!(
-                out,
-                r#"<p class="folio-dek">{}</p>"#,
-                markdown(&opts.folio_dek, true, prefix)
-            )
-            .unwrap();
-        }
         let period = match digest.dates.as_slice() {
             [a, .., b] if digest.weekly => i18n::date_range(lang, *a, *b),
             [.., d] if lang == Lang::En => {
@@ -604,9 +840,73 @@ impl Reader<'_> {
             ),
             [] => digest.period.clone(),
         };
-        let reading = t(lang, "read_time").replace("{m}", &read_minutes(digest).to_string());
-        writeln!(out, r#"<span class="mast-meta"><span>{}</span><span>{} · {reading}</span><span class="motto">{}</span></span><nav class="folio-sections" aria-label="{}">"#,
-            esc(&period), i18n::count_items(lang, total), t(lang, "motto"), esc(t(lang, "issue_sections"))).unwrap();
+        let iso_date = digest
+            .dates
+            .last()
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        let heading_text = if period.is_empty() {
+            esc(&protect_technical_hyphens(&digest.full_title()))
+        } else if iso_date.is_empty() {
+            esc(&period)
+        } else {
+            format!(
+                r#"<time datetime="{}">{}</time>"#,
+                esc(&iso_date),
+                esc(&period)
+            )
+        };
+        let edition_sr = if digest.weekly {
+            lang.choose(" AI Digest Weekly", " AI Digest 周报")
+        } else {
+            lang.choose(" AI Digest Daily", " AI Digest 日报")
+        };
+        let mins = read_minutes(digest);
+        let read_html = t(lang, "read_time").replace("{m}", &format!("<b>{mins}</b>"));
+        let count_html = i18n::count_items(lang, total);
+        writeln!(
+            out,
+            r#"<main id="{prefix}main" class="prose-col"><header class="folio issue-head"><h1 class="issue-title">{heading_text}<span class="vh">{edition_sr}</span></h1>"#
+        )
+        .unwrap();
+        if !opts.folio_dek.is_empty() {
+            writeln!(
+                out,
+                r#"<p class="folio-dek">{}</p>"#,
+                markdown(&opts.folio_dek, true, prefix)
+            )
+            .unwrap();
+        }
+        write!(
+            out,
+            r#"<p class="issue-meta mast-meta"><span data-k="read" data-read-tpl="{}">{read_html}</span><span data-k="count" data-total="{total}">{count_html}</span><span class="meta-cats" data-meta-cats>"#,
+            esc(t(lang, "read_time"))
+        )
+        .unwrap();
+        for sec in &digest.sections {
+            let count = sec.items().count();
+            if count == 0 {
+                continue;
+            }
+            write!(
+                out,
+                r#"<span class="meta-cat" data-cat="{}">{} <b class="num">{count}</b></span>"#,
+                esc(&sec.id),
+                esc(&protect_technical_hyphens(&short_section_label(&sec.title)))
+            )
+            .unwrap();
+        }
+        writeln!(
+            out,
+            r#"</span><button type="button" class="active-q-chip" data-active-q hidden></button></p>"#
+        )
+        .unwrap();
+        writeln!(
+            out,
+            r#"<nav class="folio-sections" aria-label="{}">"#,
+            esc(t(lang, "issue_sections"))
+        )
+        .unwrap();
         for (i, sec) in digest.sections.iter().enumerate() {
             let count = sec.items().count();
             if count == 0 {
@@ -615,11 +915,21 @@ impl Reader<'_> {
             writeln!(out, r##"<a href="#{prefix}{}"><span class="num">{:02}</span> {} <span class="num">{count}</span></a>"##, esc(&sec.id), i + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&sec.title)))).unwrap();
         }
         out.push_str("</nav></header>\n");
+        write!(
+            out,
+            r#"<div class="mobile-filter-strip" role="group" aria-label="{}">"#,
+            esc(t(lang, "filter_by_category"))
+        )
+        .unwrap();
+        render_cat_chips(out, digest, lang);
+        out.push_str("</div>\n");
+        self.highlights(out);
         self.front(out);
         let mut lead = true;
         for (idx, section) in digest.sections.iter().enumerate() {
-            writeln!(out, r#"<section class="sec" id="{prefix}{}"><div class="sec-head"><span class="sec-no num">{:02}</span><h2>{}</h2><span class="sec-cnt num">{}</span>"#,
-                esc(&section.id), idx + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&section.title))), section.items().count()).unwrap();
+            let cat_id = esc(&section.id);
+            writeln!(out, r#"<section class="sec" id="{prefix}{cat_id}" data-category="{cat_id}"><div class="sec-head"><span class="sec-no num">{:02}</span><h2>{}</h2><span class="sec-cnt num">{}</span>"#,
+                idx + 1, esc(&protect_technical_hyphens(strip_leading_emoji(&section.title))), section.items().count()).unwrap();
             if !section.note.is_empty() {
                 writeln!(
                     out,
@@ -638,7 +948,7 @@ impl Reader<'_> {
                     )
                     .unwrap(),
                     SectionEntry::Item(item) => {
-                        self.story(out, item, lead);
+                        self.story(out, &section.id, item, lead);
                         lead = false;
                     }
                 }
@@ -654,6 +964,56 @@ impl Reader<'_> {
             t(lang, "end"), esc(t(lang, "nav_aria")), icon("contents"), t(lang, "toc"), esc(t(lang, "to_top")), icon("up"), esc(t(lang, "to_top")), icon("up")).unwrap();
     }
 
+    fn highlights(&self, out: &mut String) {
+        let Self {
+            digest,
+            lang,
+            prefix,
+            ..
+        } = *self;
+        let items = pick_highlights(digest);
+        if items.is_empty() {
+            return;
+        }
+        let n = items.len();
+        writeln!(
+            out,
+            r#"<section class="highlights" aria-labelledby="{prefix}hl-h"><h2 id="{prefix}hl-h">{} <span class="hl-count num">({n})</span></h2><ol class="hl-list">"#,
+            t(lang, "highlights_title")
+        )
+        .unwrap();
+        for (idx, (sec, item)) in items.iter().enumerate() {
+            let extra = if idx >= 3 { " data-hl-extra" } else { "" };
+            let cat_label = esc(&protect_technical_hyphens(&short_section_label(&sec.title)));
+            let title = esc(&protect_technical_hyphens(&item.title));
+            writeln!(
+                out,
+                r##"<li data-item-id="{prefix}{}" data-category="{}" data-tags="{}"{extra}><a href="#{prefix}{}"><span class="hl-cat">{cat_label}</span><span class="hl-t">{title}</span></a></li>"##,
+                esc(&item.id),
+                esc(&sec.id),
+                esc(&item.tags.join("|")),
+                esc(&item.id)
+            )
+            .unwrap();
+        }
+        writeln!(
+            out,
+            r#"</ol><p class="hl-empty" hidden>{} · <b class="num">0</b></p>{}</section>"#,
+            t(lang, "highlights_empty"),
+            if n > 3 {
+                format!(
+                    r#"<button type="button" class="hl-more" data-hl-more data-more-label="{}" data-less-label="{}">{}</button>"#,
+                    esc(t(lang, "highlights_more")),
+                    esc(t(lang, "highlights_less")),
+                    t(lang, "highlights_more")
+                )
+            } else {
+                String::new()
+            }
+        )
+        .unwrap();
+    }
+
     fn toc(&self, out: &mut String) {
         let Self {
             digest,
@@ -661,8 +1021,19 @@ impl Reader<'_> {
             prefix,
             ..
         } = *self;
-        writeln!(out, r#"<nav class="toc-side" id="{prefix}toc-sheet" aria-label="{}"><div class="toc-handle" aria-hidden="true"></div><div class="toc-head"><span>{}</span><button type="button" class="toc-expand-all" aria-expanded="true">{}</button><button type="button" class="toc-close" aria-label="{}">{}</button></div>"#,
-            esc(t(lang, "toc")), t(lang, "toc"), lang.choose("Collapse all", "全部收起"), esc(t(lang, "toc_close")), icon("close")).unwrap();
+        write!(
+            out,
+            r#"<nav class="toc-side" id="{prefix}toc-sheet" aria-label="{}"><div class="toc-top"><div class="toc-handle" aria-hidden="true"></div><div class="toc-head"><h2 class="toc-label">{}</h2><button type="button" class="toc-expand-all" aria-expanded="true">{}</button><button type="button" class="toc-close" aria-label="{}">{}</button></div><div class="cat-chips" role="group" aria-label="{}">"#,
+            esc(t(lang, "toc")),
+            t(lang, "toc"),
+            lang.choose("Collapse all", "全部收起"),
+            esc(t(lang, "toc_close")),
+            icon("close"),
+            esc(t(lang, "filter_by_category"))
+        )
+        .unwrap();
+        render_cat_chips(out, digest, lang);
+        out.push_str("</div></div>\n");
         if !digest.must.is_empty() || !digest.themes.is_empty() {
             out.push_str("<div class=\"toc-front\">");
             if !digest.must.is_empty() {
@@ -687,15 +1058,21 @@ impl Reader<'_> {
             let id = esc(&sec.id);
             let title = esc(&protect_technical_hyphens(strip_leading_emoji(&sec.title)));
             let count = sec.items().count();
-            writeln!(out, r#"<div class="ts-group" data-sec="{prefix}{id}" data-open="true"><button type="button" class="ts-sec" aria-expanded="true" aria-controls="{prefix}ts-list-{id}"><span class="ts-no num">{:02}</span><span class="ts-title">{title}</span><span class="ts-cnt num" data-total="{count}">{count}</span></button><div class="ts-panel" id="{prefix}ts-list-{id}"><ol class="ts-items">"#,
+            writeln!(out, r#"<div class="ts-group" data-sec="{prefix}{id}" data-category="{id}" data-open="true"><button type="button" class="ts-sec" aria-expanded="true" aria-controls="{prefix}ts-list-{id}"><span class="ts-no num">{:02}</span><span class="ts-title">{title}</span><span class="ts-cnt num" data-total="{count}">{count}</span></button><div class="ts-panel" id="{prefix}ts-list-{id}"><ol class="ts-items">"#,
                 idx + 1).unwrap();
             for item in sec.items() {
                 let raw_title = esc(&item.title);
                 let title = esc(&protect_technical_hyphens(&item.title));
+                let short_cls = if full_width_len(&item.title) <= 30.0 {
+                    " short"
+                } else {
+                    ""
+                };
                 let num = esc(&item.number);
                 writeln!(
                     out,
-                    r##"<li><a href="#{prefix}{}" title="{raw_title}"><span class="ts-num num">{num}.</span><span class="ts-title">{title}</span>{}</a></li>"##,
+                    r##"<li data-item-id="{prefix}{}" data-category="{id}"><a href="#{prefix}{}" title="{raw_title}"><span class="ts-num num">{num}.</span><span class="ts-title{short_cls}">{title}</span>{}</a></li>"##,
+                    esc(&item.id),
                     esc(&item.id),
                     if item.is_new {
                         r#"<span class="dot-hot" aria-hidden="true"></span>"#
@@ -776,13 +1153,15 @@ impl Reader<'_> {
         }
     }
 
-    fn story(&self, out: &mut String, item: &Item, lead: bool) {
+    fn story(&self, out: &mut String, category: &str, item: &Item, lead: bool) {
         let Self { lang, prefix, .. } = *self;
         let id = esc(&item.id);
+        let cat = esc(category);
+        let words = item_word_units(item);
         let lead_class = if lead { " story--lead" } else { "" };
         writeln!(
             out,
-            r#"<article class="story{lead_class}" id="{prefix}{id}" data-tags="{}">"#,
+            r#"<article class="story{lead_class}" id="{prefix}{id}" data-item-id="{prefix}{id}" data-category="{cat}" data-tags="{}" data-words="{words}">"#,
             esc(&item.tags.join("|"))
         )
         .unwrap();
@@ -826,8 +1205,16 @@ impl Reader<'_> {
             let body = markdown(&item.dek, true, prefix);
             writeln!(out, r#"<p class="dek">{body}</p>"#).unwrap();
         }
+        if !item.look.is_empty() {
+            writeln!(
+                out,
+                r#"<aside class="look"><span class="look-k">{}</span><div class="prose">{}</div></aside>"#,
+                t(lang, "label_look"),
+                markdown(&item.look, false, prefix)
+            )
+            .unwrap();
+        }
         for (class, label, value) in [
-            ("look", t(lang, "label_look"), &item.look),
             ("detail", t(lang, "label_detail"), &item.detail),
             ("extra", t(lang, "label_followup"), &item.followup),
             ("extra", lang.choose("More", "补充"), &item.extra),
@@ -838,17 +1225,183 @@ impl Reader<'_> {
             }
         }
         if !item.links.is_empty() {
-            out.push_str("<div class=\"story-links\">");
-            for link in &item.links {
-                if let Some(a) = link_markup(&link.url, "", prefix, true) {
-                    write!(out, "{a}{}{}</a>", esc(&link.label), icon("ext")).unwrap();
+            struct RenderedSource<'a> {
+                rank: u8,
+                idx: usize,
+                kind: &'static str,
+                key: &'static str,
+                host_display: String,
+                safe_url: Option<String>,
+                orig_label: &'a str,
+            }
+            let mut seen = std::collections::HashSet::<String>::new();
+            let mut classified = Vec::new();
+            for (idx, link) in item.links.iter().enumerate() {
+                if let Some(safe) = safe_external_url(&link.url) {
+                    let clean = strip_tracking_params(&safe);
+                    if !seen.insert(canon_url(&clean)) {
+                        continue;
+                    }
+                    let (kind, rank, key, host_display) = classify_source(&clean, &link.label);
+                    classified.push(RenderedSource {
+                        rank,
+                        idx,
+                        kind,
+                        key,
+                        host_display,
+                        safe_url: Some(clean),
+                        orig_label: link.label.as_str(),
+                    });
                 } else {
-                    write!(out, "<span>{}</span>", esc(&link.label)).unwrap();
+                    classified.push(RenderedSource {
+                        rank: 99,
+                        idx,
+                        kind: "media",
+                        key: "src_media",
+                        host_display: String::new(),
+                        safe_url: None,
+                        orig_label: link.label.as_str(),
+                    });
                 }
             }
-            out.push_str("</div>\n");
+            classified.sort_by_key(|s| (s.rank, s.idx));
+            let mut host_counts = HashMap::<(&str, &str), usize>::new();
+            for s in &classified {
+                if s.safe_url.is_some() {
+                    *host_counts
+                        .entry((s.kind, s.host_display.as_str()))
+                        .or_insert(0) += 1;
+                }
+            }
+            let total_links = classified.len();
+            out.push_str("<footer class=\"story-links sources\">");
+            for (pos, src) in classified.iter().enumerate() {
+                let extra = if pos >= 5 {
+                    " hidden data-src-extra"
+                } else {
+                    ""
+                };
+                let primary = if pos == 0 { " src-primary" } else { "" };
+                if let Some(url) = &src.safe_url {
+                    let dup_host = host_counts
+                        .get(&(src.kind, src.host_display.as_str()))
+                        .copied()
+                        .unwrap_or(0)
+                        > 1;
+                    let display =
+                        source_link_display(&src.host_display, src.orig_label, url, dup_host);
+                    let url_esc = esc(url);
+                    let title_attr = if src.orig_label.trim().is_empty() {
+                        url_esc.clone()
+                    } else {
+                        esc(&format!("{} — {url}", src.orig_label.trim()))
+                    };
+                    let kind_label = t(lang, src.key);
+                    write!(
+                        out,
+                        r#"<a class="src{primary}" data-kind="{}" href="{url_esc}" title="{title_attr}" target="_blank" rel="noopener noreferrer nofollow ugc"{extra}><span class="src-k">{kind_label}</span> {}</a>"#,
+                        src.kind,
+                        esc(&protect_technical_hyphens(&display))
+                    )
+                    .unwrap();
+                } else {
+                    write!(out, "<span>{}</span>", esc(src.orig_label)).unwrap();
+                }
+            }
+            if total_links > 5 {
+                let more = t(lang, "src_more").replace("{n}", &(total_links - 5).to_string());
+                write!(
+                    out,
+                    r#"<button type="button" class="src-more" data-src-more>{}</button>"#,
+                    esc(&more)
+                )
+                .unwrap();
+            }
+            out.push_str("</footer>\n");
         }
         out.push_str("</article>\n");
+    }
+}
+
+fn source_link_display(host_display: &str, orig_label: &str, url: &str, dup_host: bool) -> String {
+    if !dup_host {
+        return host_display.to_owned();
+    }
+    let mut trimmed = orig_label.trim().to_owned();
+    for suffix in [
+        "论文",
+        "官方博客",
+        "官方公告",
+        "官方",
+        "官网",
+        "代码仓库",
+        "代码",
+        "仓库",
+        "模型",
+        "推文",
+        "帖子",
+        "X 帖",
+        "X帖",
+        "报道",
+        "Paper",
+        "paper",
+        "Official Blog",
+        "official blog",
+        "Official",
+        "official",
+        "Blog",
+        "blog",
+        "Code",
+        "code",
+        "Repo",
+        "repo",
+        "Model",
+        "model",
+        "X Post",
+        "X post",
+        "Post",
+        "post",
+        "arXiv",
+        "GitHub",
+        "Hugging Face",
+    ] {
+        if let Some(rest) = trimmed.strip_suffix(suffix) {
+            let candidate = rest
+                .trim_end_matches(|c: char| {
+                    c.is_whitespace() || matches!(c, '·' | '-' | ':' | '：' | '/')
+                })
+                .trim();
+            trimmed = candidate.to_owned();
+        }
+    }
+    let is_generic = trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case(host_display)
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "arxiv" | "github" | "huggingface" | "hf" | "x" | "twitter" | "link" | "source"
+        );
+    let label = if !is_generic {
+        trimmed
+    } else if let Some(seg) = url::Url::parse(url)
+        .ok()
+        .and_then(|u| {
+            u.path_segments()
+                .and_then(|mut segs| segs.rfind(|s| !s.is_empty()).map(str::to_owned))
+        })
+        .filter(|s| !s.is_empty())
+    {
+        seg
+    } else if !orig_label.trim().is_empty() {
+        orig_label.trim().to_owned()
+    } else {
+        host_display.to_owned()
+    };
+    if label.chars().count() > 32 {
+        let mut s: String = label.chars().take(31).collect();
+        s.push('…');
+        s
+    } else {
+        label
     }
 }
 
@@ -879,31 +1432,15 @@ fn related_links(text: &str, digest: &Digest) -> String {
 }
 
 fn read_minutes(digest: &Digest) -> usize {
-    static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new("[A-Za-z0-9]+").unwrap());
-    let (mut cjk, mut latin) = (0, 0);
-    for item in digest.items() {
-        for text in [
-            &item.title,
-            &item.dek,
-            &item.look,
-            &item.detail,
-            &item.followup,
-            &item.extra,
-        ] {
-            cjk += text
-                .chars()
-                .filter(|ch| ('\u{4e00}'..='\u{9fff}').contains(ch))
-                .count();
-            latin += WORD.find_iter(text).count();
-        }
-    }
-    ((cjk as f64 / 380.0 + latin as f64 / 220.0).round() as usize).max(1)
+    let words: usize = digest.items().map(item_word_units).sum();
+    ((words as f64 / 400.0).round() as usize).max(1)
 }
 
 pub fn render_digest_html(digest: &Digest, lang: Lang, opts: &RenderOptions) -> String {
+    let tab_title = compact_tab_title(digest);
     let mut out = page_head(
         lang,
-        "AI Digest",
+        &tab_title,
         Some(&digest.full_title()),
         assets::READER_CSS,
         false,
@@ -928,7 +1465,8 @@ pub fn render_digest_html(digest: &Digest, lang: Lang, opts: &RenderOptions) -> 
 
 pub fn render_bilingual_html(zh: &Digest, en: &Digest, opts: &RenderOptions) -> String {
     let css = format!("{}{BILINGUAL_CSS}", assets::READER_CSS);
-    let mut out = page_head(Lang::ZhCn, "AI Digest", Some(&zh.full_title()), &css, false);
+    let tab_title = compact_tab_title(zh);
+    let mut out = page_head(Lang::ZhCn, &tab_title, Some(&zh.full_title()), &css, false);
     out.push_str(r#"<input class="sr-only" type="radio" name="digest-language" id="language-zh" aria-label="简体中文">
 <input class="sr-only" type="radio" name="digest-language" id="en-language" aria-label="English">
 "#);
@@ -936,7 +1474,7 @@ pub fn render_bilingual_html(zh: &Digest, en: &Digest, opts: &RenderOptions) -> 
         writeln!(
             out,
             r#"<div class="lang-pane lang-{code}" data-lang="{lang}" data-lang-pane="{lang}" lang="{lang}" data-title="{}">"#,
-            esc(&digest.full_title())
+            esc(&compact_tab_title(digest))
         )
         .unwrap();
         skip_link(&mut out, lang, prefix);
@@ -973,7 +1511,8 @@ pub struct ArchiveIssue {
 pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOptions) -> String {
     let mut out = page_head(lang, t(lang, "index_title"), None, assets::INDEX_CSS, false);
     skip_link(&mut out, lang, "");
-    write!(out, r#"<header class="mast"><div class="mast-row"><h1 class="np"><span class="ai">AI</span> Digest</h1><span class="mast-chip">{}</span>"#, i18n::count_issues(lang, issues.len())).unwrap();
+    out.push_str("<div class=\"mast-sentinel\" aria-hidden=\"true\"></div>\n");
+    write!(out, r#"<header class="mast" role="banner"><div class="mast-row"><span class="np"><span class="ai">AI</span> Digest</span><span class="mast-chip">{}</span>"#, i18n::count_issues(lang, issues.len())).unwrap();
     tools(&mut out, lang, "", opts.lang_alt.as_ref(), false);
     out.push_str("</div></header>\n");
     filter_panel(
