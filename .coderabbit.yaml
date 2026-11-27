@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+  request_changes_workflow: false
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords:
+      - "chore(main): release"
+  path_filters:
+    - "!CHANGELOG.md"
+    - "!**/package-lock.json"
+    - "!Cargo.lock"
+    - "!**/panel/dist/panel.html"
+    - "!web/dist/**"
+    - "!docs/screenshots/**"
+    - "!assets/*.png"
+  path_instructions:
+    - path: "src/**/*.rs"
+      instructions: |
+        - Enforce `clippy` (`-D warnings`) cleanliness, strict lower-triangular module DAG in `src/`, SSRF-hardened outbound HTTP in `src/net.rs`, and zero leaked secrets, emails, or local paths.
+        - Verify Level 5/5 GEO outputs in `src/geo.rs` (`robots.txt`, `sitemap.xml`, `llms.txt`, Atom feeds, JSON-LD, `.md` mirrors, `_worker.js`), EN+ZH-CN i18n parity in `src/i18n.rs`, and build-time SHA-256 CSP + PBKDF2-SHA256 / AES-256-GCM encryption parity in `src/crypto.rs` and `src/verify.rs`.
+    - path: "tests/**/*.rs"
+      instructions: |
+        - Verify integration and contract tests remain offline, deterministic, and use synthetic fixtures only.
+    - path: "web/src/**/*.{ts,css}"
+      instructions: |
+        - Enforce strict erasable TypeScript, CSS/JS size budgets, WCAG accessibility (contrast, keyboard navigation, ARIA landmarks), no `innerHTML` with untrusted content, and committed `web/dist/` parity.
+        - Verify web unlock DOM contracts (`#pw`, `#rm`, `#c`) and WebCrypto PBKDF2-SHA256 / AES-256-GCM decryption parity with `src/crypto.rs` and `src/verify.rs`.
+    - path: "web/tests/**/*.ts"
+      instructions: |
+        - Verify Vitest suites preserve budget, CSS hygiene, Worker, and WebCrypto parity assertions without weakening thresholds.
