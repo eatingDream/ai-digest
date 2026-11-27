@@ -1331,7 +1331,10 @@ impl Reader<'_> {
                     .last()
                     .is_some_and(|d| same_short_date(&item.when, *d)));
         let when_hidden = if hide_when { " hidden" } else { "" };
-        write!(out, r#"<time class="when"{when_hidden}>{}</time><button type="button" class="copy-link" data-copy-anchor="{prefix}{id}" aria-label="{}">{}</button></div>
+        let when_datetime = resolve_item_iso_date(&item.when, &self.digest.dates)
+            .map(|iso| format!(r#" datetime="{iso}""#))
+            .unwrap_or_default();
+        write!(out, r#"<time class="when"{when_datetime}{when_hidden}>{}</time><button type="button" class="copy-link" data-copy-anchor="{prefix}{id}" aria-label="{}">{}</button></div>
 <div class="story-head"><h3><span class="story-no">{}.</span> {}</h3></div>
 "#, esc(&item.when), esc(t(lang, "copy_link")), icon("link"), esc(&item.number), markdown(&item.title, true, prefix)).unwrap();
         if !item.dek.is_empty() {
@@ -1543,6 +1546,31 @@ fn same_short_date(when: &str, date: NaiveDate) -> bool {
         return false;
     };
     m.parse::<u32>().ok() == Some(date.month()) && d.parse::<u32>().ok() == Some(date.day())
+}
+
+fn resolve_item_iso_date(when: &str, issue_dates: &[NaiveDate]) -> Option<String> {
+    let trimmed = when.trim();
+    if trimmed.is_empty() {
+        return issue_dates.last().map(|d| d.format("%Y-%m-%d").to_string());
+    }
+    if let Ok(full) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return Some(full.format("%Y-%m-%d").to_string());
+    }
+    let (m, d) = trimmed.split_once(['.', '/', '-'])?;
+    let month: u32 = m.parse().ok()?;
+    let day: u32 = d.parse().ok()?;
+    if let Some(exact) = issue_dates
+        .iter()
+        .find(|date| date.month() == month && date.day() == day)
+    {
+        return Some(exact.format("%Y-%m-%d").to_string());
+    }
+    let anchor = *issue_dates.last()?;
+    let best = [anchor.year() - 1, anchor.year(), anchor.year() + 1]
+        .into_iter()
+        .filter_map(|year| NaiveDate::from_ymd_opt(year, month, day))
+        .min_by_key(|cand| (*cand - anchor).num_days().abs())?;
+    Some(best.format("%Y-%m-%d").to_string())
 }
 
 fn related_links(text: &str, digest: &Digest) -> String {

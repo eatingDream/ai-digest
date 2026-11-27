@@ -15,14 +15,14 @@
 - [src/ledger.rs](src/ledger.rs): Deduplication ledger subcommand (`ai-digest ledger find|recent|add`).
 - [prompts/](prompts/): Self-contained daily, weekly, and papers curation prompts (`en` and `zh-CN`).
 - [src/render.rs](src/render.rs) & [web/](web/): Markdown -> single-file editorial HTML renderer (`ai-digest render`, `--json`, `--md-en`, inline LaTeX math) with compile-time embedded TypeScript/CSS assets (`web/dist/`).
-- [src/geo.rs](src/geo.rs): Public Level 5/5 GEO & Agent Readiness engine (`robots.txt` Content Signals, `sitemap.xml`, `llms.txt`, `llms-full.txt`, Atom feeds, JSON-LD, `.md` mirrors, `/.well-known/agent-skills/`, `search-index.json`, and Pages `_worker.js`).
+- [src/geo.rs](src/geo.rs): Public Level 5/5 GEO & Agent Readiness engine (`robots.txt` Content Signals, `sitemap.xml`, `llms.txt`, `llms-full.txt`, Atom/RSS/JSON feeds, JSON-LD, `.md` mirrors, `/.well-known/api-catalog`, `/.well-known/agent-skills/`, `search-index.json`, and Pages `_worker.js`).
 - [src/crypto.rs](src/crypto.rs) & [src/verify.rs](src/verify.rs): Privacy scanner, build-time SHA-256 CSP header finalizer, opt-in AES-256-GCM+gzip page encryption (`ENCRYPT=1`), and native verifier (`ai-digest verify`, with Node WebCrypto parity in `web/dist/verify_decrypt.mjs`).
 - [src/publish.rs](src/publish.rs): Site builder, bilingual `/zh/` & `/en/` publisher, Cloudflare Pages deploy, and offline `--demo` builder (`ai-digest publish`).
 
 ## Consuming a Published Site
 
 Any public (`ENCRYPT=0`) site built by `ai-digest` exposes:
-- `GET /llms.txt` and `GET /llms-full.txt`
+- `GET /llms.txt`, `GET /llms-full.txt`, and `GET /.well-known/api-catalog` (RFC 9727)
 - `GET /.well-known/search?q=<query>`, `HEAD /.well-known/search`, and `QUERY /.well-known/search` (`text/plain` or `{"q":"..."}`)
 - `Accept: text/markdown` content negotiation on every page, plus direct `.md` mirrors (e.g. `/zh/daily/latest.md`, `/en/daily/latest.md`)
-- `GET /.well-known/agent-skills/index.json`, `GET /sitemap.xml`, and `GET /feed.xml`
+- `GET /.well-known/agent-skills/index.json`, `GET /sitemap.xml`, `GET /feed.xml`, `GET /rss.xml`, and `GET /feed.json`

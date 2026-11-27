@@ -2045,8 +2045,8 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
         "TOC item must wrap full title in .ts-title for balanced 2-line wrap + Cmd+F"
     );
     assert!(
-        doc.contains(r#"<time class="when" hidden>11.26</time>"#),
-        "daily story matching issue date must hide redundant visual date stamp"
+        doc.contains(r#"<time class="when" datetime="2026-11-26" hidden>11.26</time>"#),
+        "daily story matching issue date must emit ISO datetime and hide redundant visual date stamp"
     );
     let parsed_doc = parse_digest_html(&doc).unwrap();
     assert_eq!(parsed_doc.items[0].when, "11.26");
@@ -2056,8 +2056,8 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
     let prev_digest = parser::parse_digest_md(&md_prev_day, Lang::ZhCn, Some(2026)).unwrap();
     let prev_doc = render::render_digest_html(&prev_digest, Lang::ZhCn, &RenderOptions::default());
     assert!(
-        prev_doc.contains(r#"<time class="when">11.25</time>"#),
-        "daily story from a different date must keep visible date stamp"
+        prev_doc.contains(r#"<time class="when" datetime="2026-11-25">11.25</time>"#),
+        "daily story from a different date must emit ISO datetime and keep visible date stamp"
     );
 
     // 8. v1.1.1 editorial polish: explicit summary lead, 2-layer bullet look, zero desktop .meta-cats, spaced tab title

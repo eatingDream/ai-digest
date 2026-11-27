@@ -401,6 +401,15 @@ async function handleSearch(
   );
 }
 
+function estimateMarkdownTokens(buf: ArrayBuffer | null, headers: Headers): string {
+  let byteLen = buf ? buf.byteLength : 0;
+  if (!buf) {
+    const cl = Number.parseInt(headers.get("content-length") || "", 10);
+    if (Number.isFinite(cl) && cl > 0) byteLen = cl;
+  }
+  return String(Math.max(1, Math.floor(byteLen / 4)));
+}
+
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -437,10 +446,9 @@ export default {
           const buf =
             request.method === "HEAD" ? null : await mdResp.arrayBuffer();
           const headers = new Headers(mdResp.headers);
-          const tok = buf ? Math.max(1, Math.floor(buf.byteLength / 4)) : 1;
           applyBaseHeaders(headers, pathname, 200, {
             "Content-Type": "text/markdown; charset=utf-8",
-            "x-markdown-tokens": String(tok),
+            "x-markdown-tokens": estimateMarkdownTokens(buf, mdResp.headers),
             Link: localizeLinkHeader(CFG.linkHeader, cand),
           });
           return new Response(buf, { status: 200, headers });
@@ -462,10 +470,9 @@ export default {
           const buf =
             request.method === "HEAD" ? null : await mdResp.arrayBuffer();
           const headers = new Headers(mdResp.headers);
-          const tok = buf ? Math.max(1, Math.floor(buf.byteLength / 4)) : 1;
           applyBaseHeaders(headers, pathname, 200, {
             "Content-Type": "text/markdown; charset=utf-8",
-            "x-markdown-tokens": String(tok),
+            "x-markdown-tokens": estimateMarkdownTokens(buf, mdResp.headers),
             Link: localizeLinkHeader(CFG.linkHeader, cand),
           });
           return new Response(buf, { status: 200, headers });
@@ -475,8 +482,13 @@ export default {
 
     const assetResp = await env.ASSETS.fetch(request);
     const headers = new Headers(assetResp.headers);
-    let mdAlt: string | null = null;
-    if (
+    let extra: Record<string, string> | undefined;
+    if (assetResp.status === 200 && pathname === "/.well-known/api-catalog") {
+      extra = {
+        "Content-Type":
+          'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
+      };
+    } else if (
       assetResp.status === 200 &&
       ALT_MD_LINK_RE.test(CFG.linkHeader) &&
       (assetResp.headers.get("content-type") || "")
@@ -488,17 +500,12 @@ export default {
           new Request(new URL(cand, url.origin), { method: "HEAD" })
         );
         if (probe.ok) {
-          mdAlt = cand;
+          extra = { Link: localizeLinkHeader(CFG.linkHeader, cand) };
           break;
         }
       }
     }
-    applyBaseHeaders(
-      headers,
-      pathname,
-      assetResp.status,
-      mdAlt ? { Link: localizeLinkHeader(CFG.linkHeader, mdAlt) } : undefined
-    );
+    applyBaseHeaders(headers, pathname, assetResp.status, extra);
     return new Response(assetResp.body, {
       status: assetResp.status,
       statusText: assetResp.statusText,

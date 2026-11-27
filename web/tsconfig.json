@@ -7,6 +7,9 @@
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
     "types": ["node"],
@@ -15,5 +18,5 @@
     "noUnusedParameters": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/ts/**/*.ts", "tests/**/*.ts"]
+  "include": ["build.ts", "src/ts/**/*.ts", "tests/**/*.ts"]
 }

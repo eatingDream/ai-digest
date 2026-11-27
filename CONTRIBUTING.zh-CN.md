@@ -13,7 +13,7 @@
 ## 本地检查
 
 ```bash
-# 前端（Node 22+）
+# 前端（Node 24+）
 npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web run build

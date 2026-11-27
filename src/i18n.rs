@@ -440,6 +440,12 @@ impl Lang {
             Self::ZhCn => "zh-CN",
         }
     }
+    pub const fn hreflang(self) -> &'static str {
+        match self {
+            Self::En => "en",
+            Self::ZhCn => "zh-Hans",
+        }
+    }
     pub const fn other(self) -> Self {
         match self {
             Self::En => Self::ZhCn,

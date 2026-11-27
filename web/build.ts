@@ -8,7 +8,40 @@ const SRC_CSS = join(WEB_DIR, "src", "css");
 const SRC_TS = join(WEB_DIR, "src", "ts");
 const DIST = join(WEB_DIR, "dist");
 
-const CSS_BUNDLES = [
+interface CssBundleSpec {
+  readonly out: string;
+  readonly limit: number;
+  readonly parts: readonly string[];
+}
+
+interface JsEntrySpec {
+  readonly entry: string;
+  readonly out: string;
+}
+
+interface CssBlock {
+  head: string;
+  body: string;
+  raw: boolean;
+}
+
+interface CssBuildSize {
+  readonly bytes: number;
+  readonly limit: number;
+}
+
+interface PageBudget {
+  readonly name: string;
+  readonly bytes: number;
+}
+
+interface JsBuildReport {
+  readonly sizes: Record<string, number>;
+  readonly pageBudgets: readonly PageBudget[];
+  readonly jsLimit: number;
+}
+
+const CSS_BUNDLES: readonly CssBundleSpec[] = [
   {
     out: "reader.css",
     limit: 22528,
@@ -31,7 +64,7 @@ const CSS_BUNDLES = [
   },
 ];
 
-const JS_IIFE_ENTRIES = [
+const JS_IIFE_ENTRIES: readonly JsEntrySpec[] = [
   { entry: "boot.ts", out: "boot.js" },
   { entry: "reader.ts", out: "reader.js" },
   { entry: "index.ts", out: "index.js" },
@@ -39,34 +72,34 @@ const JS_IIFE_ENTRIES = [
   { entry: "lock.ts", out: "lock.js" },
 ];
 
-function normalizeLf(text) {
+function normalizeLf(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd() + "\n";
 }
 
-function byteLen(text) {
+function byteLen(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-const PRESERVED_CSS_VARS = new Set([
+const PRESERVED_CSS_VARS = new Set<string>([
   "--mast-h",
   "--strip-h",
   "--read-prog",
 ]);
 
-function compactCssVars(css) {
+function compactCssVars(css: string): string {
   const varRe = /(?<![A-Za-z0-9_-])--[a-z][a-z0-9-]*/g;
-  const counts = new Map();
+  const counts = new Map<string, number>();
   for (const m of css.matchAll(varRe)) {
     const name = m[0];
     if (!PRESERVED_CSS_VARS.has(name)) {
-      counts.set(name, (counts.get(name) || 0) + 1);
+      counts.set(name, (counts.get(name) ?? 0) + 1);
     }
   }
   const sorted = [...counts.entries()].sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
   );
   const alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const mapping = new Map();
+  const mapping = new Map<string, string>();
   sorted.forEach(([orig], i) => {
     const shortName =
       i < alpha.length
@@ -74,19 +107,19 @@ function compactCssVars(css) {
         : `--${alpha[Math.floor(i / alpha.length) - 1]}${alpha[i % alpha.length]}`;
     mapping.set(orig, shortName);
   });
-  return css.replace(varRe, (m) => mapping.get(m) || m);
+  return css.replace(varRe, (m) => mapping.get(m) ?? m);
 }
 
-function mergePrintDisplayNone(body) {
-  const hideSelectors = [];
-  const rest = [];
+function mergePrintDisplayNone(body: string): string {
+  const hideSelectors: string[] = [];
+  const rest: string[] = [];
   const re = /([^{}]+)\{([^{}]*)\}/g;
   let last = 0;
-  let m;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
     if (m.index > last) rest.push(body.slice(last, m.index));
     if (m[2] === "display:none!important") {
-      hideSelectors.push(m[1]);
+      hideSelectors.push(m[1] ?? "");
     } else {
       rest.push(m[0]);
     }
@@ -97,9 +130,9 @@ function mergePrintDisplayNone(body) {
   return `${hideSelectors.join(",")}{display:none!important}${rest.join("")}`;
 }
 
-function mergeTopLevelBlocks(css) {
+function mergeTopLevelBlocks(css: string): string {
   // Parse top-level blocks so we can merge identical :root and trailing @media blocks safely
-  const blocks = [];
+  const blocks: CssBlock[] = [];
   let i = 0;
   while (i < css.length) {
     const start = i;
@@ -127,8 +160,8 @@ function mergeTopLevelBlocks(css) {
     blocks.push({ head, body, raw: false });
   }
 
-  const mergeFirst = new Set([":root", ":lang(en)", "body"]);
-  const mergeLast = new Set([
+  const mergeFirst = new Set<string>([":root", ":lang(en)", "body"]);
+  const mergeLast = new Set<string>([
     "@media(min-width:640px)",
     "@media(min-width:1024px)",
     "@media(prefers-reduced-motion:reduce)",
@@ -136,26 +169,29 @@ function mergeTopLevelBlocks(css) {
     "@media print",
   ]);
 
-  const lastIdx = new Map();
+  const lastIdx = new Map<string, number>();
   blocks.forEach((b, idx) => {
     if (!b.raw && mergeLast.has(b.head)) lastIdx.set(b.head, idx);
   });
 
-  const out = [];
-  const seenFirst = new Map();
-  const pendingLast = new Map();
+  const out: CssBlock[] = [];
+  const seenFirst = new Map<string, number>();
+  const pendingLast = new Map<string, string>();
   blocks.forEach((b, idx) => {
     if (!b.raw && mergeFirst.has(b.head)) {
-      if (seenFirst.has(b.head)) {
-        const target = out[seenFirst.get(b.head)];
-        const sep = target.body.endsWith(";") ? "" : ";";
-        target.body += sep + b.body;
+      const targetIdx = seenFirst.get(b.head);
+      if (targetIdx !== undefined) {
+        const target = out[targetIdx];
+        if (target) {
+          const sep = target.body.endsWith(";") ? "" : ";";
+          target.body += sep + b.body;
+        }
       } else {
         seenFirst.set(b.head, out.length);
         out.push({ ...b });
       }
     } else if (!b.raw && mergeLast.has(b.head)) {
-      const prev = pendingLast.get(b.head) || "";
+      const prev = pendingLast.get(b.head) ?? "";
       const combined = prev + b.body;
       if (idx === lastIdx.get(b.head)) {
         // Also merge duplicate :root / :lang(en) inside merged @media blocks
@@ -180,8 +216,8 @@ function mergeTopLevelBlocks(css) {
     .join("");
 }
 
-async function buildCss() {
-  const sizes = {};
+async function buildCss(): Promise<Record<string, CssBuildSize>> {
+  const sizes: Record<string, CssBuildSize> = {};
   for (const spec of CSS_BUNDLES) {
     const raw = spec.parts
       .map((name) => readFileSync(join(SRC_CSS, name), "utf8"))
@@ -205,7 +241,7 @@ async function buildCss() {
     const bytes = byteLen(outText);
     if (bytes > spec.limit) {
       throw new Error(
-        `CSS budget exceeded: ${spec.out} is ${bytes} B (limit ${spec.limit} B)`
+        `CSS budget exceeded: ${spec.out} is ${bytes} B (limit ${spec.limit} B)`,
       );
     }
     writeFileSync(join(DIST, spec.out), outText, "utf8");
@@ -214,8 +250,24 @@ async function buildCss() {
   return sizes;
 }
 
-async function buildJs() {
-  const sizes = {};
+function getOutputText(res: esbuild.BuildResult, label: string): string {
+  const file = res.outputFiles?.[0];
+  if (!file) {
+    throw new Error(`esbuild produced no output for ${label}`);
+  }
+  return normalizeLf(file.text);
+}
+
+function getSize(sizes: Record<string, number>, name: string): number {
+  const value = sizes[name];
+  if (value === undefined) {
+    throw new Error(`Missing built JS size for ${name}`);
+  }
+  return value;
+}
+
+async function buildJs(): Promise<JsBuildReport> {
+  const sizes: Record<string, number> = {};
 
   for (const spec of JS_IIFE_ENTRIES) {
     const res = await esbuild.build({
@@ -229,7 +281,7 @@ async function buildJs() {
       sourcemap: false,
       write: false,
     });
-    const outText = normalizeLf(res.outputFiles[0].text);
+    const outText = getOutputText(res, spec.entry);
     const bytes = byteLen(outText);
     writeFileSync(join(DIST, spec.out), outText, "utf8");
     sizes[spec.out] = bytes;
@@ -248,11 +300,11 @@ async function buildJs() {
       sourcemap: false,
       write: false,
     });
-    const outText = normalizeLf(res.outputFiles[0].text);
-    const placeholderMatches = outText.match(/__WORKER_CFG_JSON__/g) || [];
+    const outText = getOutputText(res, "worker.ts");
+    const placeholderMatches = outText.match(/__WORKER_CFG_JSON__/g) ?? [];
     if (placeholderMatches.length !== 1) {
       throw new Error(
-        `worker.js must contain literal __WORKER_CFG_JSON__ exactly once (found ${placeholderMatches.length})`
+        `worker.js must contain literal __WORKER_CFG_JSON__ exactly once (found ${placeholderMatches.length})`,
       );
     }
     const bytes = byteLen(outText);
@@ -275,7 +327,7 @@ async function buildJs() {
       banner: { js: "#!/usr/bin/env node" },
       write: false,
     });
-    const outText = normalizeLf(res.outputFiles[0].text);
+    const outText = getOutputText(res, "verify_decrypt.ts");
     const bytes = byteLen(outText);
     const outPath = join(DIST, "verify_decrypt.mjs");
     writeFileSync(outPath, outText, "utf8");
@@ -285,24 +337,26 @@ async function buildJs() {
 
   // Enforce combined per-page JS budgets (Astra P2: include boot + page + lock / unlock)
   const JS_PAGE_LIMIT = 30720;
-  const pageBudgets = [
+  const bootSize = getSize(sizes, "boot.js");
+  const lockSize = getSize(sizes, "lock.js");
+  const pageBudgets: readonly PageBudget[] = [
     {
       name: "reader (boot + reader + lock)",
-      bytes: sizes["boot.js"] + sizes["reader.js"] + sizes["lock.js"],
+      bytes: bootSize + getSize(sizes, "reader.js") + lockSize,
     },
     {
       name: "index (boot + index + lock)",
-      bytes: sizes["boot.js"] + sizes["index.js"] + sizes["lock.js"],
+      bytes: bootSize + getSize(sizes, "index.js") + lockSize,
     },
     {
       name: "unlock (boot + unlock)",
-      bytes: sizes["boot.js"] + sizes["unlock.js"],
+      bytes: bootSize + getSize(sizes, "unlock.js"),
     },
   ];
   for (const pb of pageBudgets) {
     if (pb.bytes > JS_PAGE_LIMIT) {
       throw new Error(
-        `JS budget exceeded: ${pb.name} is ${pb.bytes} B (limit ${JS_PAGE_LIMIT} B)`
+        `JS budget exceeded: ${pb.name} is ${pb.bytes} B (limit ${JS_PAGE_LIMIT} B)`,
       );
     }
   }
@@ -310,7 +364,7 @@ async function buildJs() {
   return { sizes, pageBudgets, jsLimit: JS_PAGE_LIMIT };
 }
 
-async function main() {
+async function main(): Promise<void> {
   mkdirSync(DIST, { recursive: true });
   const cssSizes = await buildCss();
   const { sizes: jsSizes, pageBudgets, jsLimit } = await buildJs();
@@ -328,7 +382,7 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
+main().catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

@@ -1880,3 +1880,379 @@ fn tier2_csp_geo_and_single_h1_regressions() {
     .unwrap();
     assert_ne!(res.status.code(), Some(0));
 }
+
+#[test]
+fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    atomic_write_text(
+        &root.join("site/CONFIG"),
+        "LANG=zh-CN\nDOMAIN=ai.example.org\nGEO_AI_TRAIN=yes\n",
+    )
+    .unwrap();
+    // Add explicit editorial summary leads + a </script> breakout attempt in an item title
+    let zh_daily = examples()
+        .join("sample-digest.zh-CN.md")
+        .pipe_read()
+        .replacen(
+            "**AI Digest · 日报 · 1/15**\n",
+            "**AI Digest · 日报 · 1/15**\n\n> **本期摘要：** 开源小型推理模型 Orion-3 Mini 与长视频多模态 Lumen-2 同步亮相，强化学习后训练与评测安全成焦点。\n",
+            1,
+        )
+        .replacen(
+            "### 2. Lumen-2：Example AI 的多模态模型更新",
+            "### 2. Lumen-2 </script><img src=x>：Example AI 的多模态模型更新",
+            1,
+        );
+    let en_daily = examples()
+        .join("sample-digest.en.md")
+        .pipe_read()
+        .replacen(
+            "**AI Daily · 1/15**\n",
+            "**AI Daily · 1/15**\n\n> **Summary:** Open-weights reasoning model Orion-3 Mini and Lumen-2 multimodal lead today alongside Sparse-RL post-training and Verifier-Gap eval safety findings.\n",
+            1,
+        )
+        .replacen(
+            "### 2. Lumen-2: a multimodal model update from Example AI",
+            "### 2. Lumen-2 </script><svg>: a multimodal model update from Example AI",
+            1,
+        );
+    fs::write(root.join(format!("digest-{DAILY}.md")), zh_daily).unwrap();
+    fs::write(root.join(format!("digest-{DAILY}.en.md")), en_daily).unwrap();
+    fs::copy(
+        examples().join("sample-weekly.zh-CN.md"),
+        root.join(format!("weekly-{WEEKLY}.md")),
+    )
+    .unwrap();
+    fs::copy(
+        examples().join("sample-weekly.en.md"),
+        root.join(format!("weekly-{WEEKLY}.en.md")),
+    )
+    .unwrap();
+
+    add_daily(root);
+    add_weekly(root);
+
+    let public = root.join("site/public");
+
+    // 1. Static OG social card PNG exists and has valid PNG header
+    let og_bytes = fs::read(public.join("og-card.png")).unwrap();
+    assert!(og_bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]));
+
+    // 2. Per-page editorial <meta name="description">, canonical, reciprocal hreflang, OG/Twitter, feeds, JSON-LD
+    let extract_ld = |html: &str| -> Value {
+        let (_, rest) = html
+            .split_once(r#"<script type="application/ld+json">"#)
+            .expect("missing ld+json");
+        let (raw, _) = rest.split_once("</script>").expect("unclosed ld+json");
+        assert!(
+            !raw.contains("</script") && !raw.contains("<script"),
+            "raw script tag inside JSON-LD: {raw}"
+        );
+        serde_json::from_str(raw).expect("valid JSON-LD")
+    };
+    let extract_meta_desc = |html: &str| -> String {
+        let (_, rest) = html
+            .split_once(r#"<meta name="description" content=""#)
+            .expect("missing meta description");
+        let (val, _) = rest.split_once('"').expect("unclosed meta description");
+        val.to_owned()
+    };
+
+    let zh_daily_html = get(&public, &format!("zh/daily/{DAILY}.html"));
+    let en_daily_html = get(&public, &format!("en/daily/{DAILY}.html"));
+    let zh_weekly_html = get(&public, &format!("zh/weekly/{WEEKLY}.html"));
+    let en_weekly_html = get(&public, &format!("en/weekly/{WEEKLY}.html"));
+    let zh_index_html = get(&public, "zh/index.html");
+    let en_index_html = get(&public, "en/index.html");
+
+    // Editorial lead descriptions are unique, real, and length-bounded
+    let zh_desc = extract_meta_desc(&zh_daily_html);
+    let en_desc = extract_meta_desc(&en_daily_html);
+    assert!(
+        zh_desc.contains("Orion-3 Mini") && zh_desc.chars().count() <= 88,
+        "zh desc={zh_desc}"
+    );
+    assert!(
+        en_desc.contains("Orion-3 Mini") && en_desc.chars().count() <= 158,
+        "en desc={en_desc}"
+    );
+    assert_ne!(zh_desc, extract_meta_desc(&zh_weekly_html));
+    assert_ne!(en_desc, extract_meta_desc(&en_weekly_html));
+    assert_ne!(
+        extract_meta_desc(&zh_index_html),
+        extract_meta_desc(&en_index_html)
+    );
+
+    // Reciprocal hreflang (zh-Hans, en, x-default) on every ZH/EN pair
+    for (zh_doc, en_doc, suffix) in [
+        (&zh_daily_html, &en_daily_html, format!("daily/{DAILY}")),
+        (&zh_weekly_html, &en_weekly_html, format!("weekly/{WEEKLY}")),
+        (&zh_index_html, &en_index_html, String::new()),
+    ] {
+        let zh_url = format!("https://ai.example.org/zh/{suffix}");
+        let en_url = format!("https://ai.example.org/en/{suffix}");
+        assert!(zh_doc.contains(&format!(r#"<link rel="canonical" href="{zh_url}">"#)));
+        assert!(en_doc.contains(&format!(r#"<link rel="canonical" href="{en_url}">"#)));
+        for doc in [zh_doc, en_doc] {
+            assert!(
+                doc.contains(&format!(
+                    r#"<link rel="alternate" hreflang="zh-Hans" href="{zh_url}">"#
+                )),
+                "missing zh-Hans hreflang for {suffix}"
+            );
+            assert!(
+                doc.contains(&format!(
+                    r#"<link rel="alternate" hreflang="en" href="{en_url}">"#
+                )),
+                "missing en hreflang for {suffix}"
+            );
+            assert!(
+                doc.contains(&format!(
+                    r#"<link rel="alternate" hreflang="x-default" href="{zh_url}">"#
+                )),
+                "missing x-default hreflang for {suffix}"
+            );
+        }
+        assert!(zh_doc.contains(r#"<meta property="og:locale" content="zh_CN">"#));
+        assert!(zh_doc.contains(r#"<meta property="og:locale:alternate" content="en_US">"#));
+        assert!(en_doc.contains(r#"<meta property="og:locale" content="en_US">"#));
+        assert!(en_doc.contains(r#"<meta property="og:locale:alternate" content="zh_CN">"#));
+    }
+
+    // Complete OG + Twitter large card + feed alternates + <time datetime> + stable #id
+    for doc in [&zh_daily_html, &en_daily_html] {
+        for marker in [
+            r#"property="og:image" content="https://ai.example.org/og-card.png""#,
+            r#"property="og:image:width" content="1200""#,
+            r#"property="og:image:height" content="630""#,
+            r#"name="twitter:card" content="summary_large_image""#,
+            r#"name="twitter:image" content="https://ai.example.org/og-card.png""#,
+            r#"type="application/atom+xml""#,
+            r#"type="application/rss+xml""#,
+            r#"type="application/feed+json""#,
+            r#"type="text/markdown""#,
+            r#"id="item-1""#,
+            r#"<time class="when" datetime="2026-01-15""#,
+        ] {
+            assert!(doc.contains(marker), "missing {marker}");
+        }
+    }
+
+    // JSON-LD schema verification + </script> escape verification
+    let issue_ld = extract_ld(&en_daily_html);
+    let graph = issue_ld["@graph"].as_array().expect("issue @graph");
+    let article = graph
+        .iter()
+        .find(|n| n["@type"] == "NewsArticle")
+        .expect("NewsArticle");
+    assert_eq!(article["inLanguage"], "en");
+    assert_eq!(article["datePublished"], DAILY);
+    assert_eq!(article["dateModified"], DAILY);
+    assert_eq!(article["author"]["name"], "eatingDream");
+    assert_eq!(article["publisher"]["name"], "AI Digest");
+    assert_eq!(
+        article["image"]["url"],
+        "https://ai.example.org/og-card.png"
+    );
+    let items = article["mainEntity"]["itemListElement"]
+        .as_array()
+        .expect("ItemList elements");
+    assert!(items[0]["url"]
+        .as_str()
+        .unwrap()
+        .ends_with(&format!("/en/daily/{DAILY}#item-1")));
+    // Layer 1: Markdown raw HTML </script> is stripped at render time
+    assert!(
+        !en_daily_html.contains("<svg>"),
+        "raw inline HTML in markdown must be stripped"
+    );
+    // Layer 2: HTML-entity-decoded </script> in parsed issue title/summary is escaped as \u003c/script\u003e in JSON-LD
+    let mut break_page = geo::GeoPage {
+        rel_html: format!("en/daily/{DAILY}.html"),
+        url_path: format!("/en/daily/{DAILY}"),
+        canonical_path: format!("/en/daily/{DAILY}"),
+        rel_md: format!("en/daily/{DAILY}.md"),
+        lang: Lang::En,
+        kind: "daily".into(),
+        label: DAILY.into(),
+        date_iso: DAILY.into(),
+        ..geo::GeoPage::default()
+    };
+    let breakout_html = en_daily_html.replacen(
+        "<p class=\"summary-lead\">",
+        "<p class=\"summary-lead\">&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt; ",
+        1,
+    );
+    let breakout_decorated = geo::decorate_public_html(
+        &breakout_html,
+        &mut break_page,
+        &[],
+        "https://ai.example.org",
+        true,
+    )
+    .unwrap();
+    let (_, ld_tail) = breakout_decorated
+        .split_once(r#"<script type="application/ld+json">"#)
+        .unwrap();
+    let (ld_raw, _) = ld_tail.split_once("</script>").unwrap();
+    assert!(
+        ld_raw.contains(r"\u003c/script\u003e"),
+        "JSON-LD must escape </script> as \\u003c/script\\u003e: {ld_raw}"
+    );
+    assert!(
+        !ld_raw.contains("</script"),
+        "JSON-LD must never contain raw </script>"
+    );
+    let _: Value = serde_json::from_str(ld_raw).expect("escaped JSON-LD must remain valid JSON");
+    let crumbs = graph
+        .iter()
+        .find(|n| n["@type"] == "BreadcrumbList")
+        .expect("BreadcrumbList");
+    assert_eq!(crumbs["itemListElement"].as_array().unwrap().len(), 3);
+
+    let index_ld = extract_ld(&en_index_html);
+    let igraph = index_ld["@graph"].as_array().expect("index @graph");
+    let website = igraph
+        .iter()
+        .find(|n| n["@type"] == "WebSite")
+        .expect("WebSite");
+    assert_eq!(
+        website["potentialAction"]["target"]["urlTemplate"],
+        "https://ai.example.org/?q={search_term_string}"
+    );
+    let org = igraph
+        .iter()
+        .find(|n| n["@type"] == "Organization")
+        .expect("Organization");
+    assert_eq!(org["founder"]["name"], "eatingDream");
+    let coll = igraph
+        .iter()
+        .find(|n| n["@type"] == "CollectionPage")
+        .expect("CollectionPage");
+    assert_eq!(coll["dateModified"], "2026-01-18");
+
+    // 3. Sitemap validity: <lastmod> on index & issue URLs + reciprocal xhtml:link hreflang
+    let sitemap = get(&public, "sitemap.xml");
+    assert!(sitemap.contains(r#"xmlns:xhtml="http://www.w3.org/1999/xhtml""#));
+    assert!(sitemap
+        .contains("<loc>https://ai.example.org/zh/</loc>\n    <lastmod>2026-01-18</lastmod>"));
+    assert!(sitemap
+        .contains("<loc>https://ai.example.org/en/</loc>\n    <lastmod>2026-01-18</lastmod>"));
+    assert!(sitemap.contains(r#"hreflang="zh-Hans""#));
+    assert!(sitemap.contains(r#"hreflang="en""#));
+    assert!(sitemap.contains(r#"hreflang="x-default""#));
+
+    // 4. robots.txt: Content-Signal + explicit search & AI bots + Sitemap
+    let robots = get(&public, "robots.txt");
+    for bot in [
+        "Googlebot",
+        "Bingbot",
+        "OAI-SearchBot",
+        "Claude-SearchBot",
+        "PerplexityBot",
+    ] {
+        assert!(
+            robots.contains(&format!("User-agent: {bot}\nAllow: /")),
+            "robots.txt missing {bot}"
+        );
+    }
+    assert!(robots.contains("Content-Signal: ai-train=yes, search=yes, ai-input=yes"));
+    assert!(robots.contains("Sitemap: https://ai.example.org/sitemap.xml"));
+
+    // 5. RFC 9727 /.well-known/api-catalog, /rss.xml, /feed.json, /llms.txt, Agent Skills SHA-256
+    let catalog: Value = serde_json::from_str(&get(&public, geo::API_CATALOG_PATH)).unwrap();
+    let linkset = catalog["linkset"].as_array().expect("RFC 9727 linkset");
+    assert!(linkset
+        .iter()
+        .any(|entry| entry["anchor"] == "https://ai.example.org/.well-known/search"));
+    assert!(linkset
+        .iter()
+        .any(|entry| entry["anchor"] == "https://ai.example.org/"));
+
+    for rel in [
+        "rss.xml",
+        "zh/rss.xml",
+        "en/rss.xml",
+        "feed.json",
+        "zh/feed.json",
+        "en/feed.json",
+    ] {
+        assert!(public.join(rel).is_file(), "missing {rel}");
+    }
+    let rss = get(&public, "en/rss.xml");
+    assert!(rss.contains(r#"<rss version="2.0""#) && rss.contains("<pubDate>"));
+    let json_feed: Value = serde_json::from_str(&get(&public, "en/feed.json")).unwrap();
+    assert_eq!(json_feed["version"], "https://jsonfeed.org/version/1.1");
+    assert!(!json_feed["items"].as_array().unwrap().is_empty());
+
+    let llms = get(&public, "llms.txt");
+    for needle in [
+        "/.well-known/api-catalog",
+        "/feed.json",
+        "/rss.xml",
+        "/search-index.json",
+        "/zh/index.md",
+        "/en/index.md",
+    ] {
+        assert!(llms.contains(needle), "llms.txt missing {needle}");
+    }
+
+    let skill_bytes = fs::read(public.join(geo::SKILL_PATH)).unwrap();
+    let skill_idx: Value = serde_json::from_str(&get(&public, geo::SKILL_INDEX)).unwrap();
+    assert_eq!(
+        skill_idx["skills"][0]["digest"],
+        format!("sha256:{}", hex::encode(Sha256::digest(skill_bytes)))
+    );
+
+    let (global_headers, _) = geo::parse_headers(&get(&public, "_headers"));
+    assert!(global_headers["Link"].contains(r#"rel="api-catalog""#));
+    assert!(global_headers["Link"].contains(r#"type="application/feed+json""#));
+    let routes: Value = serde_json::from_str(&get(&public, "_routes.json")).unwrap();
+    let excludes = routes["exclude"].as_array().unwrap();
+    for path in [
+        "/.well-known/api-catalog",
+        "/rss.xml",
+        "/feed.json",
+        "/og-card.png",
+    ] {
+        assert!(
+            excludes.iter().any(|v| v == path),
+            "_routes.json missing exclude {path}"
+        );
+    }
+
+    // 6. Private transition purges ALL new GEO artifacts cleanly
+    password(root);
+    checked(
+        cli(root, &["publish", "--rebuild", "--prepare-only"])
+            .env("DIGEST_ENCRYPT", "1")
+            .output()
+            .unwrap(),
+        0,
+    );
+    for removed in [
+        "rss.xml",
+        "zh/rss.xml",
+        "en/rss.xml",
+        "feed.json",
+        "zh/feed.json",
+        "en/feed.json",
+        "og-card.png",
+        geo::API_CATALOG_PATH,
+    ] {
+        assert!(
+            !public.join(removed).exists(),
+            "encrypted mode must purge {removed}"
+        );
+    }
+}
+
+trait PipeRead {
+    fn pipe_read(&self) -> String;
+}
+impl PipeRead for Path {
+    fn pipe_read(&self) -> String {
+        fs::read_to_string(self).unwrap()
+    }
+}

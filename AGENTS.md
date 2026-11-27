@@ -4,12 +4,12 @@ Guidance for AI coding agents (Cursor, Claude Code, Codex, Antigravity, …) wor
 
 ## What this is
 
-`ai-digest` is a self-contained **Rust binary (`ai-digest`) + TypeScript/CSS editorial frontend (`web/`)** that turns ~155 open sources into daily and weekly AI digests: `ai-digest fetch` collects and triages candidates, an LLM agent curates Markdown, `ai-digest render` renders single-file HTML with embedded frontend assets (`web/dist/`), and `ai-digest publish` builds and deploys a root-mounted public static site by default (`ENCRYPT=0`, `SLUG=`, symmetric `/zh/` & `/en/` paths, Level 5/5 GEO + `_worker.js`; optional client-side AES-256-GCM encryption via `--init --encrypt` or `ENCRYPT=1`) to Cloudflare Pages (`DIGEST_LANG` / `--lang`: `en` default, `zh-CN`). Rust 1.88+ builds the binary with zero runtime interpreter dependencies; Node 22+ is used only for building/testing `web/`, running `web/dist/verify_decrypt.mjs`, or optional `npx wrangler` deploys.
+`ai-digest` is a self-contained **Rust binary (`ai-digest`) + TypeScript/CSS editorial frontend (`web/`)** that turns ~155 open sources into daily and weekly AI digests: `ai-digest fetch` collects and triages candidates, an LLM agent curates Markdown, `ai-digest render` renders single-file HTML with embedded frontend assets (`web/dist/`), and `ai-digest publish` builds and deploys a root-mounted public static site by default (`ENCRYPT=0`, `SLUG=`, symmetric `/zh/` & `/en/` paths, Level 5/5 GEO + `_worker.js`; optional client-side AES-256-GCM encryption via `--init --encrypt` or `ENCRYPT=1`) to Cloudflare Pages (`DIGEST_LANG` / `--lang`: `en` default, `zh-CN`). Rust 1.88+ builds the binary with zero runtime interpreter dependencies; Node 24+ is used only for building/testing `web/`, running `web/dist/verify_decrypt.mjs`, or optional `npx wrangler` deploys.
 
 ## Setup, test, lint (run before every PR)
 
 ```bash
-# Frontend (Node 22+)
+# Frontend (Node 24+)
 npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web run build && git diff --exit-code web/dist/
@@ -38,7 +38,7 @@ CI (`.github/workflows/ci.yml`) also checks `strings target/release/ai-digest` f
 | `src/geo.rs` | Public Level 5/5 GEO & Agent Readiness (`ENCRYPT=0` only): `robots.txt` Content Signals, `sitemap.xml`, `llms.txt`/`llms-full.txt`, Atom feeds, JSON-LD, `.md` mirrors, `/.well-known/agent-skills/`, `search-index.json`, and `_worker.js` config injection |
 | `src/crypto.rs`, `src/net.rs`, `src/verify.rs` | Privacy scan, build-time SHA-256 CSP header finalizer, opt-in AES-256-GCM+gzip encryption (`ENCRYPT=1`), SSRF-hardened HTTP client, native verifier |
 | `src/publish.rs`, `src/i18n.rs`, `src/model.rs`, `src/assets.rs`, `src/version.rs` | Publish orchestrator (`--init`, `--issue`, `--remove`, `--rebuild`, `--rerender-all`, `--rotate-password`, `--demo`), bilingual i18n, shared models |
-| `web/src/{css,ts}/`, `web/build.mjs`, `web/dist/`, `web/tests/` | Strict TypeScript + CSS frontend, deterministic `esbuild` pipeline (committed `web/dist/*` + `verify_decrypt.mjs`), Vitest suite (budgets, CSS hygiene, Worker, WebCrypto parity) |
+| `web/src/{css,ts}/`, `web/build.ts`, `web/dist/`, `web/tests/` | Strict TypeScript + CSS frontend, deterministic `esbuild` pipeline (committed `web/dist/*` + `verify_decrypt.mjs`), Vitest suite (budgets, CSS hygiene, Worker, WebCrypto parity) |
 | `fetch/` | Source registry (`sources.toml`), `preferences.example.json`, optional X recall protocol (`x-recall*.md`), arXiv troubleshooting |
 | `prompts/<en\|zh-CN>/{papers,daily,weekly}.md` | Self-contained agent prompts; each starts with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and reader-preference profile template (`.zh-CN.md` twins) |
@@ -67,7 +67,7 @@ Markdown contract (parsed by `src/parser.rs` in either language): title `**AI Di
 
 ## Conventions
 
-- Rust & TypeScript: keep pure-Rust dependencies lean, respect the module DAG enforced by `tests/core_tests.rs`, keep `web/src/` strict TS with CSS/JS budgets enforced by `web/build.mjs`, and always commit rebuilt `web/dist/` when changing `web/src/`.
+- Rust & TypeScript: keep pure-Rust dependencies lean, respect the module DAG enforced by `tests/core_tests.rs`, keep `web/src/` strict TS with CSS/JS budgets enforced by `web/build.ts`, and always commit rebuilt `web/dist/` when changing `web/src/`.
 - i18n & docs: all user-facing strings go through `src/i18n.rs` in both `en` and `zh-CN` (`tests/core_tests.rs` enforces parity); keep `.zh-CN.md` doc twins idiomatic and READMEs lean.
 - CLIs: pure English `--help` with examples, `--version` printing `ai-digest <ver>`, non-interactive by default, stderr + exit `1`/`2` on errors, `--json` for summaries.
 - Releases & community files: Release Please (`.github/workflows/release-please.yml`) manages `Cargo.toml`, `Cargo.lock`, `web/package.json`, `web/package-lock.json`, `CHANGELOG.md`, and tagged releases from Conventional Commit PR titles — don't edit them in normal PRs. Keep `CONTRIBUTING*.md` and `.github/` templates in sync with rules here.

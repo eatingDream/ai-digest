@@ -725,6 +725,7 @@ fn issue_link(prefix: &str, issue: &IssueRef) -> LinkItem {
 
 struct Edition<'a> {
     lang: Lang,
+    default_lang: Lang,
     prefix: &'a str,
     canonical: &'a str,
     pages: &'a [SourcePage],
@@ -760,14 +761,27 @@ impl Edition<'_> {
         issue: Option<&IssueRef>,
         canonical_path: &str,
     ) -> BTreeMap<String, String> {
-        let mut alts = BTreeMap::from([(self.lang.as_str().to_owned(), canonical_path.to_owned())]);
+        let mut alts =
+            BTreeMap::from([(self.lang.hreflang().to_owned(), canonical_path.to_owned())]);
         let rel = issue.map_or_else(String::new, IssueRef::rel);
+        let mut other_url: Option<String> = None;
         if let Some(prefix) = self.other_prefix {
             if issue.is_none_or(|i| self.other_pages.iter().any(|p| p.issue == *i)) {
-                alts.insert(self.lang.other().as_str().into(), page_path(prefix, &rel));
+                let target = page_path(prefix, &rel);
+                alts.insert(self.lang.other().hreflang().into(), target.clone());
+                other_url = Some(target);
             }
         } else if let Some(alt) = with_alt(self.external, &rel) {
-            alts.insert(alt.lang.as_str().into(), alt.base);
+            alts.insert(alt.lang.hreflang().into(), alt.base.clone());
+            other_url = Some(alt.base);
+        }
+        if alts.len() > 1 {
+            let x_default = if self.lang == self.default_lang {
+                canonical_path.to_owned()
+            } else {
+                other_url.unwrap_or_else(|| canonical_path.to_owned())
+            };
+            alts.insert("x-default".into(), x_default);
         }
         alts
     }
@@ -901,6 +915,13 @@ impl Edition<'_> {
         }
         let index_dir = page_path(self.prefix, "");
         let canonical = page_path(self.canonical, "");
+        let latest_date = self
+            .pages
+            .iter()
+            .map(|p| p.issue.end)
+            .max()
+            .map(|d| d.to_string())
+            .unwrap_or_default();
         let geo = GeoPage {
             rel_html: page_path(self.prefix, "index.html")
                 .trim_start_matches('/')
@@ -912,6 +933,7 @@ impl Edition<'_> {
             canonical_path: canonical.clone(),
             lang: self.lang,
             page_type: PageType::Index,
+            date_iso: latest_date,
             alternates: self.alternates(None, &canonical),
             feed_path: self.feed.to_owned(),
             is_canonical: self.prefix == self.canonical,
@@ -969,6 +991,7 @@ fn site_plans(ctx: &SiteContext) -> Result<Plans> {
     let en_prefix = url_prefix(&[&cfg.slug, "en"]);
     let common = Edition {
         lang: ctx.lang,
+        default_lang: ctx.lang,
         prefix: &prefix,
         canonical: if symmetric { &zh_prefix } else { &prefix },
         pages: &primary,
@@ -995,6 +1018,7 @@ fn site_plans(ctx: &SiteContext) -> Result<Plans> {
         .add(&mut plans);
         Edition {
             lang: Lang::En,
+            default_lang: ctx.lang,
             prefix: &en_prefix,
             canonical: &en_prefix,
             pages: &en,
@@ -1024,6 +1048,7 @@ fn site_plans(ctx: &SiteContext) -> Result<Plans> {
             .aliases(&mut plans, true);
             Edition {
                 lang: Lang::En,
+                default_lang: ctx.lang,
                 prefix: "/en",
                 canonical: &en_prefix,
                 pages: &en,
@@ -1933,8 +1958,14 @@ fn project_route(cfg: &SiteConfig) -> Result<String> {
 }
 
 fn asset_mime(path: &Path) -> &'static str {
-    if path.file_name().and_then(|s| s.to_str()) == Some("feed.xml") {
-        return "application/atom+xml; charset=utf-8";
+    match path.file_name().and_then(|s| s.to_str()) {
+        Some("feed.xml") => return "application/atom+xml; charset=utf-8",
+        Some("rss.xml") => return "application/rss+xml; charset=utf-8",
+        Some("feed.json") => return "application/feed+json; charset=utf-8",
+        Some("api-catalog") => {
+            return r#"application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727""#
+        }
+        _ => {}
     }
     match path.extension().and_then(|s| s.to_str()) {
         Some("html") => "text/html; charset=utf-8",
@@ -2452,6 +2483,7 @@ pub fn build_demo(
         let other = url_prefix(&[lang.other().as_str()]);
         Edition {
             lang,
+            default_lang: languages[0],
             prefix: &prefix,
             canonical: &prefix,
             pages: &editions[&lang],
