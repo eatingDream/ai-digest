@@ -1,4 +1,5 @@
 export type ThemeMode = "system" | "light" | "dark";
+export type FontSize = "sm" | "md" | "lg";
 
 export interface MastController {
   getMastHeight(): number;
@@ -10,6 +11,7 @@ export interface MastController {
 }
 
 const THEME_KEY = "digest-theme";
+const FONT_KEY = "digest-font";
 export const LANG_ANCHOR_KEY = "ai_digest_lang_anchor";
 const THEME_MODES: readonly ThemeMode[] = ["system", "light", "dark"];
 
@@ -240,6 +242,44 @@ export function initMast(): MastController {
   darkQuery?.addEventListener?.("change", () => {
     if (curTheme === "system") syncThemeMeta("system");
   });
+
+  // 3-tier font size switcher: sm / md / lg (persisted, pre-paint synced via boot.ts)
+  const fontBtns = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("[data-font-size]")
+  );
+  const readFont = (): FontSize => {
+    try {
+      const raw = localStorage.getItem(FONT_KEY);
+      if (raw === "sm" || raw === "md" || raw === "lg") return raw;
+    } catch {
+      // Ignore storage access errors.
+    }
+    return "md";
+  };
+  const applyFont = (size: FontSize, save: boolean): void => {
+    root.dataset.font = size;
+    if (save) {
+      try {
+        localStorage.setItem(FONT_KEY, size);
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+    for (const btn of fontBtns) {
+      btn.setAttribute("aria-pressed", btn.dataset.fontSize === size ? "true" : "false");
+    }
+  };
+  if (fontBtns.length > 0) {
+    applyFont(readFont(), false);
+    for (const btn of fontBtns) {
+      btn.addEventListener("click", () => {
+        const next = btn.dataset.fontSize;
+        if (next === "sm" || next === "md" || next === "lg") {
+          applyFont(next, true);
+        }
+      });
+    }
+  }
 
   // SEC-9: Preserve origin for approved cross-origin LANG_ALT without forwarding
   // query/hash cross-origin, and reject protocol-relative // pathnames.

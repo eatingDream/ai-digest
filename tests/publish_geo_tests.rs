@@ -1798,13 +1798,14 @@ fn tier2_csp_geo_and_single_h1_regressions() {
     }
     let daily_html = get(&prod_pub, "daily/latest.html");
     let weekly_html = get(&prod_pub, "weekly/latest.html");
-    assert!(daily_html.contains("<title>AI Digest · D01/15</title>"));
-    assert!(weekly_html.contains("<title>AI Digest · W03</title>"));
+    assert!(daily_html.contains("<title>AI Digest · D · 01/15</title>"));
+    assert!(weekly_html.contains("<title>AI Digest · W · 03</title>"));
     assert!(daily_html.contains(r#"class="filter-bar filter-drawer search-panel""#));
     assert!(daily_html.contains(r#"hidden aria-hidden="true" inert"#));
     assert!(daily_html.contains(r#"class="search-scrim""#));
     assert!(daily_html.contains(r#"class="mast-sentinel""#));
-    assert!(daily_html.contains(r#"class="highlights""#));
+    assert!(daily_html.contains(r#"class="issue-summary""#));
+    assert!(daily_html.contains(r#"class="filter-banner""#));
     assert!(daily_html.contains(r#"class="toc-top""#));
     assert!(daily_html.contains(r#"class="cat-chips""#));
     assert!(daily_html.contains(r#"class="mobile-filter-strip""#));

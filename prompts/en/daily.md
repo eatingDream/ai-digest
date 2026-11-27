@@ -94,6 +94,11 @@ Be budget-aware up front: the goal is to read **all** candidates but only once; 
 
 Line 1: `**AI Digest · Daily · M/D**`, where M/D is the month/day of **`P`** (not of the run day; `P`=2026-11-18 → `**AI Digest · Daily · 11/18**`). Date tags inside items also use the real date of the event.
 
+Follow with an optional (recommended) 2–3 sentence editorial lead:
+```
+> **Summary:** 2–3 crisp sentences synthesizing the day's genuine main threads across the issue (ranked by real substance — never force per-category quotas or list bare headlines).
+```
+
 Part two is the section overview, one line per section that has content:
 ```
 - 🧠 Models: A · B
@@ -117,20 +122,24 @@ Then the body. Sections go **in this order**; omit a whole section that has no c
 | `## 🛡 Safety & Policy` | Important safety/alignment/interpretability releases (beyond papers), regulation and legislation, government/AISI documents, lawsuits and copyright |
 | `## 💬 Opinions & Essays` | Insightful long reads, interviews, talks, podcasts, important public debates |
 
-Format of each item (numbers run through the whole issue; separate items with `---`):
+Format of each item (numbers run through the whole issue; separate items with `---`; prefer a crisp 2-layer structure over repetitive 3-paragraph bloat):
 
 ```
 ### N. Concise focused title (hard cap ≤ 30 full-width chars; ASCII = 0.5)
 `Organisation or author · M/D · Tag1 / Tag2`
 
-**In brief:** One crisp sentence summarising the core development (do not repeat the title).
+**In brief:** 1–2 concise sentences covering the core fact and development (do not repeat the title).
 
-**Why it matters:** 2–3 structured takeaways or sharp analysis explaining what changes; give checkable primary-source numbers only.
+**Why it matters:**
+- Takeaway 1: verifiable primary-source numbers, concrete delta, or architectural breakthrough.
+- Takeaway 2: mechanism, ecosystem impact, or key caveat (2–3 crisp bullets, non-redundant).
 
-**Details:** Method, facts, concrete metrics, context, and limitations.
+**Details:** (Optional: include only when deeper method/context/limitations add genuinely new facts beyond the brief and takeaways.)
 
-🔗 [Paper](URL) · [Official blog](URL) · [Code](URL) · [Model](URL) · [X](URL) · [Report](URL)
+🔗 [Paper](URL) · [Official blog](URL) · [Code](URL) · [Model](URL) · [X](URL)
 ```
+
+Source gathering rule: collect all complementary primary sources (arXiv paper + official blog/release + GitHub code + Hugging Face weights + official/author X thread). Only include secondary media reports when they contribute original benchmarks, deep analysis, or primary reporting — never pad with rewritten aggregator coverage.
 
 Pick 1–3 tags from: `Frontier release` `Open weights` `Primary source` `Major` `Training` `RSI` `Harness` `Agent` `Inference` `Evals` `Multimodal` `Embodied` `Safety` `Alignment` `Interpretability` `Data` `Compute` `Chips` `Product` `Funding` `M&A` `People` `Policy` `Regulation` `Open source` `Opinion` `Interview` `Podcast`.
 

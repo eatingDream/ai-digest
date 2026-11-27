@@ -409,9 +409,9 @@ fn compact_page_tab_title(page: &GeoPage) -> String {
     }
     if let Ok(date) = NaiveDate::parse_from_str(&page.date_iso, "%Y-%m-%d") {
         if page.kind == "weekly" {
-            return format!("AI Digest · W{:02}", date.iso_week().week());
+            return format!("AI Digest · W · {:02}", date.iso_week().week());
         }
-        return format!("AI Digest · D{:02}/{:02}", date.month(), date.day());
+        return format!("AI Digest · D · {:02}/{:02}", date.month(), date.day());
     }
     if page.kind == "weekly" {
         "AI Digest · Weekly".into()

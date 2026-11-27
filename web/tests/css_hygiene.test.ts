@@ -34,6 +34,7 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
     <nav class="issue-nav top"><a href="/prev" rel="prev"><span data-short-date>11.25</span></a><a class="nav-index" href="/"><span class="nav-lbl">Archive</span></a><a class="nav-week" href="/weekly/latest">Weekly</a></nav>
     <div class="mast-tools">
       <button type="button" class="ctrl-btn search-btn" data-filter-toggle aria-expanded="false" aria-controls="digestFilterBar"><span>Search</span><kbd>/</kbd></button>
+      <div class="font-seg" role="group"><button type="button" class="font-btn" data-font-size="sm" aria-pressed="false">S</button><button type="button" class="font-btn" data-font-size="md" aria-pressed="true">M</button><button type="button" class="font-btn" data-font-size="lg" aria-pressed="false">L</button></div>
       <div class="lang-seg"><span aria-current="page">ZH</span><a class="ctrl-btn lang-btn" data-lang-link href="/en/">EN</a></div>
       <button type="button" class="ctrl-btn theme-btn" data-theme-toggle></button>
       <button type="button" class="ctrl-btn lock-btn" data-lock></button>
@@ -75,11 +76,12 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
     <header class="folio issue-head">
       <h1 class="issue-title"><time datetime="2026-11-26">Nov 26</time><span class="vh"> AI Digest Daily</span></h1>
       <p class="folio-dek">Summary</p>
-      <p class="issue-meta mast-meta"><span data-k="read"><b>3</b> min</span><span data-k="count"><b>1</b> item</span><span class="meta-cats"><span class="meta-cat" data-cat="sec-1">Models <b class="num">1</b></span></span><button type="button" class="active-q-chip" data-active-q hidden></button></p>
+      <p class="issue-meta mast-meta"><span data-k="read"><b>3</b> min</span><span data-k="count"><b>1</b> item</span></p>
       <div class="mobile-filter-strip"><button type="button" class="chip" data-cat="all" aria-pressed="true">All <b class="n num">1</b></button></div>
       <nav class="folio-sections"><a href="#sec-1">01 Models</a></nav>
     </header>
-    <section class="highlights"><h2 id="hl-h">Top Highlights <span class="hl-count num">(1)</span></h2><ol class="hl-list"><li data-item-id="item-1" data-category="sec-1" data-tags="llm"><a href="#item-1"><span class="hl-cat">Models</span><span class="hl-t">Story</span></a></li></ol><p class="hl-empty" hidden>None</p><button type="button" class="hl-more" data-hl-more hidden>All</button></section>
+    <section class="issue-summary"><h2 id="sum-h">Summary</h2><p class="summary-lead">Lead <a href="#item-1">Story</a>.</p></section>
+    <div class="filter-banner" data-filter-banner hidden><span class="fb-text" data-fb-text></span><button type="button" class="filter-clear fb-clear">Clear filter</button></div>
     <section class="front front-must" id="front-must">
       <h2>Must Read</h2>
       <ol class="must-list"><li><span class="must-n num">01</span><div class="must-body"><a class="must-title" href="#item-1">Lead</a><p class="must-dek">Dek</p></div></li></ol>
@@ -310,6 +312,7 @@ describe("web/dist artifacts and byte budgets", () => {
 
     const boot = readFileSync(join(DIST, "boot.js"), "utf8");
     expect(boot).toContain("digest-theme");
+    expect(boot).toContain("digest-font");
     expect(boot).toContain("#121110");
     expect(boot).toContain("#f6f3ec");
     expect(boot).toContain("color-scheme");
@@ -362,9 +365,10 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(mobileSlice).toContain("@media(prefers-reduced-motion:reduce)");
     expect(mobileSlice).toContain(".toc-side{opacity:0");
 
-    // Balanced wide editorial shell (~84-88% on 1440px, capped at 880px prose), flush TOC rail & calm stream
-    expect(readerCss).toContain("min(1320px,88vw)");
-    expect(readerCss).toContain("clamp(290px,22vw,330px) minmax(0,880px)");
+    // Balanced wide editorial shell aligned with TopBar (348 + 44 + 920 + 48 = 1360px), flush TOC rail & calm stream
+    expect(readerCss).toContain("min(1360px,90vw)");
+    expect(readerCss).toContain("clamp(304px,23vw,348px) minmax(0,920px)");
+    expect(readerCss).not.toContain("text-wrap:balance");
     expect(readerCss).toContain(".folio-sections{display:none}");
     expect(readerCss).toContain("scrollbar-color:var(");
     expect(readerCss).not.toContain("grid-column:3/6");
@@ -385,7 +389,7 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(readerCss).not.toMatch(/transition\s*:\s*all\b/i);
 
     const indexCss = readFileSync(join(DIST, "index.css"), "utf8");
-    expect(indexCss).toContain("min(1320px,88vw)");
+    expect(indexCss).toContain("min(1360px,90vw)");
     expect(indexCss).not.toMatch(/&[.:[\s]/);
     expect(indexCss).not.toMatch(/transition\s*:\s*all\b/i);
   });

@@ -82,6 +82,8 @@ pub fn parse_digest_md(md: &str, lang: Lang, fallback_year: Option<i32>) -> Resu
     };
     let mut front = BTreeMap::<&str, Vec<&str>>::new();
     let mut current_front = None;
+    let mut summary_lines: Vec<String> = Vec::new();
+    let mut in_summary = false;
     while let Some(line) = lines.peek() {
         let s = line.trim();
         if ["## ", "### ", "#### "]
@@ -90,11 +92,31 @@ pub fn parse_digest_md(md: &str, lang: Lang, fallback_year: Option<i32>) -> Resu
         {
             break;
         }
+        if current_front.is_none() {
+            if let Some(quoted) = s.strip_prefix('>') {
+                let q = quoted.trim();
+                if let Some(rest) = strip_summary_prefix(q) {
+                    in_summary = true;
+                    if !rest.is_empty() {
+                        summary_lines.push(rest.to_owned());
+                    }
+                    lines.next();
+                    continue;
+                } else if in_summary && !q.is_empty() {
+                    summary_lines.push(q.to_owned());
+                    lines.next();
+                    continue;
+                }
+            } else if !s.is_empty() {
+                in_summary = false;
+            }
+        }
         if !matches!(s, "---" | "") {
             if let Some((_, key)) = i18n::FRONT_BLOCKS
                 .iter()
                 .find(|(label, _)| *label == s.trim_matches('*').trim())
             {
+                in_summary = false;
                 current_front = Some(*key);
             } else if let Some(key) = current_front {
                 front.entry(key).or_default().push(line);
@@ -102,6 +124,7 @@ pub fn parse_digest_md(md: &str, lang: Lang, fallback_year: Option<i32>) -> Resu
         }
         lines.next();
     }
+    digest.summary = summary_lines.join(" ").trim().to_owned();
     parse_toc(&front.remove("toc").unwrap_or_default(), &mut digest);
     let mut current = None;
     let mut body = Vec::new();
@@ -226,6 +249,33 @@ pub fn parse_digest_md(md: &str, lang: Lang, fallback_year: Option<i32>) -> Resu
         })
         .collect();
     Ok(digest)
+}
+
+fn strip_summary_prefix(text: &str) -> Option<&str> {
+    let prefixes = [
+        "**本期摘要：**",
+        "**本期摘要:**",
+        "**摘要：**",
+        "**摘要:**",
+        "**Summary:**",
+        "**Summary：**",
+        "**summary:**",
+        "本期摘要：",
+        "本期摘要:",
+        "摘要：",
+        "摘要:",
+        "Summary:",
+        "Summary：",
+    ];
+    for p in prefixes {
+        if let Some(rest) = text.strip_prefix(p) {
+            return Some(rest.trim());
+        }
+    }
+    if text.len() >= 8 && text[..8].eq_ignore_ascii_case("summary:") {
+        return Some(text[8..].trim());
+    }
+    None
 }
 
 pub fn item_anchor(number: &str) -> String {

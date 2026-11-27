@@ -2,7 +2,7 @@
   color-scheme:light dark;
   --bg:light-dark(#f6f3ec,#121110);--well:light-dark(#efeae0,#191715);--surface:light-dark(#fff,#1b1917);
   --ink:light-dark(#1a1815,#f0ebe3);--ink-3:light-dark(#625a50,#a79e92);
-  --line-strong:light-dark(#cfc5b7,#efeae230);--b:1px solid light-dark(#e4ddd2,#efeae218);
+  --line:light-dark(#e4ddd2,#efeae218);--line-strong:light-dark(#cfc5b7,#efeae230);--b:1px solid var(--line);
   --accent:light-dark(#b85432,#df7d56);--accent-ink:light-dark(#9c4223,#ec9672);
   --hot:light-dark(#c23b2b,#e3725b);--shadow-1:0 8px 24px #0004;
   --font-ui:system-ui,"PingFang SC","Noto Sans CJK SC",sans-serif;

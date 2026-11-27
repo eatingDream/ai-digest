@@ -77,6 +77,64 @@ pub fn render_markdown(text: &str, inline: bool) -> String {
     markdown(text, inline, "")
 }
 
+fn render_look_html(text: &str, prefix: &str) -> String {
+    let has_list_or_multi = text.contains("\n\n")
+        || text.lines().any(|line| {
+            let t = line.trim_start();
+            t.starts_with("- ")
+                || t.starts_with("* ")
+                || t.starts_with("+ ")
+                || t.bytes().take_while(|b| b.is_ascii_digit()).count() > 0
+                    && t.trim_start_matches(|c: char| c.is_ascii_digit())
+                        .starts_with(". ")
+        });
+    if !has_list_or_multi {
+        let clauses = split_top_level_semicolons(text);
+        if (2..=4).contains(&clauses.len()) && clauses.iter().all(|c| c.chars().count() >= 12) {
+            let mut out = String::from("<ul>");
+            for clause in clauses {
+                let rendered = markdown(clause, true, prefix);
+                write!(out, "<li>{rendered}</li>").unwrap();
+            }
+            out.push_str("</ul>");
+            return out;
+        }
+    }
+    markdown(text, false, prefix)
+}
+
+fn split_top_level_semicolons(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    let mut in_code = false;
+    let mut in_math = false;
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '`' => in_code = !in_code,
+            '$' if !in_code => in_math = !in_math,
+            '(' | '（' if !in_code && !in_math => paren += 1,
+            ')' | '）' if !in_code && !in_math => paren = paren.saturating_sub(1),
+            '[' | '【' if !in_code && !in_math => bracket += 1,
+            ']' | '】' if !in_code && !in_math => bracket = bracket.saturating_sub(1),
+            '；' if !in_code && !in_math && paren == 0 && bracket == 0 => {
+                let seg = text[start..idx].trim();
+                if !seg.is_empty() {
+                    parts.push(seg);
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
 fn markdown(text: &str, inline: bool, prefix: &str) -> String {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
@@ -346,13 +404,13 @@ pub fn compact_tab_title(digest: &Digest) -> String {
         digest
             .dates
             .last()
-            .map(|d| format!("AI Digest · W{:02}", d.iso_week().week()))
+            .map(|d| format!("AI Digest · W · {:02}", d.iso_week().week()))
             .unwrap_or_else(|| "AI Digest · Weekly".into())
     } else {
         digest
             .dates
             .last()
-            .map(|d| format!("AI Digest · D{:02}/{:02}", d.month(), d.day()))
+            .map(|d| format!("AI Digest · D · {:02}/{:02}", d.month(), d.day()))
             .unwrap_or_else(|| "AI Digest".into())
     }
 }
@@ -549,8 +607,33 @@ fn filter_empty(out: &mut String, lang: Lang, archive: bool) {
         t(lang, if archive { "archive_filter_empty" } else { "filter_empty" }), t(lang, "filter_clear")).unwrap();
 }
 
-fn tools(out: &mut String, lang: Lang, prefix: &str, alt: Option<&LangAlt>, bilingual: bool) {
-    write!(out, r#"<div class="mast-tools"><button type="button" class="ctrl-btn search-btn" data-filter-toggle aria-expanded="false" aria-controls="{prefix}digestFilterBar" aria-label="{}">{}<span>{}</span><kbd>/</kbd></button>{}<button type="button" class="ctrl-btn theme-btn" data-theme-toggle aria-label="{}">{}</button></div>"#,
+fn font_control(lang: Lang) -> String {
+    format!(
+        r#"<div class="font-seg" role="group" aria-label="{}"><button type="button" class="font-btn" data-font-size="sm" aria-pressed="false" title="{}">{}</button><button type="button" class="font-btn" data-font-size="md" aria-pressed="true" title="{}">{}</button><button type="button" class="font-btn" data-font-size="lg" aria-pressed="false" title="{}">{}</button></div>"#,
+        esc(t(lang, "font_size_aria")),
+        esc(t(lang, "font_sm_title")),
+        t(lang, "font_sm"),
+        esc(t(lang, "font_md_title")),
+        t(lang, "font_md"),
+        esc(t(lang, "font_lg_title")),
+        t(lang, "font_lg"),
+    )
+}
+
+fn tools(
+    out: &mut String,
+    lang: Lang,
+    prefix: &str,
+    alt: Option<&LangAlt>,
+    bilingual: bool,
+    with_font: bool,
+) {
+    let font = if with_font {
+        font_control(lang)
+    } else {
+        String::new()
+    };
+    write!(out, r#"<div class="mast-tools"><button type="button" class="ctrl-btn search-btn" data-filter-toggle aria-expanded="false" aria-controls="{prefix}digestFilterBar" aria-label="{}">{}<span>{}</span><kbd>/</kbd></button>{font}{}<button type="button" class="ctrl-btn theme-btn" data-theme-toggle aria-label="{}">{}</button></div>"#,
         esc(t(lang, "search_toggle_title")), icon("search"), t(lang, "search_btn"), lang_control(lang, alt, bilingual),
         esc(t(lang, "theme_toggle_title")), icon("theme")).unwrap();
 }
@@ -562,6 +645,24 @@ fn short_section_label(title: &str) -> String {
         clean.to_owned()
     } else {
         trimmed.to_owned()
+    }
+}
+
+fn chip_section_label(sec_id: &str, title: &str, lang: Lang) -> String {
+    let base = sec_id
+        .rsplit_once('-')
+        .filter(|(_, tail)| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()))
+        .map_or(sec_id, |(head, _)| head);
+    match base {
+        "sec-models" => lang.choose("Models", "模型").to_owned(),
+        "sec-papers" => lang.choose("Papers", "论文").to_owned(),
+        "sec-tools" => lang.choose("Tools", "工具").to_owned(),
+        "sec-industry" => lang.choose("Industry", "产业").to_owned(),
+        "sec-infra" => lang.choose("Compute", "算力").to_owned(),
+        "sec-policy" => lang.choose("Safety", "安全").to_owned(),
+        "sec-voices" => lang.choose("Voices", "观点").to_owned(),
+        "sec-evals" => lang.choose("Evals", "评测").to_owned(),
+        _ => short_section_label(title),
     }
 }
 
@@ -579,7 +680,9 @@ fn render_cat_chips(out: &mut String, digest: &Digest, lang: Lang) {
             continue;
         }
         let cat = esc(&sec.id);
-        let label = esc(&protect_technical_hyphens(&short_section_label(&sec.title)));
+        let label = esc(&protect_technical_hyphens(&chip_section_label(
+            &sec.id, &sec.title, lang,
+        )));
         write!(
             out,
             r#"<button type="button" class="chip" data-cat="{cat}" aria-pressed="false">{label} <b class="n num">{count}</b></button>"#
@@ -608,16 +711,45 @@ fn item_word_units(item: &Item) -> usize {
     cjk + ((latin as f64) * 1.5).round() as usize
 }
 
+fn item_importance_score(item: &Item, doc_idx: usize) -> usize {
+    let mut score = 0usize;
+    if item.is_new {
+        score += 6;
+    }
+    if doc_idx == 0 {
+        score += 2;
+    }
+    for tag in &item.tags {
+        match tag.as_str() {
+            "重大" | "Major" => score += 5,
+            "前沿发布" | "Frontier release" => score += 4,
+            "一手" | "Primary source" | "开源权重" | "Open weights" => score += 3,
+            other if i18n::BADGE_ACCENT_TAGS.contains(&other) => score += 1,
+            _ => {}
+        }
+    }
+    if item.links.len() >= 3 {
+        score += 1;
+    }
+    score
+}
+
 fn pick_highlights(digest: &Digest) -> Vec<(&crate::model::Section, &Item)> {
-    let mut picked: Vec<(&crate::model::Section, &Item)> = Vec::new();
-    let mut seen_ids = std::collections::HashSet::<&str>::new();
-    let mut per_cat = HashMap::<&str, usize>::new();
-    let target = digest.items().count().min(5);
+    let mut all_items: Vec<(usize, &crate::model::Section, &Item)> = Vec::new();
+    for sec in &digest.sections {
+        for item in sec.items() {
+            all_items.push((all_items.len(), sec, item));
+        }
+    }
+    let target = all_items.len().min(5);
     if target == 0 {
-        return picked;
+        return Vec::new();
     }
 
-    // 1. Explicit digest.must anchors first
+    let mut picked: Vec<(usize, &crate::model::Section, &Item)> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::<&str>::new();
+
+    // 1. Honor explicit digest.must anchors first (no artificial per-category cap)
     for must in &digest.must {
         if picked.len() >= target {
             break;
@@ -625,46 +757,34 @@ fn pick_highlights(digest: &Digest) -> Vec<(&crate::model::Section, &Item)> {
         let Some(anchor) = must.anchor.strip_prefix('#') else {
             continue;
         };
-        for sec in &digest.sections {
-            if let Some(item) = sec.items().find(|it| it.id == anchor) {
-                let cnt = per_cat.entry(sec.id.as_str()).or_insert(0);
-                if *cnt < 2 && seen_ids.insert(item.id.as_str()) {
-                    *cnt += 1;
-                    picked.push((sec, item));
-                }
-                break;
+        if let Some(&(doc_idx, sec, item)) = all_items.iter().find(|(_, _, it)| it.id == anchor) {
+            if seen_ids.insert(item.id.as_str()) {
+                picked.push((doc_idx, sec, item));
             }
         }
     }
-    // 2. Hot / new items next (max 2 per category)
-    for sec in &digest.sections {
-        for item in sec.items().filter(|it| it.is_new) {
+
+    // 2. Rank remaining items purely by editorial importance across the whole issue
+    if picked.len() < target {
+        let mut ranked: Vec<(usize, usize, &crate::model::Section, &Item)> = all_items
+            .iter()
+            .filter(|(_, _, it)| !seen_ids.contains(it.id.as_str()))
+            .map(|&(doc_idx, sec, it)| (item_importance_score(it, doc_idx), doc_idx, sec, it))
+            .collect();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        for (_, doc_idx, sec, item) in ranked {
             if picked.len() >= target {
                 break;
             }
-            let cnt = per_cat.entry(sec.id.as_str()).or_insert(0);
-            if *cnt < 2 && seen_ids.insert(item.id.as_str()) {
-                *cnt += 1;
-                picked.push((sec, item));
+            if seen_ids.insert(item.id.as_str()) {
+                picked.push((doc_idx, sec, item));
             }
         }
     }
-    // 3. Round-robin lead items per section until reaching target (max 2 per category)
-    for pass in 0..2 {
-        for sec in &digest.sections {
-            if picked.len() >= target {
-                break;
-            }
-            if let Some(item) = sec.items().nth(pass) {
-                let cnt = per_cat.entry(sec.id.as_str()).or_insert(0);
-                if *cnt < 2 && seen_ids.insert(item.id.as_str()) {
-                    *cnt += 1;
-                    picked.push((sec, item));
-                }
-            }
-        }
-    }
-    picked
+
+    // Present in natural reading order of the issue
+    picked.sort_by_key(|(doc_idx, _, _)| *doc_idx);
+    picked.into_iter().map(|(_, sec, it)| (sec, it)).collect()
 }
 
 fn classify_source(url: &str, label: &str) -> (&'static str, u8, &'static str, String) {
@@ -816,7 +936,7 @@ impl Reader<'_> {
         };
         out.push_str("<div class=\"mast-sentinel\" aria-hidden=\"true\"></div>\n");
         writeln!(out, r#"<header class="mast" role="banner"><div class="mast-row"><span class="np"><a class="np-link" href="{}" data-brand-home><span class="ai">AI</span> Digest</a></span><span class="edition" data-kind="{kind}">{edition}{}{date}</span><span class="mast-sep" aria-hidden="true"></span>{TOP_SLOT}"#, esc(&home), if date.is_empty() { "" } else { " · " }).unwrap();
-        tools(out, lang, prefix, opts.lang_alt.as_ref(), bilingual);
+        tools(out, lang, prefix, opts.lang_alt.as_ref(), bilingual, true);
         out.push_str("</div></header>\n<div class=\"read-prog\" aria-hidden=\"true\"><div class=\"read-prog-fill\"></div></div>\n");
         filter_panel(
             out,
@@ -863,7 +983,15 @@ impl Reader<'_> {
         };
         let mins = read_minutes(digest);
         let read_html = t(lang, "read_time").replace("{m}", &format!("<b>{mins}</b>"));
-        let count_html = i18n::count_items(lang, total);
+        let count_html = t(
+            lang,
+            if total == 1 {
+                "items_one"
+            } else {
+                "items_many"
+            },
+        )
+        .replace("{n}", &format!("<b>{total}</b>"));
         writeln!(
             out,
             r#"<main id="{prefix}main" class="prose-col"><header class="folio issue-head"><h1 class="issue-title">{heading_text}<span class="vh">{edition_sr}</span></h1>"#
@@ -877,28 +1005,10 @@ impl Reader<'_> {
             )
             .unwrap();
         }
-        write!(
-            out,
-            r#"<p class="issue-meta mast-meta"><span data-k="read" data-read-tpl="{}">{read_html}</span><span data-k="count" data-total="{total}">{count_html}</span><span class="meta-cats" data-meta-cats>"#,
-            esc(t(lang, "read_time"))
-        )
-        .unwrap();
-        for sec in &digest.sections {
-            let count = sec.items().count();
-            if count == 0 {
-                continue;
-            }
-            write!(
-                out,
-                r#"<span class="meta-cat" data-cat="{}">{} <b class="num">{count}</b></span>"#,
-                esc(&sec.id),
-                esc(&protect_technical_hyphens(&short_section_label(&sec.title)))
-            )
-            .unwrap();
-        }
         writeln!(
             out,
-            r#"</span><button type="button" class="active-q-chip" data-active-q hidden></button></p>"#
+            r#"<p class="issue-meta mast-meta"><span data-k="read" data-read-tpl="{}">{read_html}</span><span data-k="count" data-total="{total}">{count_html}</span></p>"#,
+            esc(t(lang, "read_time"))
         )
         .unwrap();
         writeln!(
@@ -923,7 +1033,7 @@ impl Reader<'_> {
         .unwrap();
         render_cat_chips(out, digest, lang);
         out.push_str("</div>\n");
-        self.highlights(out);
+        self.issue_summary(out);
         self.front(out);
         let mut lead = true;
         for (idx, section) in digest.sections.iter().enumerate() {
@@ -964,52 +1074,75 @@ impl Reader<'_> {
             t(lang, "end"), esc(t(lang, "nav_aria")), icon("contents"), t(lang, "toc"), esc(t(lang, "to_top")), icon("up"), esc(t(lang, "to_top")), icon("up")).unwrap();
     }
 
-    fn highlights(&self, out: &mut String) {
+    fn issue_summary(&self, out: &mut String) {
         let Self {
             digest,
             lang,
             prefix,
             ..
         } = *self;
-        let items = pick_highlights(digest);
-        if items.is_empty() {
-            return;
-        }
-        let n = items.len();
-        writeln!(
-            out,
-            r#"<section class="highlights" aria-labelledby="{prefix}hl-h"><h2 id="{prefix}hl-h">{} <span class="hl-count num">({n})</span></h2><ol class="hl-list">"#,
-            t(lang, "highlights_title")
-        )
-        .unwrap();
-        for (idx, (sec, item)) in items.iter().enumerate() {
-            let extra = if idx >= 3 { " data-hl-extra" } else { "" };
-            let cat_label = esc(&protect_technical_hyphens(&short_section_label(&sec.title)));
-            let title = esc(&protect_technical_hyphens(&item.title));
+        let lead_html = if !digest.summary.trim().is_empty() {
+            markdown(digest.summary.trim(), true, prefix)
+        } else {
+            let top = pick_highlights(digest);
+            if top.is_empty() {
+                String::new()
+            } else {
+                let linked: Vec<String> = top
+                    .iter()
+                    .take(3)
+                    .map(|(_, item)| {
+                        format!(
+                            r##"<a href="#{prefix}{}">{}</a>"##,
+                            esc(&item.id),
+                            esc(&protect_technical_hyphens(&item.title))
+                        )
+                    })
+                    .collect();
+                let total = digest.items().count();
+                let sec_count = digest
+                    .sections
+                    .iter()
+                    .filter(|s| s.items().count() > 0)
+                    .count();
+                match lang {
+                    Lang::ZhCn => {
+                        let joined = match linked.as_slice() {
+                            [a] => format!("「{a}」"),
+                            [a, b] => format!("「{a}」与「{b}」"),
+                            [a, b, c, ..] => format!("「{a}」、「{b}」与「{c}」"),
+                            [] => String::new(),
+                        };
+                        format!(
+                            "本期重点关注{joined}等前沿进展，覆盖 {sec_count} 个版面共 {total} 条精选内容。"
+                        )
+                    }
+                    Lang::En => {
+                        let joined = match linked.as_slice() {
+                            [a] => a.clone(),
+                            [a, b] => format!("{a} and {b}"),
+                            [a, b, c, ..] => format!("{a}, {b}, and {c}"),
+                            [] => String::new(),
+                        };
+                        format!(
+                            "This issue focuses on {joined}, spanning {total} curated items across {sec_count} sections."
+                        )
+                    }
+                }
+            }
+        };
+        if !lead_html.is_empty() {
             writeln!(
                 out,
-                r##"<li data-item-id="{prefix}{}" data-category="{}" data-tags="{}"{extra}><a href="#{prefix}{}"><span class="hl-cat">{cat_label}</span><span class="hl-t">{title}</span></a></li>"##,
-                esc(&item.id),
-                esc(&sec.id),
-                esc(&item.tags.join("|")),
-                esc(&item.id)
+                r#"<section class="issue-summary" aria-labelledby="{prefix}sum-h"><h2 id="{prefix}sum-h">{}</h2><p class="summary-lead">{lead_html}</p></section>"#,
+                t(lang, "highlights_title")
             )
             .unwrap();
         }
         writeln!(
             out,
-            r#"</ol><p class="hl-empty" hidden>{} · <b class="num">0</b></p>{}</section>"#,
-            t(lang, "highlights_empty"),
-            if n > 3 {
-                format!(
-                    r#"<button type="button" class="hl-more" data-hl-more data-more-label="{}" data-less-label="{}">{}</button>"#,
-                    esc(t(lang, "highlights_more")),
-                    esc(t(lang, "highlights_less")),
-                    t(lang, "highlights_more")
-                )
-            } else {
-                String::new()
-            }
+            r#"<div class="filter-banner" data-filter-banner hidden role="status" aria-live="polite"><span class="fb-text" data-fb-text></span><button type="button" class="filter-clear fb-clear">{}</button></div>"#,
+            t(lang, "filter_banner_clear")
         )
         .unwrap();
     }
@@ -1210,7 +1343,7 @@ impl Reader<'_> {
                 out,
                 r#"<aside class="look"><span class="look-k">{}</span><div class="prose">{}</div></aside>"#,
                 t(lang, "label_look"),
-                markdown(&item.look, false, prefix)
+                render_look_html(&item.look, prefix)
             )
             .unwrap();
         }
@@ -1513,7 +1646,7 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
     skip_link(&mut out, lang, "");
     out.push_str("<div class=\"mast-sentinel\" aria-hidden=\"true\"></div>\n");
     write!(out, r#"<header class="mast" role="banner"><div class="mast-row"><span class="np"><span class="ai">AI</span> Digest</span><span class="mast-chip">{}</span>"#, i18n::count_issues(lang, issues.len())).unwrap();
-    tools(&mut out, lang, "", opts.lang_alt.as_ref(), false);
+    tools(&mut out, lang, "", opts.lang_alt.as_ref(), false, false);
     out.push_str("</div></header>\n");
     filter_panel(
         &mut out,

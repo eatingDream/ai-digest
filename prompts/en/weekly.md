@@ -63,6 +63,8 @@ The selection criteria are the same as for the daily: substance first, whole fie
 ```
 **AI Digest · Weekly · MM/DD–MM/DD**
 
+> **Summary:** 2–3 crisp sentences synthesizing the week's main technical and industry threads (by real significance — no per-section quotas or headline lists).
+
 **Must read this week**
 
 1. **Title** (M/D): one or two sentences on why it is a must-read.
@@ -91,7 +93,7 @@ The body sections go **in this order**; omit a whole section that has no content
 `## 🧠 Models` → `## 📄 Papers` → `## 🛠 Tools & Projects` → `## 🏢 Industry & Products` → `## ⚡ Compute & Infrastructure` → `## 🛡 Safety & Policy` → `## 💬 Opinions & Essays`.
 Inside the papers section you may use level-4 headings such as `#### Training` for subsections.
 
-Each item has the same format as the daily (numbers run through the whole issue, separated by `---`):
+Each item has the same format as the daily (numbers run through the whole issue, separated by `---`; prefer a crisp 2-layer structure over repetitive 3-paragraph bloat):
 
 ```
 ### N. Concise focused title (hard cap ≤ 30 full-width chars; ASCII = 0.5)
@@ -99,14 +101,18 @@ Each item has the same format as the daily (numbers run through the whole issue,
 
 **In brief:** …
 
-**Why it matters:** 2–3 structured takeaways or sharp analysis
+**Why it matters:**
+- Takeaway 1: verifiable primary-source result or change
+- Takeaway 2: mechanism, hindsight verdict, or caveat (2–3 crisp bullets)
 
-**Details:** … (the weekly may include the week's follow-ups and the verdict in hindsight)
+**Details:** … (optional: deeper context, follow-ups, or verdict in hindsight)
 
 **Follow-up:** … (optional: what happened later this week)
 
-🔗 [Paper](URL) · [Official blog](URL) · [Code](URL) · [Model](URL) · [X](URL) · [Report](URL)
+🔗 [Paper](URL) · [Official blog](URL) · [Code](URL) · [Model](URL) · [X](URL)
 ```
+
+Gather all complementary primary sources (paper / official blog / code / model / official or author X); only include secondary reports when they add original testing, independent verification, or deep analysis — never pad with low-quality rewrites.
 
 The tag vocabulary is the same as the daily: `Frontier release` `Open weights` `Primary source` `Major` `Training` `RSI` `Harness` `Agent` `Inference` `Evals` `Multimodal` `Embodied` `Safety` `Alignment` `Interpretability` `Data` `Compute` `Chips` `Product` `Funding` `M&A` `People` `Policy` `Regulation` `Open source` `Opinion` `Interview` `Podcast`.
 

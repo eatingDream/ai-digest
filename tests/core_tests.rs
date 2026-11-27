@@ -142,7 +142,7 @@ fn translation_keys_and_placeholders_match() {
         (
             i18n::all_string_keys().collect::<Vec<_>>(),
             i18n::string as fn(Lang, &str) -> Option<&'static str>,
-            103,
+            111,
         ),
         (
             i18n::all_fetch_keys().collect::<Vec<_>>(),
@@ -2059,4 +2059,19 @@ fn qa_round1_regressions_hyphens_empty_sections_and_flow_drawer() {
         prev_doc.contains(r#"<time class="when">11.25</time>"#),
         "daily story from a different date must keep visible date stamp"
     );
+
+    // 8. v1.1.1 editorial polish: explicit summary lead, 2-layer bullet look, zero desktop .meta-cats, spaced tab title
+    let lead_md = "**AI Digest · 日报 · 11/26**\n\n> **本期摘要：** 具身世界模型与数学形式化证明成为今日主线，开源生态与算力格局同步演进。\n\n## 🧠 模型\n\n### 1. 测试二层结构条目\n`Lab · 11/26 · 前沿发布`\n\n**一句话：** 精炼摘要一句话写清核心事实。\n\n**值得看：**\n- 指标跃升至 91%。\n- 支持免微调持续演化。\n\n🔗 [官方博客](https://example.com/post)\n";
+    let lead_digest = parser::parse_digest_md(lead_md, Lang::ZhCn, Some(2026)).unwrap();
+    assert_eq!(
+        lead_digest.summary,
+        "具身世界模型与数学形式化证明成为今日主线，开源生态与算力格局同步演进。"
+    );
+    let lead_html = render::render_digest_html(&lead_digest, Lang::ZhCn, &RenderOptions::default());
+    assert!(lead_html.contains("<title>AI Digest · D · 11/26</title>"));
+    assert!(lead_html.contains(r#"<section class="issue-summary""#));
+    assert!(lead_html.contains("具身世界模型与数学形式化证明成为今日主线"));
+    assert!(lead_html.contains(r#"<div class="filter-banner""#));
+    assert!(!lead_html.contains("meta-cats"));
+    assert!(lead_html.contains("<ul>\n<li>指标跃升至 91%。</li>"));
 }

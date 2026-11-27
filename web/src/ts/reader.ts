@@ -93,16 +93,10 @@ function initReaderPane(
 
   const readMetaEl = scope.querySelector<HTMLElement>('.issue-meta [data-k="read"]');
   const countMetaEl = scope.querySelector<HTMLElement>('.issue-meta [data-k="count"]');
-  const metaCats = Array.from(scope.querySelectorAll<HTMLElement>(".meta-cat[data-cat]"));
   const catChips = Array.from(scope.querySelectorAll<HTMLButtonElement>(".chip[data-cat]"));
-  const hlSection = scope.querySelector<HTMLElement>("section.highlights");
-  const hlList = hlSection?.querySelector<HTMLElement>(".hl-list") ?? null;
-  const hlItems = hlSection
-    ? Array.from(hlSection.querySelectorAll<HTMLElement>("li[data-item-id]"))
-    : [];
-  const hlCountEl = hlSection?.querySelector<HTMLElement>(".hl-count") ?? null;
-  const hlEmptyEl = hlSection?.querySelector<HTMLElement>(".hl-empty") ?? null;
-  const hlMoreBtn = hlSection?.querySelector<HTMLButtonElement>("[data-hl-more]") ?? null;
+  const summarySection = scope.querySelector<HTMLElement>("section.issue-summary");
+  const filterBanner = scope.querySelector<HTMLElement>("[data-filter-banner]");
+  const fbText = filterBanner?.querySelector<HTMLElement>("[data-fb-text]") ?? null;
 
   const paneIsZh = (): boolean => {
     if (scope instanceof HTMLElement) {
@@ -111,6 +105,16 @@ function initReaderPane(
     }
     return mast.isZh();
   };
+
+  const catLabelMap = new Map<string, string>();
+  for (const chip of catChips) {
+    const cat = chip.dataset.cat || "";
+    if (!cat || cat === "all" || catLabelMap.has(cat)) continue;
+    const clone = chip.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(".n").forEach((n) => n.remove());
+    const lbl = (clone.textContent || "").trim();
+    if (lbl) catLabelMap.set(cat, lbl);
+  }
 
   const stories = Array.from(scope.querySelectorAll<HTMLElement>("article.story"));
   const sections = Array.from(scope.querySelectorAll<HTMLElement>("section.sec"));
@@ -219,16 +223,6 @@ function initReaderPane(
     const isOpen = secBtn.getAttribute("aria-expanded") === "true";
     setGroupOpen(grp, !isOpen);
     syncExpandAllLabel();
-  });
-
-  // Mobile highlights expand/collapse
-  hlMoreBtn?.addEventListener("click", () => {
-    if (!hlSection) return;
-    const expanded = hlSection.classList.toggle("is-expanded");
-    hlMoreBtn.textContent = expanded
-      ? hlMoreBtn.dataset.lessLabel || "Less"
-      : hlMoreBtn.dataset.moreLabel || "Show all";
-    hlMoreBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
   });
 
   // Mobile sheet open / close + inert + focus trap
@@ -677,18 +671,9 @@ function initReaderPane(
         if (numEl) numEl.textContent = String(n);
       }
 
-      // Sync header per-category counts
-      for (const mc of metaCats) {
-        const cat = mc.dataset.cat || "";
-        const n = facetedCounts.get(cat) || 0;
-        const b = mc.querySelector<HTMLElement>("b");
-        if (b) b.textContent = String(n);
-        mc.hidden = n === 0 && hasAnyFilter;
-      }
-
       // Dynamic read time + visible/total count in header
+      const mins = matched > 0 ? Math.max(1, Math.round(totalWords / 400)) : 0;
       if (readMetaEl) {
-        const mins = matched > 0 ? Math.max(1, Math.round(totalWords / 400)) : 0;
         const tpl = readMetaEl.dataset.readTpl || "{m} min";
         const parts = tpl.split("{m}");
         readMetaEl.textContent = "";
@@ -710,30 +695,27 @@ function initReaderPane(
         countMetaEl.append(b, unit);
       }
 
-      // Dynamic Top Highlights sync
-      if (hlSection) {
-        if (matched === 0) {
-          hlSection.hidden = true;
-        } else {
-          hlSection.hidden = false;
-          let visHl = 0;
-          for (const li of hlItems) {
-            const id = li.dataset.itemId || "";
-            const st = storyById.get(id);
-            const show = st ? !st.hidden : false;
-            li.hidden = !show;
-            if (show) visHl++;
+      // Unfiltered: show editorial summary; filtered: hide summary and show sleek 1-line filter banner
+      if (summarySection) {
+        summarySection.hidden = hasAnyFilter;
+      }
+      if (filterBanner) {
+        const showBanner = hasAnyFilter && matched > 0;
+        filterBanner.hidden = !showBanner;
+        if (showBanner && fbText) {
+          const parts: string[] = [];
+          if (activeCat !== "all") {
+            parts.push(catLabelMap.get(activeCat) || activeCat);
           }
-          if (hlCountEl) hlCountEl.textContent = `(${visHl})`;
-          if (hlList) hlList.hidden = visHl === 0;
-          if (hlEmptyEl) {
-            hlEmptyEl.hidden = visHl > 0;
-            const b = hlEmptyEl.querySelector<HTMLElement>("b");
-            if (b) b.textContent = String(matched);
-          }
-          if (hlMoreBtn) {
-            hlMoreBtn.hidden = visHl <= 3;
-          }
+          for (const t of activeTags) parts.push(`#${t}`);
+          if (query) parts.push(`\u201c${query}\u201d`);
+          const zh = paneIsZh();
+          const countPart = zh
+            ? `${matched} \u6761`
+            : `${matched} ${matched === 1 ? "item" : "items"}`;
+          const readPart = zh ? `\u7ea6 ${mins} \u5206\u949f` : `${mins} min`;
+          const prefix = zh ? "\u5f53\u524d\u7b5b\u9009\uff1a" : "Filtered: ";
+          fbText.textContent = `${prefix}${parts.join(" \u00b7 ")} \u00b7 ${countPart} \u00b7 ${readPart}`;
         }
       }
 
@@ -841,8 +823,8 @@ function initReaderPane(
       onCrossPaneTarget(target);
       return;
     }
-    const fromHighlight = Boolean(link.closest("section.highlights"));
-    jumpToElement(target, true, fromHighlight);
+    const fromSummary = Boolean(link.closest("section.issue-summary"));
+    jumpToElement(target, true, fromSummary);
   });
 
   clickScope.addEventListener("click", (e: Event) => {
