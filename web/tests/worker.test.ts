@@ -353,4 +353,86 @@ describe("built web/dist/worker.js runtime behavior", () => {
     expect(notFound.headers.get("x-robots-tag")).toBe("noindex, nofollow");
     expect(notFound.headers.get("cache-control")).toBe("no-store");
   });
+
+  it("localizes rel=alternate markdown Link header per page with safe fallback", async () => {
+    const raw = readFileSync(WORKER_DIST, "utf8");
+    const localizedCfg: WorkerConfig = {
+      ...TEST_CFG,
+      linkHeader:
+        '</llms.txt>; rel="describedby"; type="text/markdown", </en/index.md>; rel="alternate"; type="text/markdown", </sitemap.xml>; rel="sitemap"; type="application/xml"',
+    };
+    const injected = raw.replace("__WORKER_CFG_JSON__", JSON.stringify(localizedCfg));
+    const dataUrl =
+      "data:text/javascript;base64," + Buffer.from(injected, "utf8").toString("base64");
+    const localizedWorker = (await import(dataUrl)) as WorkerModule;
+    const demoEnv = makeAssets({
+      "/en/": { body: "<html>EN</html>", type: "text/html; charset=utf-8" },
+      "/en/index.md": { body: "# EN Index\n", type: "text/markdown" },
+      "/zh-CN/": { body: "<html>ZH</html>", type: "text/html; charset=utf-8" },
+      "/zh-CN/index.md": { body: "# ZH Index\n", type: "text/markdown" },
+      "/en/daily/latest": { body: "<html>Latest</html>", type: "text/html; charset=utf-8" },
+      "/en/daily/latest.md": { body: "# Latest EN\n", type: "text/markdown" },
+    });
+
+    const enRes = await localizedWorker.default.fetch(
+      new Request("https://demo.example.com/en/"),
+      demoEnv
+    );
+    expect(enRes.headers.get("link")).toContain(
+      '</en/index.md>; rel="alternate"; type="text/markdown"'
+    );
+
+    const zhRes = await localizedWorker.default.fetch(
+      new Request("https://demo.example.com/zh-CN/"),
+      demoEnv
+    );
+    expect(zhRes.headers.get("link")).toContain(
+      '</zh-CN/index.md>; rel="alternate"; type="text/markdown"'
+    );
+
+    const latestHead = await localizedWorker.default.fetch(
+      new Request("https://demo.example.com/en/daily/latest", { method: "HEAD" }),
+      demoEnv
+    );
+    expect(latestHead.headers.get("link")).toContain(
+      '</en/daily/latest.md>; rel="alternate"; type="text/markdown"'
+    );
+
+    const missing = await localizedWorker.default.fetch(
+      new Request("https://demo.example.com/missing"),
+      demoEnv
+    );
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("link")).toContain(
+      '</en/index.md>; rel="alternate"; type="text/markdown"'
+    );
+  });
+
+  it("applies global security headers on /.well-known/search and 302 redirects and escapes reflected query markdown", async () => {
+    const search200 = await workerMod.default.fetch(
+      new Request(
+        "https://digest.example.com/.well-known/search?q=" +
+          encodeURIComponent("[click](https://evil.example)<script>x</script>")
+      ),
+      env
+    );
+    expect(search200.status).toBe(200);
+    expect(search200.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(search200.headers.get("x-frame-options")).toBe("DENY");
+    expect(search200.headers.get("x-content-type-options")).toBe("nosniff");
+    const md = await search200.text();
+    expect(md).not.toContain("[click](");
+    expect(md).not.toContain("<script>");
+
+    for (const req of [
+      new Request("https://digest.example.com/.well-known/search"),
+      new Request("https://digest.example.com/.well-known/search", { method: "POST" }),
+      new Request("https://digest.example.com/latest"),
+    ]) {
+      const res = await workerMod.default.fetch(req, env);
+      expect(res.headers.get("content-security-policy")).toBe("default-src 'none'");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    }
+  });
 });

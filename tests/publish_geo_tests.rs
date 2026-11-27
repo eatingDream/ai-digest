@@ -1147,10 +1147,7 @@ async fn deploy_only_rejects_relaxed_csp_and_worker_csp_mismatch() {
     let orig_headers = fs::read_to_string(&headers_path).unwrap();
 
     // 1. Extra script-src source
-    let extra_src = orig_headers.replace(
-        "'inline-speculation-rules'",
-        "'inline-speculation-rules' https://evil.example",
-    );
+    let extra_src = orig_headers.replace("script-src ", "script-src https://evil.example ");
     fs::write(&headers_path, &extra_src).unwrap();
     assert_eq!(deploy().status.code(), Some(1));
 
@@ -1646,4 +1643,239 @@ async fn pages_api_rejects_oversized_single_asset_over_25_mib_before_upload() {
         "unexpected error: {err:#}"
     );
     assert!(mock.received_requests().await.unwrap().is_empty());
+}
+
+#[test]
+fn tier2_csp_geo_and_single_h1_regressions() {
+    let tmp = tempdir().unwrap();
+    let spec_hash = crypto::script_hash(render::SPECULATION_RULES_JSON);
+    assert_eq!(
+        spec_hash,
+        "'sha256-72upgOtXUYYfpbOnby12zXpzQ+UsSDcDvAHrs1an1eU='"
+    );
+
+    // 1. Demo build (/en/ + /zh-CN/, no root /index.md)
+    let demo_out = tmp.path().join("demo");
+    checked(
+        cli(tmp.path(), &["publish", "--demo", "--examples"])
+            .arg(examples())
+            .arg("--out")
+            .arg(&demo_out)
+            .env("SITE_DOMAIN", "demo.example.com")
+            .output()
+            .unwrap(),
+        0,
+    );
+    let demo_headers = get(&demo_out, "_headers");
+    let (demo_global, _) = geo::parse_headers(&demo_headers);
+    let demo_csp = &demo_global["Content-Security-Policy"];
+    assert!(
+        demo_csp.contains(&spec_hash),
+        "demo CSP must include speculationrules hash: {demo_csp}"
+    );
+    assert!(
+        !demo_csp.contains("prefetch-src"),
+        "demo CSP must not emit deprecated prefetch-src: {demo_csp}"
+    );
+    assert!(
+        demo_global["Link"].contains("</en/index.md>; rel=\"alternate\"; type=\"text/markdown\""),
+        "demo Link header must point to existing /en/index.md: {}",
+        demo_global["Link"]
+    );
+    assert!(!demo_out.join("index.md").exists());
+    assert!(demo_out.join("en/index.md").is_file());
+    let demo_worker = get(&demo_out, "_worker.js");
+    assert!(demo_worker.contains("/en/index.md"));
+    assert!(!demo_worker.contains("</index.md>"));
+
+    let demo_skill = get(&demo_out, geo::SKILL_PATH);
+    assert!(
+        demo_skill.contains("https://demo.example.com/zh-CN/daily/latest.md")
+            && demo_skill.contains("https://demo.example.com/en/daily/latest.md"),
+        "demo SKILL.md must use localized /zh-CN/ and /en/ paths: {demo_skill}"
+    );
+    assert!(
+        !demo_skill.contains("https://demo.example.com/daily/latest.md"),
+        "demo SKILL.md must not advertise nonexistent /daily/latest.md"
+    );
+    assert!(demo_out.join("zh-CN/daily/latest.md").is_file());
+    assert!(demo_out.join("en/daily/latest.md").is_file());
+
+    for rel in [
+        "en/index.html",
+        "zh-CN/index.html",
+        "en/daily/latest.html",
+        "zh-CN/daily/latest.html",
+    ] {
+        let html = get(&demo_out, rel);
+        assert_eq!(
+            html.matches("<h1").count(),
+            1,
+            "{rel} must contain strictly one <h1>"
+        );
+    }
+
+    // 2. Bilingual public production build (/ + /zh/ + /en/)
+    let prod = tmp.path().join("prod");
+    fs::create_dir_all(&prod).unwrap();
+    out(&prod, &["publish", "--init", "--lang", "zh-CN"], 0);
+    issue_markdown(&prod, true);
+    add_daily(&prod);
+    add_weekly(&prod);
+    let prod_pub = prod.join("site/public");
+    let prod_headers = get(&prod_pub, "_headers");
+    let (prod_global, _) = geo::parse_headers(&prod_headers);
+    assert!(prod_global["Content-Security-Policy"].contains(&spec_hash));
+    assert!(!prod_global["Content-Security-Policy"].contains("prefetch-src"));
+    assert!(!prod_global["Content-Security-Policy"].contains("'inline-speculation-rules'"));
+    assert!(prod_global["Link"].contains("</index.md>; rel=\"alternate\"; type=\"text/markdown\""));
+
+    let llms = get(&prod_pub, "llms.txt");
+    assert_eq!(
+        llms.matches("zh-CN Daily Latest").count(),
+        1,
+        "llms.txt must not duplicate zh-CN Daily Latest: {llms}"
+    );
+    assert_eq!(
+        llms.matches("zh-CN Weekly Latest").count(),
+        1,
+        "llms.txt must not duplicate zh-CN Weekly Latest: {llms}"
+    );
+    assert!(llms.contains("/zh/daily/latest.md"));
+    assert!(llms.contains("/zh/weekly/latest.md"));
+
+    for rel in [
+        "index.html",
+        "zh/index.html",
+        "en/index.html",
+        "daily/latest.html",
+        "en/daily/latest.html",
+    ] {
+        let html = get(&prod_pub, rel);
+        assert_eq!(
+            html.matches("<h1").count(),
+            1,
+            "prod {rel} must contain strictly one <h1>"
+        );
+    }
+
+    // 3. Rogue speculationrules payload must fail closed during CSP finalization
+    let rogue = tmp.path().join("rogue");
+    let rogue_paths = DigestPaths::at(&rogue, chrono_tz::UTC);
+    atomic_write_text(
+        &rogue_paths.public.join("index.html"),
+        r#"<script type="speculationrules">{"prefetch":[]}</script>"#,
+    )
+    .unwrap();
+    atomic_write_text(&rogue_paths.plain.join("index.html"), "<p>ok</p>").unwrap();
+    assert!(crypto::expected_security_headers(
+        &rogue_paths.public,
+        &rogue_paths.plain,
+        true,
+        &ScriptAllowlist::default(),
+    )
+    .is_err());
+
+    // 4. Brand unification (zero "AI精选" in rendered HTML/GEO/RSS) + compact <title> + UI contracts
+    for rel in [
+        "index.html",
+        "zh/index.html",
+        "en/index.html",
+        "daily/latest.html",
+        "weekly/latest.html",
+        "llms.txt",
+        "feed.xml",
+        "zh/feed.xml",
+        "en/feed.xml",
+        "daily/latest.md",
+        "weekly/latest.md",
+    ] {
+        let content = get(&prod_pub, rel);
+        assert!(
+            !content.contains("AI精选") && !content.contains("AI 精选"),
+            "{rel} must not contain legacy brand string AI精选"
+        );
+    }
+    let daily_html = get(&prod_pub, "daily/latest.html");
+    let weekly_html = get(&prod_pub, "weekly/latest.html");
+    assert!(daily_html.contains("<title>AI Digest · D01/15</title>"));
+    assert!(weekly_html.contains("<title>AI Digest · W03</title>"));
+    assert!(daily_html.contains(r#"class="filter-bar filter-drawer search-panel""#));
+    assert!(daily_html.contains(r#"hidden aria-hidden="true" inert"#));
+    assert!(daily_html.contains(r#"class="search-scrim""#));
+    assert!(daily_html.contains(r#"class="mast-sentinel""#));
+    assert!(daily_html.contains(r#"class="highlights""#));
+    assert!(daily_html.contains(r#"class="toc-top""#));
+    assert!(daily_html.contains(r#"class="cat-chips""#));
+    assert!(daily_html.contains(r#"class="mobile-filter-strip""#));
+    assert!(daily_html.contains(r#"data-words=""#));
+    assert!(daily_html.contains(r#"class="story-links sources""#));
+    assert!(daily_html.contains(r#"rel="noopener noreferrer nofollow ugc""#));
+
+    // 5. Security hardening regressions (SEC-1, SEC-4, SEC-5, SEC-8, SEC-9, SEC-11)
+    assert!(ai_digest::model::safe_external_url("https://openai.com@evil.tld/x").is_none());
+    assert!(ai_digest::model::safe_external_url("https://ex\u{202E}ample.com/x").is_none());
+    assert!(ai_digest::model::safe_external_url("/relative/path").is_none());
+    assert!(ai_digest::model::safe_internal_url("https://example.com").is_none());
+    assert!(ai_digest::model::safe_internal_url("//evil.tld/x").is_none());
+    assert_eq!(
+        ai_digest::model::safe_internal_url("#item-1").as_deref(),
+        Some("#item-1")
+    );
+    assert!(ai_digest::model::is_wrapper_or_shortener_url(
+        "https://t.co/abc"
+    ));
+    assert!(ai_digest::model::is_wrapper_or_shortener_url(
+        "https://www.google.com/url?q=https://example.com"
+    ));
+    assert_eq!(
+        ai_digest::model::strip_tracking_params("https://example.com/a?utm_source=rss&id=1"),
+        "https://example.com/a?id=1"
+    );
+    assert_eq!(
+        geo::parse_redirects(
+            "/a /b 302\n/evil https://evil.tld 302\n/proto //evil.tld 301\n/bad /ok 200\n"
+        ),
+        vec![("/a".into(), "/b".into(), 302)]
+    );
+    assert!(SiteConfig::parse("DOMAIN=bücher.example\n", None, |_| None).is_err());
+    assert_eq!(
+        ai_digest::model::xml_escape("ok\u{0000}\u{000B}<&>"),
+        "ok&lt;&amp;&gt;"
+    );
+
+    // SEC-5: 🔗 line with balanced parentheses in URL is not truncated
+    let paren_md = "**AI Digest · Daily · 1/15**\n\n## 🧠 Models\n\n### 1. Attention\n`Lab · 1/15 · Training`\n\n**In brief:** Test.\n\n🔗 [Wiki](https://en.wikipedia.org/wiki/Attention_(machine_learning)) · [Paper](https://arxiv.org/abs/2601.00001)\n";
+    let paren_digest = ai_digest::parser::parse_digest_md(paren_md, Lang::En, Some(2026)).unwrap();
+    let rendered = render::render_digest_html(&paren_digest, Lang::En, &Default::default());
+    assert!(rendered.contains("https://en.wikipedia.org/wiki/Attention_(machine_learning)"));
+    // Authority ordering: paper (arxiv.org) appears before media (en.wikipedia.org)
+    assert!(
+        rendered.find("arxiv.org").unwrap() < rendered.find("en.wikipedia.org").unwrap(),
+        "sources must be ordered by authority (paper before media)"
+    );
+
+    // SEC-1: publish --md rejects wrapper/shortener URLs
+    let bad_wrap = tmp.path().join("bad-wrap");
+    fs::create_dir_all(&bad_wrap).unwrap();
+    out(&bad_wrap, &["publish", "--init", "--lang", "en"], 0);
+    atomic_write_text(
+        &bad_wrap.join("digest-2026-01-15.md"),
+        "**AI Digest · Daily · 1/15**\n\n## 🧠 Models\n\n### 1. Shortener Test\n`Lab · 1/15 · Training`\n\n**In brief:** Test.\n\n🔗 [Link](https://t.co/abc123)\n",
+    )
+    .unwrap();
+    let res = cli(
+        &bad_wrap,
+        &[
+            "publish",
+            "--issue",
+            "daily/2026-01-15",
+            "--md",
+            "digest-2026-01-15.md",
+            "--prepare-only",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert_ne!(res.status.code(), Some(0));
 }

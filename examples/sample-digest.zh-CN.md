@@ -1,4 +1,4 @@
-**AI精选日报 · 1/15**
+**AI Digest · 日报 · 1/15**
 
 - 🧠 模型：Orion-3 Mini（开放权重，128K 上下文）· Lumen-2 多模态更新
 - 📄 论文：Sparse-RL（稀疏奖励下的后训练）· Verifier-Gap（评测判分器泄漏）

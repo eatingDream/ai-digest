@@ -7,9 +7,9 @@ export interface FilterResult {
 
 export interface FilterOptions {
   mast: MastController;
-  onFilter: (query: string, activeTags: Set<string>) => FilterResult;
+  onFilter: (query: string, activeTags: Set<string>, activeCat: string) => FilterResult;
   onFirstMatchScroll?: () => void;
-  onResize?: () => void;
+  validCategories?: Set<string>;
   root?: ParentNode;
   isActive?: () => boolean;
 }
@@ -18,7 +18,11 @@ export interface FilterController {
   open(focusInput?: boolean): void;
   close(restoreFocus?: boolean): void;
   clear(): void;
+  clearQuery(): void;
+  setCategory(cat: string, clearIfZero?: boolean): void;
+  getCategory(): string;
   activateTag(tag: string, scrollToMatch?: boolean): void;
+  hasActiveFilters(): boolean;
   isOpen(): boolean;
   refreshTags(): void;
 }
@@ -26,14 +30,14 @@ export interface FilterController {
 const INITIAL_TAG_CAP = 12;
 
 export function initFilter(opts: FilterOptions): FilterController {
-  const { mast, onFilter, onFirstMatchScroll } = opts;
+  const { mast, onFilter, onFirstMatchScroll, validCategories } = opts;
   const scope: ParentNode = opts.root ?? document;
   const isActive = opts.isActive ?? (() => true);
   const toggleBtn = scope.querySelector<HTMLButtonElement>("[data-filter-toggle]");
+  const scrim = scope.querySelector<HTMLElement>("[data-search-scrim]");
   const drawer =
     scope.querySelector<HTMLElement>(".filter-drawer") ??
     scope.querySelector<HTMLElement>("#digestFilterBar");
-  const inner = drawer?.querySelector<HTMLElement>(".filter-inner") ?? null;
   const input = drawer?.querySelector<HTMLInputElement>(".filter-input") ?? null;
   const countEl = drawer?.querySelector<HTMLElement>(".filter-count") ?? null;
   const clearBtns = Array.from(
@@ -42,42 +46,24 @@ export function initFilter(opts: FilterOptions): FilterController {
   const closeBtn = drawer?.querySelector<HTMLButtonElement>(".filter-close") ?? null;
   const tagsWrap = drawer?.querySelector<HTMLElement>(".filter-tags") ?? null;
   const emptyEl = scope.querySelector<HTMLElement>(".filter-empty");
+  const activeQChip = scope.querySelector<HTMLButtonElement>("[data-active-q]");
 
   const activeTags = new Set<string>();
   let query = "";
+  let activeCat = "all";
   let expandedTags = false;
   let debounceTimer = 0;
 
-  const isDrawerOpen = (): boolean =>
-    Boolean(drawer && !drawer.hidden && drawer.classList.contains("is-open"));
+  const isDrawerOpen = (): boolean => Boolean(drawer && !drawer.hidden);
 
-  const syncFilterHeight = (): void => {
-    if (!isActive()) return;
-    const rawH =
-      isDrawerOpen() && drawer
-        ? Math.max(
-            Math.round(drawer.getBoundingClientRect().height),
-            inner?.scrollHeight ?? 0
-          )
-        : 0;
-    const maxH = Math.max(0, window.innerHeight - mast.getMastHeight());
-    const h = Math.min(rawH, maxH);
-    document.documentElement.style.setProperty("--filter-h", `${h}px`);
-    opts.onResize?.();
-  };
-
-  if (drawer && typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(syncFilterHeight);
-    ro.observe(drawer);
-  }
-
-  // Ensure collapsed initial state syncs inert + aria-hidden without [hidden] snap
-  if (drawer && !drawer.classList.contains("is-open")) {
+  // Enforce strict hidden state on load so collapsed panel is guaranteed display:none
+  if (drawer) {
+    drawer.hidden = true;
     (drawer as HTMLElement & { inert: boolean }).inert = true;
     drawer.setAttribute("aria-hidden", "true");
   }
+  if (scrim) scrim.hidden = true;
 
-  // Snapshot original tag buttons in count-desc order
   const tagButtons: HTMLButtonElement[] = tagsWrap
     ? Array.from(tagsWrap.querySelectorAll<HTMLButtonElement>(".filter-tag:not(.filter-more)"))
     : [];
@@ -85,7 +71,6 @@ export function initFilter(opts: FilterOptions): FilterController {
     btn.dataset.origIdx = String(idx);
   });
 
-  // Dynamic "+N more" / "Less" toggle pill
   let moreBtn = tagsWrap?.querySelector<HTMLButtonElement>(".filter-more") ?? null;
   if (tagsWrap && !moreBtn && tagButtons.length > INITIAL_TAG_CAP) {
     moreBtn = document.createElement("button");
@@ -97,8 +82,7 @@ export function initFilter(opts: FilterOptions): FilterController {
 
   const labelMore = (n: number): string =>
     mast.isZh() ? `+${n} \u66f4\u591a` : `+${n} more`;
-  const labelLess = (): string =>
-    mast.isZh() ? "\u6536\u8d77" : "Less";
+  const labelLess = (): string => (mast.isZh() ? "\u6536\u8d77" : "Less");
 
   const reorderTags = (): void => {
     if (!tagsWrap || tagButtons.length === 0) return;
@@ -118,7 +102,6 @@ export function initFilter(opts: FilterOptions): FilterController {
     if (moreBtn) tagsWrap.appendChild(moreBtn);
   };
 
-  // Cap initial visible tags cleanly to 12 (1 clean row on desktop) with smooth +N toggle
   const layoutTags = (): void => {
     if (!tagsWrap || tagButtons.length === 0) return;
     const ordered = Array.from(
@@ -127,21 +110,16 @@ export function initFilter(opts: FilterOptions): FilterController {
     if (!moreBtn || ordered.length <= INITIAL_TAG_CAP) {
       for (const btn of ordered) btn.hidden = false;
       if (moreBtn) moreBtn.hidden = true;
-      tagsWrap.classList.remove("is-expanded");
       return;
     }
-
     if (expandedTags) {
       for (const btn of ordered) btn.hidden = false;
-      tagsWrap.classList.add("is-expanded");
       moreBtn.hidden = false;
       moreBtn.textContent = labelLess();
       moreBtn.setAttribute("aria-expanded", "true");
       tagsWrap.appendChild(moreBtn);
       return;
     }
-
-    tagsWrap.classList.remove("is-expanded");
     let hiddenCount = 0;
     for (let i = 0; i < ordered.length; i++) {
       const show = i < INITIAL_TAG_CAP || activeTags.has(ordered[i].dataset.tag || "");
@@ -167,6 +145,8 @@ export function initFilter(opts: FilterOptions): FilterController {
     if (!isActive()) return;
     try {
       const u = new URL(window.location.href);
+      if (activeCat && activeCat !== "all") u.searchParams.set("cat", activeCat);
+      else u.searchParams.delete("cat");
       if (query) u.searchParams.set("q", query);
       else u.searchParams.delete("q");
       if (activeTags.size > 0) {
@@ -180,9 +160,26 @@ export function initFilter(opts: FilterOptions): FilterController {
     }
   };
 
+  const syncActiveQChip = (): void => {
+    if (!activeQChip) return;
+    const parts: string[] = [];
+    if (query) parts.push(`\u201c${query}\u201d`);
+    for (const t of activeTags) parts.push(`#${t}`);
+    if (parts.length > 0) {
+      activeQChip.textContent = `${parts.join(" ")} \u00d7`;
+      activeQChip.hidden = false;
+    } else {
+      activeQChip.textContent = "";
+      activeQChip.hidden = true;
+    }
+  };
+
+  const hasActiveFilters = (): boolean =>
+    query.length > 0 || activeTags.size > 0 || activeCat !== "all";
+
   const apply = (updateUrl: boolean): void => {
-    const hasActive = query.length > 0 || activeTags.size > 0;
-    const { matched, total } = onFilter(query, activeTags);
+    const hasActive = hasActiveFilters();
+    const { matched, total } = onFilter(query, activeTags, activeCat);
     if (countEl) {
       countEl.textContent = hasActive ? `${matched} / ${total}` : `${total}`;
     }
@@ -192,6 +189,7 @@ export function initFilter(opts: FilterOptions): FilterController {
     if (emptyEl) {
       emptyEl.hidden = matched > 0 || !hasActive;
     }
+    syncActiveQChip();
     reorderTags();
     layoutTags();
     if (updateUrl) syncUrl();
@@ -203,10 +201,9 @@ export function initFilter(opts: FilterOptions): FilterController {
     (drawer as HTMLElement & { inert: boolean }).inert = false;
     drawer.setAttribute("aria-hidden", "false");
     drawer.classList.add("is-open");
+    if (scrim) scrim.hidden = false;
     toggleBtn?.setAttribute("aria-expanded", "true");
-    mast.setPinned("filter", true);
     layoutTags();
-    syncFilterHeight();
     if (focusInput && input) {
       input.focus();
       input.select();
@@ -216,25 +213,49 @@ export function initFilter(opts: FilterOptions): FilterController {
   const close = (restoreFocus = true): void => {
     if (!drawer) return;
     drawer.classList.remove("is-open");
+    drawer.hidden = true;
     (drawer as HTMLElement & { inert: boolean }).inert = true;
     drawer.setAttribute("aria-hidden", "true");
+    if (scrim) scrim.hidden = true;
     toggleBtn?.setAttribute("aria-expanded", "false");
-    mast.setPinned("filter", false);
-    syncFilterHeight();
     if (restoreFocus) toggleBtn?.focus();
   };
 
   const clear = (): void => {
+    query = "";
+    activeCat = "all";
+    activeTags.clear();
+    if (input) input.value = "";
+    apply(true);
+  };
+
+  const clearQuery = (): void => {
     query = "";
     activeTags.clear();
     if (input) input.value = "";
     apply(true);
   };
 
+  const setCategory = (cat: string, clearIfZero = false): void => {
+    const next =
+      cat === "all" || !validCategories || validCategories.has(cat) ? cat : "all";
+    if (clearIfZero) {
+      query = "";
+      activeTags.clear();
+      if (input) input.value = "";
+      activeCat = next;
+    } else if (next !== "all" && next === activeCat) {
+      activeCat = "all";
+    } else {
+      activeCat = next;
+    }
+    apply(true);
+  };
+
   const activateTag = (tag: string, scrollToMatch = false): void => {
     if (!tag) return;
-    activeTags.add(tag);
-    open(false);
+    if (activeTags.has(tag)) activeTags.delete(tag);
+    else activeTags.add(tag);
     apply(true);
     if (scrollToMatch) onFirstMatchScroll?.();
   };
@@ -245,6 +266,8 @@ export function initFilter(opts: FilterOptions): FilterController {
   });
 
   closeBtn?.addEventListener("click", () => close(true));
+  scrim?.addEventListener("click", () => close(true));
+  activeQChip?.addEventListener("click", () => clearQuery());
 
   for (const btn of clearBtns) {
     btn.addEventListener("click", () => {
@@ -258,7 +281,21 @@ export function initFilter(opts: FilterOptions): FilterController {
     debounceTimer = window.setTimeout(() => {
       query = (input.value || "").trim();
       apply(true);
-    }, 80);
+    }, 120);
+  });
+
+  input?.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+        debounceTimer = 0;
+      }
+      query = (input.value || "").trim();
+      apply(true);
+      close(true);
+      onFirstMatchScroll?.();
+    }
   });
 
   tagsWrap?.addEventListener("click", (e: MouseEvent) => {
@@ -273,7 +310,6 @@ export function initFilter(opts: FilterOptions): FilterController {
     apply(true);
   });
 
-  // Story badge click-to-filter delegation scoped to this pane
   const badgeTarget: EventTarget = scope instanceof Element ? scope : document;
   badgeTarget.addEventListener("click", (e: Event) => {
     if (!isActive()) return;
@@ -287,44 +323,41 @@ export function initFilter(opts: FilterOptions): FilterController {
     activateTag(tag, true);
   });
 
-  // Keyboard shortcuts: / to open, Esc (1st clear, 2nd close)
+  // Keyboard shortcuts: / toggles search panel, Esc dismisses and restores focus
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (!isActive()) return;
     if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
       if (mast.isTypingTarget(e.target)) return;
       e.preventDefault();
-      open(true);
+      if (isDrawerOpen()) close(true);
+      else open(true);
       return;
     }
     if (e.key === "Escape" && isDrawerOpen()) {
       e.preventDefault();
-      if (query.length > 0 || activeTags.size > 0) {
-        clear();
-        input?.focus();
-      } else {
-        close(true);
-      }
+      close(true);
     }
   });
 
-  // Restore ?q and ?tag from URL on load (active pane only)
-  let restored = false;
+  // Restore ?cat, ?q, ?tag from URL on load (active pane only) without popping open overlay
   if (isActive()) {
     try {
       const params = new URLSearchParams(window.location.search);
+      const catParam = (params.get("cat") || "").trim();
       const qParam = (params.get("q") || "").trim();
       const tagParam = (params.get("tag") || "").trim();
+      if (catParam && (!validCategories || validCategories.has(catParam))) {
+        activeCat = catParam;
+      }
       if (qParam) {
         query = qParam;
         if (input) input.value = qParam;
-        restored = true;
       }
       if (tagParam) {
         for (const t of tagParam.split(",")) {
           const clean = t.trim();
           if (clean) activeTags.add(clean);
         }
-        if (activeTags.size > 0) restored = true;
       }
     } catch {
       // Ignore malformed query string.
@@ -332,15 +365,16 @@ export function initFilter(opts: FilterOptions): FilterController {
   }
 
   apply(false);
-  if (restored) {
-    open(false);
-  }
 
   return {
     open,
     close,
     clear,
+    clearQuery,
+    setCategory,
+    getCategory: () => activeCat,
     activateTag,
+    hasActiveFilters,
     isOpen: isDrawerOpen,
     refreshTags: layoutTags,
   };

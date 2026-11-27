@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, Utc};
 use regex::Regex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -17,8 +17,8 @@ use crate::{
     i18n::{self, Lang},
     model::{
         atomic_write_text, clean_text, escape_json_for_script, files_under, html_escape as esc,
-        normalized_safe_url, strip_marked, ParsedIssue, ParsedItem, SearchDoc, SiteConfig,
-        WorkerConfig,
+        normalized_safe_url, strip_marked, xml_escape, ParsedIssue, ParsedItem, SearchDoc,
+        SiteConfig, WorkerConfig,
     },
     parser::parse_digest_html_with_lang,
 };
@@ -207,12 +207,48 @@ fn plain_math(text: &str) -> String {
 fn archive_title(lang: Lang) -> &'static str {
     lang.choose(
         "AI Digest — Curated Daily & Weekly AI Briefings",
-        "AI Digest — AI 精选日报与周报归档",
+        "AI Digest — 每日与每周 AI 简报归档",
     )
 }
 fn archive_desc(lang: Lang) -> &'static str {
     lang.choose("Curated daily and weekly briefings on frontier AI models, research, systems engineering, and industry developments.",
-        "每日与每周精选前沿 AI 模型发布、研究论文、工程实践与产业动态。")
+        "每日与每周前沿 AI 模型发布、研究论文、工程实践与产业动态。")
+}
+
+/// Escape Markdown control syntax and raw HTML angle brackets while preserving
+/// `$...$` inline math spans intact so plain text cannot inject active links or HTML.
+fn md_escape_text(text: &str) -> String {
+    static MATH: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\$([^\s$](?:[^$\r\n]*[^\s$])?)\$").unwrap());
+    let escape_plain = |s: &str, out: &mut String| {
+        for (line_idx, line) in s.split('\n').enumerate() {
+            if line_idx > 0 {
+                out.push('\n');
+            }
+            let leading_ws = line.len() - line.trim_start_matches([' ', '\t']).len();
+            out.push_str(&line[..leading_ws]);
+            let rest = &line[leading_ws..];
+            let mut chars = rest.chars().peekable();
+            if chars.peek() == Some(&'#') {
+                out.push('\\');
+            }
+            for ch in chars {
+                if matches!(ch, '\\' | '<' | '>' | '[' | ']') {
+                    out.push('\\');
+                }
+                out.push(ch);
+            }
+        }
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    for m in MATH.find_iter(text) {
+        escape_plain(&text[pos..m.start()], &mut out);
+        out.push_str(m.as_str());
+        pos = m.end();
+    }
+    escape_plain(&text[pos..], &mut out);
+    out
 }
 
 pub fn build_issue_json_ld(parsed: &ParsedIssue, page: &GeoPage, origin: &str) -> Value {
@@ -367,6 +403,23 @@ pub fn build_geo_head_tags(
     tags
 }
 
+fn compact_page_tab_title(page: &GeoPage) -> String {
+    if page.page_type == PageType::Index {
+        return "AI Digest".into();
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(&page.date_iso, "%Y-%m-%d") {
+        if page.kind == "weekly" {
+            return format!("AI Digest · W{:02}", date.iso_week().week());
+        }
+        return format!("AI Digest · D{:02}/{:02}", date.month(), date.day());
+    }
+    if page.kind == "weekly" {
+        "AI Digest · Weekly".into()
+    } else {
+        "AI Digest".into()
+    }
+}
+
 pub fn inject_geo_head(
     html: &str,
     page: &GeoPage,
@@ -384,9 +437,10 @@ pub fn inject_geo_head(
     let html = strip_marked(html, "digest-meta");
     let html = strip_marked(&html, "digest-geo-head");
     let html = ROBOTS.replace_all(&html, "");
+    let tab_title = compact_page_tab_title(page);
     let mut clean = TITLE
         .replacen(&html, 1, |_: &regex::Captures<'_>| {
-            format!("<title>{}</title>", esc(&plain_math(title)))
+            format!("<title>{}</title>", esc(&plain_math(&tab_title)))
         })
         .into_owned();
     let tags = build_geo_head_tags(page, origin, title, description, search, ld);
@@ -509,7 +563,7 @@ pub fn render_issue_markdown(
     writeln!(
         out,
         "---\n\n# {}\n\n> {parts}({canonical}) · [llms.txt]({origin}/llms.txt)\n",
-        parsed.title
+        md_escape_text(&parsed.title)
     )
     .unwrap();
     if !parsed.must.is_empty() {
@@ -518,12 +572,12 @@ pub fn render_issue_markdown(
             let title = if row.anchor.starts_with('#') {
                 md_link(&row.title, &format!("{canonical}{}", row.anchor))
             } else {
-                row.title.clone()
+                md_escape_text(&row.title)
             };
             if row.dek.is_empty() {
                 writeln!(out, "- **{title}**").unwrap();
             } else {
-                writeln!(out, "- **{title}** — {}", row.dek).unwrap();
+                writeln!(out, "- **{title}** — {}", md_escape_text(&row.dek)).unwrap();
             }
         }
         out.push('\n');
@@ -532,9 +586,9 @@ pub fn render_issue_markdown(
         writeln!(out, "## {}\n", i18n::t(page.lang, "themes")).unwrap();
         for theme in &parsed.themes {
             if !theme.title.is_empty() {
-                writeln!(out, "### {}\n", theme.title).unwrap();
+                writeln!(out, "### {}\n", md_escape_text(&theme.title)).unwrap();
             }
-            writeln!(out, "{}\n", theme.body).unwrap();
+            writeln!(out, "{}\n", md_escape_text(&theme.body)).unwrap();
         }
     }
     if parsed.sections.is_empty() {
@@ -544,9 +598,9 @@ pub fn render_issue_markdown(
     } else {
         for section in &parsed.sections {
             let title = if section.title.is_empty() {
-                page.lang.choose("Items", "精选条目")
+                page.lang.choose("Items", "精选条目").to_owned()
             } else {
-                &section.title
+                md_escape_text(&section.title)
             };
             writeln!(out, "## {title}\n").unwrap();
             for item in &section.items {
@@ -574,16 +628,17 @@ fn format_item(out: &mut String, item: &ParsedItem, canonical: &str, lang: Lang)
     } else {
         format!("{}. ", item.number)
     };
-    writeln!(out, "### {number}{}", item.title).unwrap();
+    writeln!(out, "### {number}{}", md_escape_text(&item.title)).unwrap();
     let mut parts = Vec::new();
     if !item.source.is_empty() {
-        parts.push(format!("Source: {}", item.source));
+        parts.push(format!("Source: {}", md_escape_text(&item.source)));
     }
     if !item.when.is_empty() {
-        parts.push(format!("Date: {}", item.when));
+        parts.push(format!("Date: {}", md_escape_text(&item.when)));
     }
     if !item.tags.is_empty() {
-        parts.push(format!("Tags: {}", item.tags.join(", ")));
+        let escaped_tags: Vec<_> = item.tags.iter().map(|t| md_escape_text(t)).collect();
+        parts.push(format!("Tags: {}", escaped_tags.join(", ")));
     }
     if !item.id.is_empty() {
         parts.push(md_link("Permalink", &item_url(canonical, &item.id)));
@@ -604,7 +659,7 @@ fn format_item(out: &mut String, item: &ParsedItem, canonical: &str, lang: Lang)
         if !label.is_empty() {
             write!(out, "**{label}**: ").unwrap();
         }
-        writeln!(out, "{body}\n").unwrap();
+        writeln!(out, "{}\n", md_escape_text(body)).unwrap();
     }
     if !item.links.is_empty() {
         let links = item
@@ -662,7 +717,7 @@ pub fn render_index_markdown(
                     "- **{label}**: {} ([HTML]({})) — {}",
                     md_link(title(entry), &abs(origin, &md_path(entry))),
                     abs(origin, &entry.canonical_path),
-                    description(entry)
+                    md_escape_text(description(entry))
                 )
                 .unwrap();
             }
@@ -675,7 +730,7 @@ pub fn render_index_markdown(
                 entry.date_iso,
                 md_link(title(entry), &abs(origin, &md_path(entry))),
                 abs(origin, &entry.canonical_path),
-                description(entry)
+                md_escape_text(description(entry))
             )
             .unwrap();
         }
@@ -725,9 +780,9 @@ pub fn render_sitemap_xml(pages: &[GeoPage], origin: &str) -> String {
         if !seen.insert(canonical.clone()) {
             continue;
         }
-        writeln!(out, "  <url>\n    <loc>{}</loc>", esc(&canonical)).unwrap();
+        writeln!(out, "  <url>\n    <loc>{}</loc>", xml_escape(&canonical)).unwrap();
         if !page.date_iso.is_empty() {
-            writeln!(out, "    <lastmod>{}</lastmod>", esc(&page.date_iso)).unwrap();
+            writeln!(out, "    <lastmod>{}</lastmod>", xml_escape(&page.date_iso)).unwrap();
         }
         let (frequency, priority) = if page.page_type == PageType::Index {
             ("daily", "1.0")
@@ -748,8 +803,8 @@ pub fn render_sitemap_xml(pages: &[GeoPage], origin: &str) -> String {
             writeln!(
                 out,
                 r#"    <xhtml:link rel="alternate" hreflang="{}" href="{}" />"#,
-                esc(key),
-                esc(&abs(origin, target))
+                xml_escape(key),
+                xml_escape(&abs(origin, target))
             )
             .unwrap();
         }
@@ -767,8 +822,8 @@ pub fn render_atom_feed(
     lang: Lang,
     now: DateTime<Utc>,
 ) -> String {
-    let feed = esc(&abs(origin, feed_path));
-    let site = esc(&abs(origin, site_path));
+    let feed = xml_escape(&abs(origin, feed_path));
+    let site = xml_escape(&abs(origin, site_path));
     let title_text = match site_path {
         "/zh/" => "AI Digest（中文）",
         "/en/" => "AI Digest (English)",
@@ -776,7 +831,7 @@ pub fn render_atom_feed(
     };
     let subtitle = lang.choose(
         "Curated daily and weekly frontier AI briefings",
-        "每日与每周前沿 AI 精选日报与周报",
+        "每日与每周前沿 AI 简报",
     );
     let date = entries.first().map_or("", |p| &p.date_iso);
     let valid_date = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok();
@@ -794,8 +849,8 @@ pub fn render_atom_feed(
 "#
     );
     for entry in entries.iter().take(20) {
-        let url = esc(&abs(origin, &entry.canonical_path));
-        let md = esc(&abs(origin, &md_path(entry)));
+        let url = xml_escape(&abs(origin, &entry.canonical_path));
+        let md = xml_escape(&abs(origin, &md_path(entry)));
         let date = valid_date(&entry.date_iso).unwrap_or(updated);
         write!(
             out,
@@ -808,13 +863,62 @@ pub fn render_atom_feed(
     <summary>{}</summary>
   </entry>
 "#,
-            esc(&plain_math(title(entry))),
-            esc(&plain_math(description(entry)))
+            xml_escape(&plain_math(title(entry))),
+            xml_escape(&plain_math(description(entry)))
         )
         .unwrap();
     }
     out.push_str("</feed>\n");
     out
+}
+
+fn canonical_edition_prefix<'a>(canonical_path: &'a str, kind: &str) -> Option<&'a str> {
+    let needle = format!("/{kind}/");
+    canonical_path
+        .find(&needle)
+        .map(|idx| &canonical_path[..idx])
+}
+
+fn alias_matches_canonical_prefix(page: &GeoPage) -> bool {
+    canonical_edition_prefix(&page.canonical_path, &page.kind)
+        .is_some_and(|prefix| page.url_path == format!("{prefix}/{}/latest", page.kind))
+}
+
+fn dedup_aliases<'a>(aliases: &[&'a GeoPage]) -> Vec<&'a GeoPage> {
+    let mut best = BTreeMap::<(Lang, &str), (usize, &'a GeoPage)>::new();
+    for (idx, &page) in aliases.iter().enumerate() {
+        let key = (page.lang, page.kind.as_str());
+        match best.get_mut(&key) {
+            None => {
+                best.insert(key, (idx, page));
+            }
+            Some(slot) => {
+                if !alias_matches_canonical_prefix(slot.1) && alias_matches_canonical_prefix(page) {
+                    slot.1 = page;
+                }
+            }
+        }
+    }
+    let mut ordered: Vec<(usize, &'a GeoPage)> = best.into_values().collect();
+    ordered.sort_by_key(|(idx, _)| *idx);
+    ordered.into_iter().map(|(_, page)| page).collect()
+}
+
+fn latest_md_for_lang(
+    lang: Lang,
+    aliases: &[&GeoPage],
+    entries: &BTreeMap<Lang, Vec<&GeoPage>>,
+) -> Option<String> {
+    aliases
+        .iter()
+        .find(|p| p.lang == lang && p.kind == "daily")
+        .or_else(|| {
+            aliases
+                .iter()
+                .find(|p| p.lang == lang && p.kind == "weekly")
+        })
+        .or_else(|| entries.get(&lang).and_then(|list| list.first()))
+        .map(|p| md_path(p))
 }
 
 pub fn render_llms_txt(
@@ -834,9 +938,10 @@ pub fn render_llms_txt(
         writeln!(out, "- [Search for Agents]({origin}/.well-known/search?q={{query}}): Site-wide Markdown search supporting `GET ?q=...` and HTTP `QUERY` (`text/plain` or JSON `{{\"q\":\"...\"}}`).").unwrap();
     }
     writeln!(out, "- [Full Recent Digest Bundle]({origin}/llms-full.txt): Combined Markdown of the latest daily and weekly issues.\n- [Agent Skills Discovery]({origin}/{SKILL_INDEX}): Machine-readable usage instructions for AI agents.\n- [XML Sitemap]({origin}/sitemap.xml): Canonical URL index with `hreflang` alternates.\n- [Atom Feed]({origin}/feed.xml): Machine-readable subscription feed.\n").unwrap();
-    if !aliases.is_empty() {
+    let unique_aliases = dedup_aliases(aliases);
+    if !unique_aliases.is_empty() {
         out.push_str("## Latest Briefings\n\n");
-        for p in aliases {
+        for p in unique_aliases {
             let kind = if p.kind == "weekly" {
                 "Weekly"
             } else {
@@ -847,7 +952,7 @@ pub fn render_llms_txt(
                 out,
                 "- {}: {}",
                 md_link(&label, &abs(origin, &md_path(p))),
-                description(p)
+                md_escape_text(description(p))
             )
             .unwrap();
         }
@@ -872,7 +977,7 @@ pub fn render_llms_txt(
                 out,
                 "- {}: {}",
                 md_link(&label, &abs(origin, &md_path(entry))),
-                description(entry)
+                md_escape_text(description(entry))
             )
             .unwrap();
         }
@@ -913,25 +1018,29 @@ pub fn render_llms_full_txt(origin: &str, issues: &[(&GeoPage, String)], search:
 
 pub fn render_agent_skill_files(
     origin: &str,
-    lang_paths: bool,
+    zh_latest: Option<&str>,
+    en_latest: Option<&str>,
     search: bool,
     worker: bool,
 ) -> (String, String) {
-    let zh = if lang_paths {
-        "/zh/daily/latest.md"
-    } else {
-        "/daily/latest.md"
-    };
-    let en = if lang_paths {
-        "/en/daily/latest.md"
-    } else {
-        "/daily/latest.md"
-    };
-    let mut skill = format!("---\nname: ai-digest-reader\ndescription: Read and search curated daily and weekly AI briefings from AI Digest in clean Markdown.\n---\n\n# AI Digest Reader Skill\n\nUse the site's Markdown endpoints to read the briefings.\n\n## Quick Start\n\n1. Fetch the site directory at `{origin}/llms.txt`.\n2. Fetch the latest daily briefing as Markdown.\n   - Chinese at `{origin}{zh}`\n   - English at `{origin}{en}`\n");
+    let mut skill = format!("---\nname: ai-digest-reader\ndescription: Read and search curated daily and weekly AI briefings from AI Digest in clean Markdown.\n---\n\n# AI Digest Reader Skill\n\nUse the site's Markdown endpoints to read the briefings.\n\n## Quick Start\n\n1. Fetch the site directory at `{origin}/llms.txt`.\n");
+    let has_latest = zh_latest.is_some() || en_latest.is_some();
+    if has_latest {
+        skill.push_str("2. Fetch the latest daily briefing as Markdown.\n");
+        if let Some(zh) = zh_latest {
+            writeln!(skill, "   - Chinese at `{origin}{zh}`").unwrap();
+        }
+        if let Some(en) = en_latest {
+            writeln!(skill, "   - English at `{origin}{en}`").unwrap();
+        }
+    }
     if worker {
-        skill.push_str(
-            "3. Send `Accept: text/markdown` to request Markdown from an HTML page URL.\n",
-        );
+        let step = if has_latest { 3 } else { 2 };
+        writeln!(
+            skill,
+            "{step}. Send `Accept: text/markdown` to request Markdown from an HTML page URL."
+        )
+        .unwrap();
     }
     if search {
         writeln!(skill, "\n## Site-Wide Search\n\n```sh\ncurl --get \"{origin}/.well-known/search\" --data-urlencode \"q=reasoning models\"\n```\n\nHTTP `QUERY` accepts `text/plain` or JSON `{{\"q\": \"...\"}}`.").unwrap();
@@ -993,14 +1102,18 @@ pub fn build_search_index(pages: &[GeoPage], origin: &str, now: DateTime<Utc>) -
     json!({"v":1,"origin":origin,"generated":now.to_rfc3339_opts(SecondsFormat::Secs,true),"docs":docs})
 }
 
-pub fn build_link_header(search: bool, feed: &str) -> String {
+pub fn build_link_header_for(search: bool, feed: &str, alternate_md: &str) -> String {
     let mut header = format!(
-        r#"</llms.txt>; rel="describedby"; type="text/markdown", </index.md>; rel="alternate"; type="text/markdown", </sitemap.xml>; rel="sitemap"; type="application/xml", <{feed}>; rel="alternate"; type="application/atom+xml""#
+        r#"</llms.txt>; rel="describedby"; type="text/markdown", <{alternate_md}>; rel="alternate"; type="text/markdown", </sitemap.xml>; rel="sitemap"; type="application/xml", <{feed}>; rel="alternate"; type="application/atom+xml""#
     );
     if search {
         header.push_str(r#", </.well-known/search>; rel="search"; type="text/markdown""#);
     }
     header
+}
+
+pub fn build_link_header(search: bool, feed: &str) -> String {
+    build_link_header_for(search, feed, "/index.md")
 }
 
 pub fn render_geo_headers(signal: &str, link: &str) -> String {
@@ -1077,7 +1190,16 @@ pub fn parse_redirects(text: &str) -> Vec<(String, String, u16)> {
             let mut parts = line.split_whitespace();
             let source = parts.next()?;
             let dest = parts.next()?;
-            let status = parts.next().map_or(Some(302), |s| s.parse().ok())?;
+            let status: u16 = parts.next().map_or(Some(302), |s| s.parse().ok())?;
+            if !source.starts_with('/')
+                || source.starts_with("//")
+                || !dest.starts_with('/')
+                || dest.starts_with("//")
+                || dest.contains('\\')
+                || !matches!(status, 301 | 302 | 307 | 308)
+            {
+                return None;
+            }
             Some((source.into(), dest.into(), status))
         })
         .collect()
@@ -1211,10 +1333,10 @@ fn validate_worker_csp_headers(
         .context("finalized hash-locked Content-Security-Policy is required for the worker")?;
     ensure!(
         !script_src.is_empty()
-            && script_src.iter().all(|tok| {
-                *tok == "'inline-speculation-rules'"
-                    || (tok.starts_with("'sha256-") && tok.ends_with('\'') && tok.len() > 10)
-            }),
+            && (script_src.as_slice() == ["'none'"]
+                || script_src.iter().all(|tok| {
+                    tok.starts_with("'sha256-") && tok.ends_with('\'') && tok.len() > 10
+                })),
         "finalized hash-locked Content-Security-Policy is required for the worker"
     );
     Ok(())
@@ -1231,13 +1353,18 @@ pub(crate) fn public_worker_config(public: &Path, config: &SiteConfig) -> Result
         Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(e.into()),
     };
+    let link_header = global_headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("Link"))
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| build_link_header(config.geo_search, "/feed.xml"));
     Ok(WorkerConfig {
         global_headers,
         cache_rules,
         redirects,
         origin: site_origin(&config.domain),
         content_signal: config.content_signal.clone(),
-        link_header: build_link_header(config.geo_search, "/feed.xml"),
+        link_header,
         search_enabled: config.geo_search,
     })
 }
@@ -1477,8 +1604,16 @@ pub fn write_public_geo_bundle(
         "llms-full.txt".into(),
         render_llms_full_txt(&origin, &canonical_markdown, search),
     );
-    let (skill, index) =
-        render_agent_skill_files(&origin, lang_paths, search, worker_enabled(config));
+    let unique_aliases = dedup_aliases(&aliases);
+    let zh_latest = latest_md_for_lang(Lang::ZhCn, &unique_aliases, &entries);
+    let en_latest = latest_md_for_lang(Lang::En, &unique_aliases, &entries);
+    let (skill, index) = render_agent_skill_files(
+        &origin,
+        zh_latest.as_deref(),
+        en_latest.as_deref(),
+        search,
+        worker_enabled(config),
+    );
     generated.insert(SKILL_PATH.into(), skill);
     generated.insert(SKILL_INDEX.into(), index);
     if search {
@@ -1490,9 +1625,14 @@ pub fn write_public_geo_bundle(
         Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e.into()),
     };
+    let default_index_md = pages
+        .iter()
+        .find(|p| p.page_type == PageType::Index && p.rel_md == "index.md")
+        .or_else(|| pages.iter().find(|p| p.page_type == PageType::Index))
+        .map_or_else(|| "/index.md".into(), md_path);
     let geo_headers = render_geo_headers(
         &config.content_signal,
-        &build_link_header(search, "/feed.xml"),
+        &build_link_header_for(search, "/feed.xml", &default_index_md),
     );
     generated.insert(
         "_headers".into(),

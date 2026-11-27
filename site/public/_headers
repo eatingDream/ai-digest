@@ -8,7 +8,7 @@
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0=' 'inline-speculation-rules'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; prefetch-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0=' 'sha256-72upgOtXUYYfpbOnby12zXpzQ+UsSDcDvAHrs1an1eU='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
 /favicon.svg
   Cache-Control: public, max-age=86400
 /<SITE_SLUG>/

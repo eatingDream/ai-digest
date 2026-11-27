@@ -161,6 +161,19 @@ fn canonical_urls_normalization_and_dedupe_preserve_source_metadata() {
     assert_eq!(rows[0].extra["github"], "https://github.com/example/repo");
     assert_eq!(rows[0].summary, "Synthetic abstract");
     assert_eq!(rows[0].id.len(), 12);
+
+    // SEC-2: arXiv ID extraction only on exact arxiv.org / huggingface.co hosts
+    assert_ne!(
+        canon_url("https://evil.example/?q=arxiv.org/abs/2601.01234"),
+        "arxiv:2601.01234"
+    );
+    // SEC-2: never merge distinct URLs purely on matching titles
+    let mut c1 = paper("2601.09999", "Identical long title across distinct urls");
+    c1.url = "https://lab-a.example/post".into();
+    c1.extra.clear();
+    let mut c2 = c1.clone();
+    c2.url = "https://evil-b.example/post".into();
+    assert_eq!(dedupe(vec![c1, c2]).len(), 2);
 }
 
 #[test]
@@ -503,6 +516,7 @@ async fn page_extraction_readme_fallback_batch_order_and_ssrf() {
         find: None,
         ctx: 15,
         meta: false,
+        strict: false,
         lang: None,
     };
     let (ok, out) = pages_with_client(&args, Lang::En, &http).await;
@@ -947,4 +961,92 @@ fn extreme_window_boundaries_return_usage_error_instead_of_panicking() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+#[test]
+fn sec1_and_sec2_page_strict_check_cands_malformed_and_hf_summary_priority() {
+    let tmp = tempdir().unwrap();
+
+    // SEC-1: page --strict fails closed with non-zero exit when any URL is unreachable/blocked
+    let strict_out = Command::new(BIN)
+        .args(["page", "--strict", "http://127.0.0.1:9/blocked"])
+        .current_dir(tmp.path())
+        .env("DIGEST_ROOT", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        !strict_out.status.success(),
+        "page --strict must exit non-zero on failure"
+    );
+
+    // SEC-1: check-cands rejects malformed freeform lines
+    let run_dir = tmp.path().join("runs/2026-01-15/fetch");
+    fs::create_dir_all(&run_dir).unwrap();
+    rows(&run_dir, &[paper("2601.01234", "Valid Paper")]);
+    let pick_file = tmp.path().join("picks.txt");
+    atomic_write_text(
+        &pick_file,
+        "abc123def456\nnot a valid candidate line at all\n",
+    )
+    .unwrap();
+    let check_out = Command::new(BIN)
+        .args([
+            "fetch",
+            "check-cands",
+            "--date",
+            "2026-01-15",
+            pick_file.to_str().unwrap(),
+        ])
+        .current_dir(tmp.path())
+        .env("DIGEST_ROOT", tmp.path())
+        .env("DIGEST_TZ", "UTC")
+        .output()
+        .unwrap();
+    assert!(
+        !check_out.status.success(),
+        "check-cands must reject malformed freeform lines"
+    );
+
+    // SEC-2: hf_daily prefers author summary over ai_summary
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mock = MockServer::start().await;
+        Mock::given(path("/api/daily_papers"))
+            .and(query_param("date", "2026-01-15"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "paper": {
+                    "id": "2601.09999",
+                    "title": "Author Abstract Priority",
+                    "summary": "Official author abstract",
+                    "ai_summary": "Untrusted synthetic summary",
+                    "authors": [{"name": "Alice"}],
+                    "organization": {"fullname": "Lab"}
+                }
+            }])))
+            .mount(&mock)
+            .await;
+        let (settings, specs) = parse_registry(
+            r#"
+[[source]]
+id = "hf_daily"
+name = "HF fixture"
+type = "hf_daily"
+channel = "paper"
+kind = "paper"
+url = "https://huggingface.co/api/daily_papers"
+"#,
+        )
+        .unwrap();
+        let now = at("2026-01-16T03:00:00Z");
+        let window = compute_window(chrono_tz::UTC, now, false, true, None, None, None).unwrap();
+        let mut state = FetchState::default();
+        state.0.insert("hf_daily:last".into(), json!("2026-01-14"));
+        let mut ctx =
+            SourceContext::new(window, &settings, Lang::En, state).with_github_token(None);
+        ctx.now = now;
+        ctx.http = ctx.http.with_fixture_origin(*mock.address()).unwrap();
+        let cands = fetch_source(&ctx, &specs[0]).await.unwrap();
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].summary, "Official author abstract");
+    });
 }

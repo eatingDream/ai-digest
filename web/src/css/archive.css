@@ -6,6 +6,7 @@
 .mast-chip,.ai-date,.ai-wd,.ai-cnt,.ai-title{white-space:nowrap}
 
 .mast-chip{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:9em;background:var(--well);border:var(--b);color:var(--ink-3);font-size:11px;font-weight:600}
+.folio-kicker{margin:0 0 4px;font:600 11px var(--font-ui);letter-spacing:var(--ls);text-transform:var(--tt);color:var(--accent-ink)}
 .paper{max-width:var(--shell-max);margin:0 auto;padding:0 var(--pad-x) 64px}
 .quick-bar{display:grid;gap:14px;margin-bottom:32px}
 .quick-pill{display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:82px;padding:16px 22px;border:var(--b);border-radius:12px;background:var(--surface);color:var(--ink)}
@@ -16,7 +17,7 @@
 .quick-pill small{color:var(--ink-3)}
 
 .timeline{display:flex;flex-direction:column;gap:28px}
-.month{position:sticky;top:var(--top);z-index:5;padding:8px 0;background:var(--bg);border-bottom:var(--b);transition:top var(--tm)}
+.month{position:sticky;top:var(--mast-h);z-index:5;padding:8px 0;background:var(--bg);border-bottom:var(--b)}
 .grp>summary{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 0;border-bottom:var(--b);list-style:none;cursor:pointer;color:var(--ink-2)}
 .grp>summary::-webkit-details-marker{display:none}
 .grp>summary::after{content:"\203a";margin-left:auto;color:var(--ink-4);transition:rotate .2s var(--ease)}

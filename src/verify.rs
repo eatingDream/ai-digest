@@ -26,6 +26,11 @@ pub struct VerifyArgs {
     pub plains: Vec<PathBuf>,
     #[arg(long, value_name = "PATH")]
     pub password_file: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Enforce security headers on live HTML, .md, and search routes"
+    )]
+    pub check_headers: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -173,6 +178,55 @@ pub async fn verify_url_base_with_client(
     .await
 }
 
+fn assert_required_security_headers(
+    headers: &reqwest::header::HeaderMap,
+    label: &str,
+) -> Result<()> {
+    for (name, expected) in [
+        ("content-security-policy", None),
+        ("x-content-type-options", Some("nosniff")),
+        ("x-frame-options", Some("DENY")),
+        ("referrer-policy", Some("no-referrer")),
+    ] {
+        let val = headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .with_context(|| format!("{label}: missing required security header {name}"))?;
+        if let Some(want) = expected {
+            ensure!(
+                val.eq_ignore_ascii_case(want),
+                "{label}: header {name} expected {want}, got {val}"
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn verify_security_headers(
+    base: &Url,
+    client: &SafeHttpClient,
+    public_geo: bool,
+) -> Result<()> {
+    let mut root = base.clone();
+    if !root.path().ends_with('/') {
+        root.set_path(&format!("{}/", root.path()));
+    }
+    let html_resp = client.fetch_exact_200_no_redirect(&root).await?;
+    assert_required_security_headers(html_resp.headers(), "HTML root")?;
+    if public_geo {
+        let md_url = root.join("index.md")?;
+        if let Ok(md_resp) = client.fetch_exact_200_no_redirect(&md_url).await {
+            assert_required_security_headers(md_resp.headers(), "Markdown mirror")?;
+        }
+        let search_url = root.join(".well-known/search?q=ai")?;
+        let search_resp = client
+            .get_with_headers(&search_url, None, &reqwest::header::HeaderMap::new())
+            .await?;
+        assert_required_security_headers(search_resp.headers(), "/.well-known/search")?;
+    }
+    Ok(())
+}
+
 pub async fn run(args: &VerifyArgs, paths: &DigestPaths, encrypted: bool) -> Result<usize> {
     if args.urls.len() != args.plains.len() {
         return Err(UnpairedUrls.into());
@@ -203,14 +257,14 @@ pub async fn run(args: &VerifyArgs, paths: &DigestPaths, encrypted: bool) -> Res
     } else {
         None
     };
-    verify_targets(
-        pairs,
-        encrypted,
-        password.as_deref(),
-        true,
-        &SafeHttpClient::default(),
-    )
-    .await
+    let client = SafeHttpClient::default();
+    let count = verify_targets(pairs, encrypted, password.as_deref(), true, &client).await?;
+    if args.check_headers {
+        if let Some(base) = &args.url_base {
+            verify_security_headers(base, &client, !encrypted).await?;
+        }
+    }
+    Ok(count)
 }
 
 pub fn read_password(file: Option<&Path>) -> Result<String> {

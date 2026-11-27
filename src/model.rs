@@ -16,6 +16,8 @@ use serde_json::{Map, Value};
 
 use crate::i18n::{normalize_lang, resolve_lang_with_env, Lang};
 
+pub const SPECULATION_RULES_JSON: &str = r#"{"prefetch":[{"where":{"and":[{"href_matches":"/*"},{"not":{"selector_matches":"[target=_blank],[download]"}}]},"eagerness":"moderate"}]}"#;
+
 #[derive(Clone, Debug)]
 pub struct DigestPaths {
     pub root: PathBuf,
@@ -244,13 +246,21 @@ impl SiteConfig {
         let (content_signal, geo_ai_train) =
             content_signal(val("CONTENT_SIGNAL"), val("GEO_AI_TRAIN"));
         let defaults = Self::default();
+        let domain = match data
+            .get("DOMAIN")
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            Some(raw) => validate_domain(raw)?,
+            None => defaults.domain,
+        };
         Ok(Self {
             lang,
             slug: val("SLUG").into(),
             lang_alt: parse_lang_alt(val("LANG_ALT"), lang)?,
             platform: data.get("PLATFORM").cloned().unwrap_or(defaults.platform),
             project: data.get("PROJECT").cloned().unwrap_or(defaults.project),
-            domain: data.get("DOMAIN").cloned().unwrap_or(defaults.domain),
+            domain,
             account_id: val("ACCOUNT_ID").into(),
             zone_id: val("ZONE_ID").into(),
             encrypt: parse_bool_strict(val("ENCRYPT"), "ENCRYPT", false)?,
@@ -261,6 +271,42 @@ impl SiteConfig {
             geo_ai_train,
         })
     }
+}
+
+pub fn validate_domain(domain: &str) -> Result<String> {
+    let raw = domain.trim();
+    ensure!(!raw.is_empty(), "invalid DOMAIN: cannot be empty");
+    let stripped = raw
+        .strip_prefix("https://")
+        .or_else(|| raw.strip_prefix("http://"))
+        .unwrap_or(raw)
+        .trim_end_matches('/');
+    ensure!(
+        !stripped.is_empty()
+            && !stripped.contains('/')
+            && !stripped.contains("..")
+            && !stripped.starts_with('.')
+            && !stripped.ends_with('.')
+            && !stripped.starts_with('-')
+            && !stripped.ends_with('-')
+            && stripped.is_ascii()
+            && stripped
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".:-".contains(&b)),
+        "invalid DOMAIN: expected ASCII hostname"
+    );
+    let parsed = url::Url::parse(&format!("https://{stripped}"))
+        .context("invalid DOMAIN: expected ASCII hostname")?;
+    ensure!(
+        parsed.has_host()
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+            && parsed.path() == "/"
+            && parsed.query().is_none()
+            && parsed.fragment().is_none(),
+        "invalid DOMAIN: expected ASCII hostname"
+    );
+    Ok(stripped.to_ascii_lowercase())
 }
 
 pub fn validate_slug(slug: &str) -> Result<()> {
@@ -436,15 +482,27 @@ pub struct Digest {
     pub sections: Vec<Section>,
 }
 
+pub fn normalize_brand(text: &str) -> String {
+    text.replace("AI 精选日报与周报", "AI Digest")
+        .replace("AI精选日报与周报", "AI Digest")
+        .replace("AI 精选日报", "AI Digest · 日报")
+        .replace("AI精选日报", "AI Digest · 日报")
+        .replace("AI 精选周报", "AI Digest · 周报")
+        .replace("AI精选周报", "AI Digest · 周报")
+        .replace("AI 精选", "AI Digest")
+        .replace("AI精选", "AI Digest")
+}
+
 impl Digest {
     pub fn items(&self) -> impl Iterator<Item = &Item> {
         self.sections.iter().flat_map(Section::items)
     }
     pub fn full_title(&self) -> String {
+        let title = normalize_brand(&self.title);
         if self.period.is_empty() {
-            self.title.clone()
+            title
         } else {
-            format!("{} · {}", self.title, self.period)
+            format!("{title} · {}", self.period)
         }
     }
 }
@@ -720,27 +778,99 @@ pub struct WorkerConfig {
     pub redirects: Vec<(String, String, u16)>,
 }
 
+const TRACKING_PARAMS: &[&str] = &[
+    "ref", "ref_src", "source", "rss", "src", "fbclid", "gclid", "mc_cid", "mc_eid", "smid",
+    "cmpid", "sr_share",
+];
+
+fn extract_arxiv_id(url: &url::Url) -> Option<String> {
+    static ARXIV_ID: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?$").unwrap());
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    let segs: Vec<&str> = url
+        .path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let candidate = match (host, segs.as_slice()) {
+        ("arxiv.org", ["abs" | "pdf" | "html", id]) => *id,
+        ("huggingface.co", ["papers", id]) => *id,
+        _ => return None,
+    };
+    ARXIV_ID.captures(candidate).map(|m| m[1].to_owned())
+}
+
+pub fn strip_tracking_params(input: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(input) else {
+        return input.to_owned();
+    };
+    if parsed.query().is_none() {
+        return parsed.to_string();
+    }
+    let kept: Vec<(String, String)> = parsed
+        .query_pairs()
+        .filter(|(k, _)| {
+            let low = k.to_ascii_lowercase();
+            !low.starts_with("utm_") && !TRACKING_PARAMS.contains(&low.as_str())
+        })
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        parsed.set_query(None);
+    } else {
+        let mut ser = url::form_urlencoded::Serializer::new(String::new());
+        for (k, v) in kept {
+            ser.append_pair(&k, &v);
+        }
+        parsed.set_query(Some(&ser.finish()));
+    }
+    parsed.to_string()
+}
+
+pub fn is_wrapper_or_shortener_url(input: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(input) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    if matches!(
+        host,
+        "t.co" | "bit.ly" | "tinyurl.com" | "lnkd.in" | "ow.ly" | "is.gd" | "buff.ly" | "goo.gl"
+    ) {
+        return true;
+    }
+    if host == "google.com" && (parsed.path() == "/url" || parsed.path().starts_with("/url/")) {
+        return true;
+    }
+    false
+}
+
+pub fn full_width_len(text: &str) -> f32 {
+    text.chars()
+        .map(|c| if c.is_ascii() { 0.5 } else { 1.0 })
+        .sum()
+}
+
 pub fn canon_url(input: &str) -> String {
     let input = input.trim();
     if input.is_empty() {
         return String::new();
     }
-    const TRACKING: &[&str] = &[
-        "ref", "ref_src", "source", "rss", "src", "fbclid", "gclid", "mc_cid", "mc_eid", "smid",
-        "cmpid", "sr_share",
-    ];
-    static ARXIV: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:arxiv\.org/(?:abs|pdf|html)/|huggingface\.co/papers/)(\d{4}\.\d{4,5})")
-            .unwrap()
-    });
-    if let Some(m) = ARXIV.captures(input) {
-        return format!("arxiv:{}", &m[1]);
+    let cleaned = input.replace(['\t', '\n', '\r'], "");
+    if let Ok(parsed) = url::Url::parse(&cleaned) {
+        if let Some(aid) = extract_arxiv_id(&parsed) {
+            return format!("arxiv:{aid}");
+        }
     }
-    let input = input.replace(['\t', '\n', '\r'], "");
-    let (scheme, rest) = input
+    let (scheme, rest) = cleaned
         .split_once(':')
         .filter(|(prefix, _)| has_scheme(&format!("{prefix}:")))
-        .unwrap_or(("", &input));
+        .unwrap_or(("", &cleaned));
     let (host, rest) = if let Some(authority) = rest.strip_prefix("//") {
         let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
         (&authority[..end], &authority[end..])
@@ -768,7 +898,9 @@ pub fn canon_url(input: &str) -> String {
         .extend_pairs(
             url::form_urlencoded::parse(query.as_bytes()).filter(|(key, val)| {
                 let key = key.to_ascii_lowercase();
-                !val.is_empty() && !key.starts_with("utm_") && !TRACKING.contains(&key.as_str())
+                !val.is_empty()
+                    && !key.starts_with("utm_")
+                    && !TRACKING_PARAMS.contains(&key.as_str())
             }),
         )
         .finish()
@@ -811,18 +943,28 @@ pub fn clean_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub fn is_safe_url(input: &str) -> bool {
-    normalized_safe_url(input).is_some()
+fn has_bidi_or_control(s: &str) -> bool {
+    s.chars().any(|c| {
+        c.is_control()
+            || matches!(
+                c,
+                '\u{061C}'
+                    | '\u{200E}'
+                    | '\u{200F}'
+                    | '\u{202A}'..='\u{202E}'
+                    | '\u{2066}'..='\u{2069}'
+            )
+    })
 }
 
-/// Return the same normalized value that was checked so the browser receives that value.
-pub fn normalized_safe_url(input: &str) -> Option<String> {
+pub fn safe_internal_url(input: &str) -> Option<String> {
     let raw = html_unescape(input);
-    if raw.bytes().any(|b| b.is_ascii_control()) || input.bytes().any(|b| b.is_ascii_control()) {
+    if has_bidi_or_control(input) || has_bidi_or_control(&raw) {
         return None;
     }
-    let cleaned = raw.trim().replace(' ', "");
+    let cleaned = raw.trim();
     if cleaned.is_empty()
+        || cleaned.chars().any(char::is_whitespace)
         || cleaned.starts_with("//")
         || cleaned.starts_with('\\')
         || cleaned
@@ -830,20 +972,39 @@ pub fn normalized_safe_url(input: &str) -> Option<String> {
             .next()
             .unwrap_or("")
             .contains('\\')
+        || has_scheme(cleaned)
     {
         return None;
     }
-    if has_scheme(&cleaned) {
-        let (scheme, rest) = cleaned.split_once(':')?;
-        if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")) {
-            return None;
-        }
-        let authority = rest.strip_prefix("//")?.split(['/', '?', '#']).next()?;
-        if authority.is_empty() {
-            return None;
-        }
+    Some(cleaned.to_owned())
+}
+
+pub fn safe_external_url(input: &str) -> Option<String> {
+    let raw = html_unescape(input);
+    if has_bidi_or_control(input) || has_bidi_or_control(&raw) {
+        return None;
     }
-    Some(cleaned)
+    let cleaned = raw.trim();
+    if cleaned.is_empty() || cleaned.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let parsed = url::Url::parse(cleaned).ok()?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        return None;
+    }
+    if !parsed.has_host() || !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    Some(parsed.to_string())
+}
+
+pub fn is_safe_url(input: &str) -> bool {
+    normalized_safe_url(input).is_some()
+}
+
+/// Return the same normalized value that was checked so the browser receives that value.
+pub fn normalized_safe_url(input: &str) -> Option<String> {
+    safe_external_url(input).or_else(|| safe_internal_url(input))
 }
 
 pub fn html_escape(text: &str) -> String {
@@ -852,6 +1013,23 @@ pub fn html_escape(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#x27;")
+}
+
+pub fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            '\t' | '\n' | '\r' => out.push(c),
+            c if matches!(c as u32, 0x00..=0x1F | 0xFFFE | 0xFFFF) => {}
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 pub fn html_unescape(text: &str) -> String {

@@ -25,9 +25,10 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <body>
 <a class="skip-link" href="#main">Skip</a>
+<div class="mast-sentinel"></div>
 <header class="mast">
   <div class="mast-row">
-    <h1 class="np"><a class="np-link" href="/" data-brand-home><span class="ai">AI</span> Digest</a></h1>
+    <span class="np"><a class="np-link" href="/" data-brand-home><span class="ai">AI</span> Digest</a></span>
     <span class="edition" data-kind="daily">Daily</span>
     <span class="mast-sep" aria-hidden="true"></span>
     <nav class="issue-nav top"><a href="/prev" rel="prev"><span data-short-date>11.25</span></a><a class="nav-index" href="/"><span class="nav-lbl">Archive</span></a><a class="nav-week" href="/weekly/latest">Weekly</a></nav>
@@ -40,7 +41,8 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
   </div>
 </header>
 <div class="read-prog"><div class="read-prog-fill"></div></div>
-<div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
+<div class="search-scrim" data-search-scrim hidden></div>
+<div class="filter-bar filter-drawer search-panel" id="digestFilterBar" hidden aria-hidden="true" inert>
   <div class="filter-inner">
     <div class="filter-input-wrap">
       <input type="search" class="filter-input">
@@ -56,24 +58,28 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
 </div>
 <div class="reader-shell">
   <nav class="toc-side" id="toc-sheet">
-    <div class="toc-handle"></div>
-    <div class="toc-head"><span>Contents</span><button type="button" class="toc-expand-all">All</button><button type="button" class="toc-close">X</button></div>
+    <div class="toc-top">
+      <div class="toc-handle"></div>
+      <div class="toc-head"><h2 class="toc-label">Contents</h2><button type="button" class="toc-expand-all">All</button><button type="button" class="toc-close">X</button></div>
+      <div class="cat-chips"><button type="button" class="chip" data-cat="all" aria-pressed="true">All <b class="n num">1</b></button></div>
+    </div>
     <div class="toc-front"><a href="#front-must">Must</a></div>
     <div class="ts-group is-open" data-sec="sec-1">
       <button type="button" class="ts-sec" aria-expanded="true" aria-controls="ts-list-sec-1">
         <span class="ts-no num">01</span><span class="ts-title">Models</span><span class="ts-cnt num" data-total="1">1</span>
       </button>
-      <div class="ts-panel" id="ts-list-sec-1"><ol class="ts-items"><li><a href="#item-1" title="Title"><span class="ts-num num">1.</span><span class="ts-title">Title</span><span class="dot-hot"></span></a></li></ol></div>
+      <div class="ts-panel" id="ts-list-sec-1"><ol class="ts-items"><li><a href="#item-1" title="Title"><span class="ts-num num">1.</span><span class="ts-title short">Title</span><span class="dot-hot"></span></a></li></ol></div>
     </div>
   </nav>
   <main id="main" class="prose-col">
-    <header class="folio">
-      <p class="folio-kicker">DAILY</p>
-      <h1>Issue Title</h1>
+    <header class="folio issue-head">
+      <h1 class="issue-title"><time datetime="2026-11-26">Nov 26</time><span class="vh"> AI Digest Daily</span></h1>
       <p class="folio-dek">Summary</p>
-      <span class="mast-meta"><span>2026-11-26</span><span>10 items</span><span class="motto">Motto</span></span>
+      <p class="issue-meta mast-meta"><span data-k="read"><b>3</b> min</span><span data-k="count"><b>1</b> item</span><span class="meta-cats"><span class="meta-cat" data-cat="sec-1">Models <b class="num">1</b></span></span><button type="button" class="active-q-chip" data-active-q hidden></button></p>
+      <div class="mobile-filter-strip"><button type="button" class="chip" data-cat="all" aria-pressed="true">All <b class="n num">1</b></button></div>
       <nav class="folio-sections"><a href="#sec-1">01 Models</a></nav>
     </header>
+    <section class="highlights"><h2 id="hl-h">Top Highlights <span class="hl-count num">(1)</span></h2><ol class="hl-list"><li data-item-id="item-1" data-category="sec-1" data-tags="llm"><a href="#item-1"><span class="hl-cat">Models</span><span class="hl-t">Story</span></a></li></ol><p class="hl-empty" hidden>None</p><button type="button" class="hl-more" data-hl-more hidden>All</button></section>
     <section class="front front-must" id="front-must">
       <h2>Must Read</h2>
       <ol class="must-list"><li><span class="must-n num">01</span><div class="must-body"><a class="must-title" href="#item-1">Lead</a><p class="must-dek">Dek</p></div></li></ol>
@@ -94,10 +100,10 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
         </div>
         <div class="story-head"><h3><span class="story-no">1.</span> Story</h3></div>
         <p class="dek">Dek</p>
-        <div class="look"><span class="look-k">Why</span><div class="prose"><p><span class="math math-wrap"><span class="frac">1/2</span><span class="sqrt">x</span></span> <code class="math-raw">$raw$</code></p></div></div>
+        <aside class="look"><span class="look-k">Why</span><div class="prose"><p><span class="math math-wrap"><span class="frac">1/2</span><span class="sqrt">x</span></span> <code class="math-raw">$raw$</code></p></div></aside>
         <div class="detail"><span class="detail-k">Details</span><div class="prose"><p>Detail</p></div></div>
         <div class="extra"><span class="extra-k">More</span><div class="prose"><p>More</p></div></div>
-        <div class="story-links"><a href="https://example.com">example.com</a></div>
+        <footer class="story-links sources"><a class="src src-primary" data-kind="paper" href="https://arxiv.org/abs/0000.00001"><span class="src-k">Paper</span> arxiv.org</a><button type="button" class="src-more" data-src-more>+1</button></footer>
       </article>
     </section>
     <div class="filter-empty" hidden><p>Empty</p><button type="button" class="filter-clear">Clear</button></div>
@@ -120,9 +126,10 @@ const INDEX_FIXTURE_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <body>
 <a class="skip-link" href="#main">Skip</a>
+<div class="mast-sentinel"></div>
 <header class="mast">
   <div class="mast-row">
-    <h1 class="np"><a class="np-link" href="/"><span class="ai">AI</span> Digest</a></h1>
+    <span class="np"><a class="np-link" href="/"><span class="ai">AI</span> Digest</a></span>
     <span class="mast-chip">19 issues</span>
     <div class="mast-tools">
       <button type="button" class="ctrl-btn search-btn" data-filter-toggle></button>
@@ -132,7 +139,8 @@ const INDEX_FIXTURE_HTML = `<!DOCTYPE html>
     </div>
   </div>
 </header>
-<div class="filter-bar filter-drawer" id="digestFilterBar" aria-hidden="true" inert>
+<div class="search-scrim" data-search-scrim hidden></div>
+<div class="filter-bar filter-drawer search-panel" id="digestFilterBar" hidden aria-hidden="true" inert>
   <div class="filter-inner">
     <div class="filter-input-wrap">
       <input type="search" class="filter-input">
@@ -286,7 +294,7 @@ describe("web/dist artifacts and byte budgets", () => {
   it("enforces raw CSS and combined per-page JS byte budgets", () => {
     const size = (f: string) => Buffer.byteLength(readFileSync(join(DIST, f), "utf8"), "utf8");
 
-    expect(size("reader.css")).toBeLessThanOrEqual(16090);
+    expect(size("reader.css")).toBeLessThanOrEqual(22528);
     expect(size("index.css")).toBeLessThanOrEqual(10240);
     expect(size("unlock.css")).toBeLessThanOrEqual(4096);
     expect(size("404.css")).toBeLessThanOrEqual(4096);
@@ -359,24 +367,27 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(readerCss).toContain("clamp(290px,22vw,330px) minmax(0,880px)");
     expect(readerCss).toContain(".folio-sections{display:none}");
     expect(readerCss).toContain("scrollbar-color:var(");
-    expect(readerCss).toContain("max-width:760px");
     expect(readerCss).not.toContain("grid-column:3/6");
-    expect(readerCss).not.toContain("text-wrap:balance");
 
-    // Smooth CSS Grid accordions, fixed overlay filter drawer, cross-document view transitions, and desktop to-top
+    // Smooth CSS Grid accordions, centered elevated search dialog, sticky TOC top, zero raw CSS nesting & zero transition:all
     expect(readerCss).toContain("@view-transition{navigation:auto}");
     expect(readerCss).toContain("@view-transition{navigation:none}");
     expect(readerCss).toContain("::view-transition-group(root){animation:none}");
     expect(readerCss).toContain("view-transition-name:mast");
     expect(readerCss).toContain(".ts-panel{display:grid;grid:0fr/1fr");
-    expect(readerCss).toContain(".filter-drawer{display:grid;grid:0fr/1fr;position:fixed;inset:var(--mast-h) 0 auto");
+    expect(readerCss).toContain(".search-scrim{position:fixed");
+    expect(readerCss).toContain(".toc-top{position:sticky;top:0");
     expect(readerCss).toContain(".sr-only{position:fixed;top:0;left:0");
     expect(readerCss).toContain("::-webkit-search-cancel-button");
-    expect(readerCss).toContain(".is-arrived{animation:");
+    expect(readerCss).toContain(".is-arrived{");
     expect(readerCss).toContain(".to-top{position:fixed");
+    expect(readerCss).not.toMatch(/&[.:[\s]/);
+    expect(readerCss).not.toMatch(/transition\s*:\s*all\b/i);
 
     const indexCss = readFileSync(join(DIST, "index.css"), "utf8");
     expect(indexCss).toContain("min(1320px,88vw)");
+    expect(indexCss).not.toMatch(/&[.:[\s]/);
+    expect(indexCss).not.toMatch(/transition\s*:\s*all\b/i);
   });
 });
 

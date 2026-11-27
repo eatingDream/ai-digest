@@ -1,16 +1,11 @@
-export type MastState = "shown" | "hidden";
 export type ThemeMode = "system" | "light" | "dark";
 
 export interface MastController {
-  setPinned(key: string, pinned: boolean): void;
-  setState(next: MastState): void;
-  setProgrammaticScroll(active: boolean): void;
   getMastHeight(): number;
-  getMastOffset(): number;
+  getTopOffset(): number;
   isReducedMotion(): boolean;
   isZh(): boolean;
   isTypingTarget(el: EventTarget | null): boolean;
-  isPinned(): boolean;
   syncLang(): void;
 }
 
@@ -30,7 +25,7 @@ export function normalizeAnchorId(id: string): string {
 
 export function captureVisibleAnchor(
   scope: ParentNode = document,
-  mastHeight = 56
+  mastHeight = 52
 ): LangAnchorSnapshot {
   if (window.scrollY < 40) {
     return { anchorId: "__top__", relTop: 0, ts: Date.now() };
@@ -90,15 +85,14 @@ function isTypingTarget(el: EventTarget | null): boolean {
 export function initMast(): MastController {
   const root = document.documentElement;
   const masts = Array.from(document.querySelectorAll<HTMLElement>("header.mast"));
+  const sentinels = Array.from(
+    document.querySelectorAll<HTMLElement>(".mast-sentinel")
+  );
   const isZh = (): boolean => (root.lang || "").toLowerCase().startsWith("zh");
 
   const rmQuery =
     typeof window.matchMedia === "function"
       ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
-  const fineQuery =
-    typeof window.matchMedia === "function"
-      ? window.matchMedia("(pointer: fine)")
       : null;
   const darkQuery =
     typeof window.matchMedia === "function"
@@ -106,61 +100,19 @@ export function initMast(): MastController {
       : null;
 
   let reducedMotion = Boolean(rmQuery?.matches);
-  let state: MastState = "shown";
-  let mastH = 56;
-  let hovering = false;
-  let focusWithin = false;
-  let programmaticScroll = false;
-  const pinReasons = new Set<string>();
+  let mastH = window.innerWidth <= 960 ? 48 : 52;
 
-  const isPinned = (): boolean =>
-    reducedMotion || hovering || focusWithin || pinReasons.size > 0;
-
-  const syncCssVars = (): void => {
-    const offset = state === "shown" ? mastH : 0;
-    root.dataset.mast = state;
+  const syncMastVar = (): void => {
     root.style.setProperty("--mast-h", `${mastH}px`);
-    root.style.setProperty("--mast-offset", `${offset}px`);
-  };
-
-  let lastY = window.scrollY;
-  let acc = 0;
-
-  const setState = (next: MastState): void => {
-    const target: MastState = next === "hidden" && isPinned() ? "shown" : next;
-    lastY = window.scrollY;
-    acc = 0;
-    if (target === state && root.dataset.mast === target) return;
-    state = target;
-    syncCssVars();
-  };
-
-  const setPinned = (key: string, pinned: boolean): void => {
-    if (pinned) {
-      pinReasons.add(key);
-      setState("shown");
-    } else {
-      pinReasons.delete(key);
-    }
-  };
-
-  const setProgrammaticScroll = (active: boolean): void => {
-    programmaticScroll = active;
-    lastY = window.scrollY;
-    acc = 0;
   };
 
   const measureMast = (): void => {
     for (const mast of masts) {
-      const row = mast.querySelector<HTMLElement>(".mast-row");
-      const rawH = row
-        ? row.getBoundingClientRect().height + 1
-        : mast.getBoundingClientRect().height;
-      const h = Math.round(rawH);
+      const h = Math.round(mast.getBoundingClientRect().height);
       if (h > 0) {
         if (h !== mastH) {
           mastH = h;
-          syncCssVars();
+          syncMastVar();
         }
         return;
       }
@@ -174,87 +126,35 @@ export function initMast(): MastController {
         ? new ResizeObserver(measureMast)
         : null;
     for (const mast of masts) {
-      const row = mast.querySelector<HTMLElement>(".mast-row") ?? mast;
-      ro?.observe(row);
-      mast.addEventListener("mouseenter", () => {
-        hovering = true;
-        setState("shown");
-      });
-      mast.addEventListener("mouseleave", () => {
-        hovering = false;
-      });
-      mast.addEventListener("focusin", () => {
-        focusWithin = true;
-        setState("shown");
-      });
-      mast.addEventListener("focusout", (e: FocusEvent) => {
-        const next = e.relatedTarget as Node | null;
-        if (!next || !mast.contains(next)) {
-          focusWithin = false;
-        }
-      });
+      ro?.observe(mast);
     }
   }
-  syncCssVars();
+  syncMastVar();
 
   rmQuery?.addEventListener?.("change", (e) => {
     reducedMotion = e.matches;
-    if (reducedMotion) setState("shown");
   });
 
-  // Scroll choreography: passive + rAF throttled + anti-bounce hysteresis + 3000ms idle reveal
-  let rafId = 0;
-  let idleTimer = 0;
-
-  const scheduleIdleReveal = (): void => {
-    if (idleTimer) window.clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => {
-      setState("shown");
-    }, 3000);
-  };
-
-  const onScrollFrame = (): void => {
-    rafId = 0;
-    const y = window.scrollY;
-    root.toggleAttribute("data-scrolled", y > 8);
-    if (programmaticScroll) {
-      lastY = y;
-      acc = 0;
-      return;
-    }
-    const dy = y - lastY;
-    lastY = y;
-    if (dy !== 0) {
-      if ((dy > 0 && acc < 0) || (dy < 0 && acc > 0)) acc = 0;
-      acc += dy;
-    }
-    if (y <= 120 || acc <= -24) {
-      setState("shown");
-    } else if (y > 120 && acc >= 32 && !isPinned()) {
-      setState("hidden");
+  // Toggle .mast.is-scrolled via 4px top sentinel IntersectionObserver (no scroll listener)
+  const setScrolled = (scrolled: boolean): void => {
+    for (const mast of masts) {
+      mast.classList.toggle("is-scrolled", scrolled);
     }
   };
-  root.toggleAttribute("data-scrolled", window.scrollY > 8);
 
-  window.addEventListener(
-    "scroll",
-    () => {
-      scheduleIdleReveal();
-      if (!rafId) rafId = window.requestAnimationFrame(onScrollFrame);
-    },
-    { passive: true }
-  );
-
-  // Fine-pointer top-edge reveal
-  window.addEventListener(
-    "mousemove",
-    (e: MouseEvent) => {
-      if (state === "hidden" && fineQuery?.matches && e.clientY <= 12) {
-        setState("shown");
-      }
-    },
-    { passive: true }
-  );
+  if (sentinels.length > 0 && typeof IntersectionObserver !== "undefined") {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          setScrolled(!entry.isIntersecting);
+        }
+      },
+      { threshold: 0 }
+    );
+    for (const s of sentinels) io.observe(s);
+  } else {
+    setScrolled(window.scrollY > 4);
+  }
 
   // Theme switching: system -> light -> dark
   const themeBtns = Array.from(
@@ -341,27 +241,33 @@ export function initMast(): MastController {
     if (curTheme === "system") syncThemeMeta("system");
   });
 
-  // Language link preserving ?q / ?tag + saving exact story-anchor lock (with #anchor fallback)
+  // SEC-9: Preserve origin for approved cross-origin LANG_ALT without forwarding
+  // query/hash cross-origin, and reject protocol-relative // pathnames.
   const buildLangHref = (
     link: HTMLAnchorElement,
     fallbackHash?: string
   ): string => {
     const raw = link.getAttribute("href") || "";
-    if (!raw) return raw;
+    if (!raw || raw.startsWith("//")) return "";
     try {
       const target = new URL(raw, window.location.href);
+      if (target.protocol !== "https:" && target.protocol !== "http:") {
+        return "";
+      }
+      if (target.pathname.startsWith("//")) return "";
       const cur = new URL(window.location.href);
-      const q = cur.searchParams.get("q");
-      const tag = cur.searchParams.get("tag");
-      if (q) target.searchParams.set("q", q);
-      else target.searchParams.delete("q");
-      if (tag) target.searchParams.set("tag", tag);
-      else target.searchParams.delete("tag");
-      target.hash =
-        fallbackHash !== undefined ? fallbackHash : cur.hash;
+      if (target.origin !== cur.origin) {
+        return target.origin + target.pathname;
+      }
+      for (const param of ["cat", "q", "tag"]) {
+        const val = cur.searchParams.get(param);
+        if (val) target.searchParams.set(param, val);
+        else target.searchParams.delete(param);
+      }
+      target.hash = fallbackHash !== undefined ? fallbackHash : cur.hash;
       return target.pathname + target.search + target.hash;
     } catch {
-      return raw;
+      return "";
     }
   };
 
@@ -421,32 +327,25 @@ export function initMast(): MastController {
       if (label) {
         e.preventDefault();
         label.click();
-        return;
-      }
-      const zhRadio = document.getElementById("language-zh") as HTMLInputElement | null;
-      const enRadio = document.getElementById("en-language") as HTMLInputElement | null;
-      if (zhRadio && enRadio) {
-        e.preventDefault();
-        const nextRadio = isZh() ? enRadio : zhRadio;
-        nextRadio.checked = true;
-        nextRadio.dispatchEvent(new Event("change", { bubbles: true }));
       }
     }
   });
 
+  const getTopOffset = (): number => {
+    if (window.innerWidth <= 960) {
+      const strip = document.querySelector<HTMLElement>(".mobile-filter-strip");
+      const stripH = strip ? Math.round(strip.getBoundingClientRect().height) : 0;
+      return mastH + stripH;
+    }
+    return mastH;
+  };
+
   return {
-    setPinned,
-    setState,
-    setProgrammaticScroll,
     getMastHeight: () => mastH,
-    getMastOffset: () => (state === "shown" ? mastH : 0),
+    getTopOffset,
     isReducedMotion: () => reducedMotion,
     isZh,
     isTypingTarget,
-    isPinned,
-    syncLang: () => {
-      syncThemeButtons(curTheme);
-      measureMast();
-    },
+    syncLang: () => syncThemeButtons(curTheme),
   };
 }
