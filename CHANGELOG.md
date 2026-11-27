@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.1.1](https://github.com/eatingDream/ai-digest/compare/v1.1.0...v1.1.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* refine AI Digest broadsheet UX, editorial lead, and 3-tier font scaling ([#68](https://github.com/eatingDream/ai-digest/issues/68)) ([2690c27](https://github.com/eatingDream/ai-digest/commit/2690c274cea4383fe28c39033c92f1f8b93cc145))
+
 ## [1.1.0](https://github.com/eatingDream/ai-digest/compare/v1.0.2...v1.1.0) (2026-11-27)
 
 
