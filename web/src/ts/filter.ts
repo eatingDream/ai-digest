@@ -46,7 +46,6 @@ export function initFilter(opts: FilterOptions): FilterController {
   const closeBtn = drawer?.querySelector<HTMLButtonElement>(".filter-close") ?? null;
   const tagsWrap = drawer?.querySelector<HTMLElement>(".filter-tags") ?? null;
   const emptyEl = scope.querySelector<HTMLElement>(".filter-empty");
-  const activeQChip = scope.querySelector<HTMLButtonElement>("[data-active-q]");
 
   const activeTags = new Set<string>();
   let query = "";
@@ -160,20 +159,6 @@ export function initFilter(opts: FilterOptions): FilterController {
     }
   };
 
-  const syncActiveQChip = (): void => {
-    if (!activeQChip) return;
-    const parts: string[] = [];
-    if (query) parts.push(`\u201c${query}\u201d`);
-    for (const t of activeTags) parts.push(`#${t}`);
-    if (parts.length > 0) {
-      activeQChip.textContent = `${parts.join(" ")} \u00d7`;
-      activeQChip.hidden = false;
-    } else {
-      activeQChip.textContent = "";
-      activeQChip.hidden = true;
-    }
-  };
-
   const hasActiveFilters = (): boolean =>
     query.length > 0 || activeTags.size > 0 || activeCat !== "all";
 
@@ -189,7 +174,6 @@ export function initFilter(opts: FilterOptions): FilterController {
     if (emptyEl) {
       emptyEl.hidden = matched > 0 || !hasActive;
     }
-    syncActiveQChip();
     reorderTags();
     layoutTags();
     if (updateUrl) syncUrl();
@@ -267,7 +251,6 @@ export function initFilter(opts: FilterOptions): FilterController {
 
   closeBtn?.addEventListener("click", () => close(true));
   scrim?.addEventListener("click", () => close(true));
-  activeQChip?.addEventListener("click", () => clearQuery());
 
   for (const btn of clearBtns) {
     btn.addEventListener("click", () => {

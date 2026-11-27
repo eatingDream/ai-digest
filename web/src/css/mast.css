@@ -1,7 +1,7 @@
 :root{
   --bg-muted:light-dark(#e6dfd3,#26231f);--ink-2:light-dark(#35302a,#d8d1c7);--ink-4:light-dark(#736a5e,#8a8175);
   --accent-soft:light-dark(#b8543216,#df7d5620);--mast-bg:light-dark(#f6f3ecd4,#121110d4);
-  --mast-h:52px;--strip-h:40px;--ls:.1em;--tt:none;--shell-max:min(1320px,88vw);
+  --mast-h:52px;--strip-h:40px;--ls:.1em;--tt:none;--shell-max:min(1360px,90vw);
 }
 :lang(en){--font-display:Charter,Georgia,serif;--ls:.08em;--tt:uppercase}
 :lang(zh) body{line-break:strict;text-spacing-trim:trim-start}

@@ -475,6 +475,8 @@ pub struct Digest {
     pub period: String,
     pub weekly: bool,
     pub dates: Vec<NaiveDate>,
+    #[serde(default)]
+    pub summary: String,
     pub must: Vec<MustItem>,
     pub themes: Vec<ThemeItem>,
     pub toc_groups: Vec<TocGroup>,

@@ -4,6 +4,10 @@ try {
   if (t === "light" || t === "dark") {
     r.dataset.theme = t;
   }
+  const f = localStorage.getItem("digest-font");
+  if (f === "sm" || f === "md" || f === "lg") {
+    r.dataset.font = f;
+  }
   const dk =
     t === "dark" ||
     (t !== "light" &&
