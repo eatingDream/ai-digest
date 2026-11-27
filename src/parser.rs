@@ -808,6 +808,9 @@ pub fn parse_digest_html_with_lang(html: &str, lang: Option<Lang>) -> Result<Par
     counts.sort_by(|(a, ac), (b, bc)| bc.cmp(ac).then_with(|| a.cmp(b)));
     issue.top_tags = counts.into_iter().take(10).map(|(tag, _)| tag).collect();
     issue.items_count = issue.items.len();
+    issue.summary = tree
+        .first_class_text(0, "summary-lead")
+        .replace('\u{2011}', "-");
     issue.description = issue_description(&issue);
     Ok(issue)
 }
@@ -874,36 +877,74 @@ fn parse_story(tree: &Tree, i: usize, section: &str, opus: bool) -> ParsedItem {
 }
 
 fn issue_description(issue: &ParsedIssue) -> String {
-    let ParsedIssue {
-        title,
-        period_line,
-        items_count,
-        lang,
-        ..
-    } = issue;
-    let leads = issue
-        .items
-        .iter()
-        .take(3)
-        .map(|it| it.title.as_str())
-        .collect::<Vec<_>>();
-    if leads.is_empty() {
-        return truncate(title, 160);
+    let limit = issue.lang.choose(158, 88);
+    if !issue.summary.is_empty() {
+        return truncate_meta(&issue.summary, limit, issue.lang);
     }
-    let prefix = match (*lang, period_line.is_empty()) {
-        (Lang::En, true) => format!("{title}: "),
-        (Lang::En, false) => format!("{title} ({period_line}, {items_count} items): "),
-        (Lang::ZhCn, true) => format!("{title}："),
-        (Lang::ZhCn, false) => format!("{title}（{period_line}，共 {items_count} 条）："),
+    let clean_title = issue.title.replace('\u{2011}', "-");
+    let leads: Vec<String> = if !issue.must.is_empty() {
+        issue
+            .must
+            .iter()
+            .take(3)
+            .map(|m| m.title.replace('\u{2011}', "-"))
+            .collect()
+    } else {
+        issue
+            .items
+            .iter()
+            .take(3)
+            .map(|it| it.title.replace('\u{2011}', "-"))
+            .collect()
     };
-    truncate(&(prefix + &leads.join(lang.choose("; ", "；"))), 160)
+    if leads.is_empty() {
+        return truncate_meta(&clean_title, limit, issue.lang);
+    }
+    if leads.len() == 1 {
+        if let Some(dek) = issue
+            .items
+            .first()
+            .map(|it| it.dek.replace('\u{2011}', "-"))
+            .filter(|s| !s.is_empty())
+        {
+            let combined = format!("{}: {dek}", leads[0]);
+            return truncate_meta(&combined, limit, issue.lang);
+        }
+    }
+    let prefix = match (issue.lang, issue.period_line.is_empty()) {
+        (Lang::En, true) => format!("{clean_title}: "),
+        (Lang::En, false) => format!(
+            "{clean_title} ({}, {} items): ",
+            issue.period_line, issue.items_count
+        ),
+        (Lang::ZhCn, true) => format!("{clean_title}："),
+        (Lang::ZhCn, false) => format!("{clean_title}（共 {} 条）：", issue.items_count),
+    };
+    truncate_meta(
+        &(prefix + &leads.join(issue.lang.choose("; ", "；"))),
+        limit,
+        issue.lang,
+    )
 }
 
-fn truncate(s: &str, limit: usize) -> String {
-    if s.chars().count() <= limit {
-        return s.into();
+fn truncate_meta(s: &str, limit: usize, lang: Lang) -> String {
+    let cleaned = clean_text(&s.replace('\u{2011}', "-"));
+    if cleaned.chars().count() <= limit {
+        return cleaned;
     }
-    let cut: String = s.chars().take(limit - 1).collect();
-    let cut = cut.trim_end_matches([' ', ',', ';', '·', '|', '—', '-']);
+    let mut cut: String = cleaned.chars().take(limit.saturating_sub(1)).collect();
+    if lang == Lang::En {
+        let next_char = cleaned.chars().nth(limit.saturating_sub(1));
+        if next_char.is_some_and(char::is_alphanumeric) {
+            if let Some(space) = cut.rfind(' ') {
+                if space >= cut.len() * 7 / 10 {
+                    cut.truncate(space);
+                }
+            }
+        }
+    }
+    let cut = cut.trim_end_matches([
+        ' ', ',', ';', ':', '·', '|', '—', '-', '，', '；', '：', '、', '。', '.',
+    ]);
     format!("{cut}…")
 }

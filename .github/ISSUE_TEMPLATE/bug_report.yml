@@ -32,7 +32,7 @@ body:
     attributes:
       label: Environment
       description: OS, Rust (and Node if editing `web/`) versions.
-      placeholder: "Ubuntu 24.04, Rust 1.88, Node 22"
+      placeholder: "Ubuntu 24.04, Rust 1.88, Node 24"
   - type: dropdown
     id: lang
     attributes:

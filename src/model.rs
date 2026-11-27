@@ -122,6 +122,9 @@ pub const RESERVED_SLUGS: &[&str] = &[
     "llms.txt",
     "llms-full.txt",
     "feed.xml",
+    "rss.xml",
+    "feed.json",
+    "og-card.png",
     "search-index.json",
     "zh",
     "en",
@@ -588,6 +591,8 @@ pub struct ParsedIssue {
     pub period_line: String,
     pub stats_line: String,
     pub motto: String,
+    #[serde(default)]
+    pub summary: String,
     pub description: String,
     pub top_tags: Vec<String>,
     pub must: Vec<ParsedMust>,

@@ -435,4 +435,65 @@ describe("built web/dist/worker.js runtime behavior", () => {
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     }
   });
+
+  it("preserves security headers on Accept: text/markdown, HEAD token estimate, and /.well-known/api-catalog", async () => {
+    const bodyText = "# Daily 2026-11-26\n\n" + "Detailed AI briefing text. ".repeat(40) + "\n";
+    const bodyBytes = Buffer.byteLength(bodyText, "utf8");
+    const richEnv = {
+      ASSETS: {
+        async fetch(req: Request): Promise<Response> {
+          const u = new URL(req.url);
+          if (u.pathname === "/daily/2026-11-26.md") {
+            return new Response(req.method === "HEAD" ? null : bodyText, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/markdown",
+                "Content-Length": String(bodyBytes),
+              },
+            });
+          }
+          if (u.pathname === "/.well-known/api-catalog") {
+            return new Response(JSON.stringify({ linkset: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          return new Response("Not Found", {
+            status: 404,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        },
+      },
+    };
+
+    const mdHead = await workerMod.default.fetch(
+      new Request("https://digest.example.com/daily/2026-11-26", {
+        method: "HEAD",
+        headers: { Accept: "text/markdown" },
+      }),
+      richEnv
+    );
+    expect(mdHead.status).toBe(200);
+    expect(mdHead.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+    expect(mdHead.headers.get("vary")).toBe("Accept");
+    expect(Number(mdHead.headers.get("x-markdown-tokens"))).toBe(
+      Math.floor(bodyBytes / 4)
+    );
+    expect(mdHead.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(mdHead.headers.get("x-frame-options")).toBe("DENY");
+    expect(mdHead.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await mdHead.text()).toBe("");
+
+    const catalog = await workerMod.default.fetch(
+      new Request("https://digest.example.com/.well-known/api-catalog"),
+      richEnv
+    );
+    expect(catalog.status).toBe(200);
+    expect(catalog.headers.get("content-type")).toBe(
+      'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"'
+    );
+    expect(catalog.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(catalog.headers.get("x-frame-options")).toBe("DENY");
+    expect(catalog.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 });

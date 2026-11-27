@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, SecondsFormat, TimeZone, Utc};
 use regex::Regex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -16,9 +16,9 @@ use crate::{
     assets,
     i18n::{self, Lang},
     model::{
-        atomic_write_text, clean_text, escape_json_for_script, files_under, html_escape as esc,
-        normalized_safe_url, strip_marked, xml_escape, ParsedIssue, ParsedItem, SearchDoc,
-        SiteConfig, WorkerConfig,
+        atomic_write_bytes, atomic_write_text, clean_text, escape_json_for_script, files_under,
+        html_escape as esc, normalized_safe_url, strip_marked, xml_escape, ParsedIssue, ParsedItem,
+        SearchDoc, SiteConfig, WorkerConfig,
     },
     parser::parse_digest_html_with_lang,
 };
@@ -28,6 +28,13 @@ pub const SEARCH_DOCS_URL: &str =
     "https://developers.cloudflare.com/ai-search/how-to/search-for-agents/";
 pub const SEARCH_INSTRUCTIONS: &str = "Use this search API to find relevant content across this site with keywords or natural-language queries, instead of crawling individual pages. Results are returned in Markdown.";
 pub const AGENT_SKILLS_SCHEMA: &str = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
+pub const PUBLISHER_NAME: &str = "AI Digest";
+pub const AUTHOR_NAME: &str = "eatingDream";
+pub const AUTHOR_URL: &str = "https://github.com/eatingDream";
+pub const REPO_URL: &str = "https://github.com/eatingDream/ai-digest";
+pub const API_CATALOG_PATH: &str = ".well-known/api-catalog";
+pub const OG_CARD_PATH: &str = "og-card.png";
+pub const SEARCH_BOTS: &[&str] = &["Googlebot", "Bingbot", "Applebot", "DuckDuckBot"];
 pub const AI_SEARCH_BOTS: &[&str] = &[
     "OAI-SearchBot",
     "ChatGPT-User",
@@ -50,6 +57,9 @@ pub const GEO_ROOT_FILES: &[&str] = &[
     "llms.txt",
     "llms-full.txt",
     "feed.xml",
+    "rss.xml",
+    "feed.json",
+    "og-card.png",
     "search-index.json",
     "_worker.js",
     "_routes.json",
@@ -204,6 +214,22 @@ fn plain_math(text: &str) -> String {
     result
 }
 
+fn clean_meta(text: &str) -> String {
+    plain_math(&text.replace('\u{2011}', "-"))
+}
+
+fn feed_sibling(feed_path: &str, filename: &str) -> String {
+    if let Some((dir, _)) = feed_path.rsplit_once('/') {
+        if dir.is_empty() {
+            format!("/{filename}")
+        } else {
+            format!("{dir}/{filename}")
+        }
+    } else {
+        format!("/{filename}")
+    }
+}
+
 fn archive_title(lang: Lang) -> &'static str {
     lang.choose(
         "AI Digest — Curated Daily & Weekly AI Briefings",
@@ -213,6 +239,44 @@ fn archive_title(lang: Lang) -> &'static str {
 fn archive_desc(lang: Lang) -> &'static str {
     lang.choose("Curated daily and weekly briefings on frontier AI models, research, systems engineering, and industry developments.",
         "每日与每周前沿 AI 模型发布、研究论文、工程实践与产业动态。")
+}
+
+fn archive_desc_for(lang: Lang, entries: &[&GeoPage]) -> String {
+    let latest = entries.iter().max_by(|a, b| {
+        a.date_iso
+            .cmp(&b.date_iso)
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+    let Some(latest) = latest else {
+        return archive_desc(lang).into();
+    };
+    let headline = latest
+        .parsed
+        .as_ref()
+        .and_then(|issue| {
+            issue
+                .must
+                .first()
+                .map(|m| m.title.as_str())
+                .or_else(|| issue.items.first().map(|it| it.title.as_str()))
+        })
+        .map(clean_meta)
+        .unwrap_or_default();
+    if headline.is_empty() {
+        return archive_desc(lang).into();
+    }
+    let count = entries.len();
+    let raw = match lang {
+        Lang::En => format!(
+            "Curated daily & weekly frontier AI briefings ({count} issues). Latest ({}): {headline}.",
+            latest.date_iso
+        ),
+        Lang::ZhCn => format!(
+            "每日与每周前沿 AI 简报归档（共 {count} 期）。最新（{}）：{headline}。",
+            latest.date_iso
+        ),
+    };
+    trunc(&raw, lang.choose(158, 88))
 }
 
 /// Escape Markdown control syntax and raw HTML angle brackets while preserving
@@ -251,64 +315,176 @@ fn md_escape_text(text: &str) -> String {
     out
 }
 
+fn publisher_json(origin: &str) -> Value {
+    let base = abs(origin, "/");
+    let og_image = abs(origin, &format!("/{OG_CARD_PATH}"));
+    json!({
+        "@type": "Organization",
+        "@id": format!("{base}#publisher"),
+        "name": PUBLISHER_NAME,
+        "url": base,
+        "logo": {
+            "@type": "ImageObject",
+            "url": og_image,
+            "width": 1200,
+            "height": 630
+        },
+        "founder": {
+            "@type": "Person",
+            "name": AUTHOR_NAME,
+            "url": AUTHOR_URL
+        },
+        "sameAs": [REPO_URL]
+    })
+}
+
 pub fn build_issue_json_ld(parsed: &ParsedIssue, page: &GeoPage, origin: &str) -> Value {
     let canonical = abs(origin, &page.canonical_path);
-    let mut result = json!({
-        "@context":"https://schema.org", "@type":"NewsArticle",
-        "headline":plain_math(&parsed.title), "description":plain_math(&parsed.description),
-        "inLanguage":page.lang, "url":canonical,
-        "mainEntityOfPage":{"@type":"WebPage","@id":canonical},
-        "isPartOf":{"@type":"WebSite","name":"AI Digest","url":abs(origin,"/")},
-        "publisher":{"@type":"Organization","name":"AI Digest","url":abs(origin,"/")},
-        "encoding":{"@type":"MediaObject","encodingFormat":"text/markdown","contentUrl":abs(origin,&md_path(page))}
+    let base = abs(origin, "/");
+    let og_image = abs(origin, &format!("/{OG_CARD_PATH}"));
+    let headline = clean_meta(&parsed.title);
+    let description = clean_meta(&parsed.description);
+    let mut article = json!({
+        "@type": "NewsArticle",
+        "@id": format!("{canonical}#article"),
+        "headline": headline,
+        "description": description,
+        "inLanguage": page.lang.hreflang(),
+        "url": canonical,
+        "mainEntityOfPage": {"@type": "WebPage", "@id": canonical},
+        "image": {"@type": "ImageObject", "url": og_image, "width": 1200, "height": 630},
+        "author": {"@type": "Person", "name": AUTHOR_NAME, "url": AUTHOR_URL},
+        "isPartOf": {"@type": "WebSite", "@id": format!("{base}#website"), "name": PUBLISHER_NAME, "url": base},
+        "publisher": publisher_json(origin),
+        "encoding": {"@type": "MediaObject", "encodingFormat": "text/markdown", "contentUrl": abs(origin, &md_path(page))}
     });
     if !page.date_iso.is_empty() {
-        result["datePublished"] = json!(page.date_iso);
-        result["dateModified"] = json!(page.date_iso);
+        article["datePublished"] = json!(page.date_iso);
+        article["dateModified"] = json!(page.date_iso);
     }
     if !parsed.top_tags.is_empty() {
-        result["keywords"] = json!(parsed.top_tags.join(", "));
+        article["keywords"] = json!(parsed.top_tags.join(", "));
     }
-    let items: Vec<_> = parsed.items.iter().take(15).enumerate().map(|(i, item)| {
-        let mut list = json!({"@type":"ListItem","position":i+1,"name":plain_math(&item.title),"url":item_url(&canonical,&item.id)});
-        if !item.dek.is_empty() { list["description"] = json!(trunc(&plain_math(&item.dek), 180)); }
-        list
-    }).collect();
+    let items: Vec<_> = parsed
+        .items
+        .iter()
+        .take(20)
+        .enumerate()
+        .map(|(i, item)| {
+            let mut list = json!({
+                "@type": "ListItem",
+                "position": i + 1,
+                "name": clean_meta(&item.title),
+                "url": item_url(&canonical, &item.id)
+            });
+            if !item.dek.is_empty() {
+                list["description"] = json!(trunc(&clean_meta(&item.dek), 180));
+            }
+            list
+        })
+        .collect();
     if !items.is_empty() {
-        result["mainEntity"] =
-            json!({"@type":"ItemList","numberOfItems":parsed.items_count,"itemListElement":items});
+        article["mainEntity"] = json!({
+            "@type": "ItemList",
+            "numberOfItems": parsed.items_count,
+            "itemListElement": items
+        });
     }
-    result
+    let edition_prefix =
+        canonical_edition_prefix(&page.canonical_path, &page.kind).unwrap_or_default();
+    let home_url = abs(origin, &format!("{edition_prefix}/"));
+    let kind_label = if page.kind == "weekly" {
+        page.lang.choose("Weekly", "周报")
+    } else {
+        page.lang.choose("Daily", "日报")
+    };
+    let kind_path = if page.kind.is_empty() {
+        format!("{edition_prefix}/")
+    } else {
+        format!("{edition_prefix}/{}/latest", page.kind)
+    };
+    let breadcrumbs = json!({
+        "@type": "BreadcrumbList",
+        "@id": format!("{canonical}#breadcrumb"),
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": PUBLISHER_NAME, "item": home_url},
+            {"@type": "ListItem", "position": 2, "name": kind_label, "item": abs(origin, &kind_path)},
+            {"@type": "ListItem", "position": 3, "name": headline, "item": canonical}
+        ]
+    });
+    json!({"@context": "https://schema.org", "@graph": [article, breadcrumbs]})
 }
 
 pub fn build_index_json_ld(
     page: &GeoPage,
     origin: &str,
     entries: &[&GeoPage],
-    search: bool,
+    _search: bool,
 ) -> Value {
     let canonical = abs(origin, &page.canonical_path);
     let base = abs(origin, "/");
-    let id = format!("{base}#website");
-    let description = archive_desc(page.lang);
-    let mut site = json!({"@type":"WebSite","@id":id,"name":"AI Digest","url":base,"description":description,"inLanguage":["zh-CN","en"]});
-    if search {
-        site["potentialAction"] = json!({
-            "@type":"SearchAction","target":{"@type":"EntryPoint","urlTemplate":abs(origin,"/.well-known/search?q={search_term_string}")},
-            "query-input":"required name=search_term_string"});
-    }
+    let site_id = format!("{base}#website");
+    let pub_id = format!("{base}#publisher");
+    let description = archive_desc_for(page.lang, entries);
+    let site = json!({
+        "@type": "WebSite",
+        "@id": site_id,
+        "name": PUBLISHER_NAME,
+        "url": base,
+        "description": archive_desc(page.lang),
+        "inLanguage": ["zh-Hans", "en"],
+        "publisher": {"@id": pub_id},
+        "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": abs(origin, "/?q={search_term_string}")
+            },
+            "query-input": "required name=search_term_string"
+        }
+    });
     let name = page
         .lang
         .choose("AI Digest — Archive", "AI Digest — 归档目录");
-    let mut collection = json!({"@type":"CollectionPage","@id":canonical,"name":name,"description":description,
-        "url":canonical,"inLanguage":page.lang,"isPartOf":{"@id":id}});
-    if !entries.is_empty() {
-        let items: Vec<_> = entries.iter().take(20).enumerate().map(|(i, row)|
-            json!({"@type":"ListItem","position":i+1,"name":title(row),"url":abs(origin,&row.canonical_path)})).collect();
-        collection["mainEntity"] =
-            json!({"@type":"ItemList","numberOfItems":entries.len(),"itemListElement":items});
+    let mut collection = json!({
+        "@type": "CollectionPage",
+        "@id": canonical,
+        "name": name,
+        "description": description,
+        "url": canonical,
+        "inLanguage": page.lang.hreflang(),
+        "isPartOf": {"@id": site_id},
+        "publisher": {"@id": pub_id}
+    });
+    if !page.date_iso.is_empty() {
+        collection["dateModified"] = json!(page.date_iso);
     }
-    json!({"@context":"https://schema.org","@graph":[site,collection]})
+    if !entries.is_empty() {
+        let mut sorted = entries.to_vec();
+        sort_recent(&mut sorted);
+        let items: Vec<_> = sorted
+            .iter()
+            .take(20)
+            .enumerate()
+            .map(|(i, row)| {
+                json!({
+                    "@type": "ListItem",
+                    "position": i + 1,
+                    "name": clean_meta(title(row)),
+                    "url": abs(origin, &row.canonical_path)
+                })
+            })
+            .collect();
+        collection["mainEntity"] = json!({
+            "@type": "ItemList",
+            "numberOfItems": sorted.len(),
+            "itemListElement": items
+        });
+    }
+    json!({
+        "@context": "https://schema.org",
+        "@graph": [publisher_json(origin), site, collection]
+    })
 }
 
 pub fn build_geo_head_tags(
@@ -321,9 +497,12 @@ pub fn build_geo_head_tags(
 ) -> String {
     let canonical = esc(&abs(origin, &page.canonical_path));
     let md = esc(&abs(origin, &md_path(page)));
-    let feed = esc(&abs(origin, &page.feed_path));
-    let title = esc(&plain_math(title));
-    let description = esc(&plain_math(description));
+    let atom_feed = esc(&abs(origin, &page.feed_path));
+    let rss_feed = esc(&abs(origin, &feed_sibling(&page.feed_path, "rss.xml")));
+    let json_feed = esc(&abs(origin, &feed_sibling(&page.feed_path, "feed.json")));
+    let og_image = esc(&abs(origin, &format!("/{OG_CARD_PATH}")));
+    let title = esc(&clean_meta(title));
+    let description = esc(&clean_meta(description));
     let mut tags = format!(
         r#"<meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
 <meta name="title" content="{title}">
@@ -331,9 +510,18 @@ pub fn build_geo_head_tags(
 <link rel="canonical" href="{canonical}">
 "#
     );
-    for (key, target) in &page.alternates {
+    let mut has_other_lang = false;
+    for (key, target) in page
+        .alternates
+        .iter()
+        .filter(|(k, _)| k.as_str() != "x-default")
+        .chain(page.alternates.get_key_value("x-default"))
+    {
         if normalized_safe_url(target).is_none() {
             continue;
+        }
+        if key != "x-default" && key != page.lang.hreflang() && key != page.lang.as_str() {
+            has_other_lang = true;
         }
         writeln!(
             tags,
@@ -346,7 +534,9 @@ pub fn build_geo_head_tags(
     write!(
         tags,
         r#"<link rel="alternate" type="text/markdown" title="Markdown" href="{md}">
-<link rel="alternate" type="application/atom+xml" title="AI Digest Atom Feed" href="{feed}">
+<link rel="alternate" type="application/atom+xml" title="AI Digest Atom Feed" href="{atom_feed}">
+<link rel="alternate" type="application/rss+xml" title="AI Digest RSS Feed" href="{rss_feed}">
+<link rel="alternate" type="application/feed+json" title="AI Digest JSON Feed" href="{json_feed}">
 "#
     )
     .unwrap();
@@ -367,14 +557,11 @@ pub fn build_geo_head_tags(
     write!(
         tags,
         r#"<meta property="og:type" content="{}">
-<meta property="og:site_name" content="AI Digest">
+<meta property="og:site_name" content="{PUBLISHER_NAME}">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{description}">
 <meta property="og:url" content="{canonical}">
 <meta property="og:locale" content="{}">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="{title}">
-<meta name="twitter:description" content="{description}">
 "#,
         if page.page_type == PageType::Issue {
             "article"
@@ -384,11 +571,35 @@ pub fn build_geo_head_tags(
         page.lang.choose("en_US", "zh_CN")
     )
     .unwrap();
-    if page.page_type == PageType::Issue && !page.date_iso.is_empty() {
+    if has_other_lang {
         writeln!(
             tags,
-            r#"<meta property="article:published_time" content="{}">"#,
-            esc(&page.date_iso)
+            r#"<meta property="og:locale:alternate" content="{}">"#,
+            page.lang.other().choose("en_US", "zh_CN")
+        )
+        .unwrap();
+    }
+    write!(
+        tags,
+        r#"<meta property="og:image" content="{og_image}">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{title}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:description" content="{description}">
+<meta name="twitter:image" content="{og_image}">
+<meta name="twitter:image:alt" content="{title}">
+"#
+    )
+    .unwrap();
+    if page.page_type == PageType::Issue && !page.date_iso.is_empty() {
+        let d = esc(&page.date_iso);
+        writeln!(
+            tags,
+            r#"<meta property="article:published_time" content="{d}">
+<meta property="article:modified_time" content="{d}">"#
         )
         .unwrap();
     }
@@ -475,14 +686,14 @@ pub fn decorate_public_html(
     page.parse_html(html)?;
     let (title, description, ld) = if let Some(issue) = &page.parsed {
         (
-            issue.title.as_str(),
-            issue.description.as_str(),
+            issue.title.clone(),
+            issue.description.clone(),
             build_issue_json_ld(issue, page, origin),
         )
     } else {
         (
-            archive_title(page.lang),
-            archive_desc(page.lang),
+            archive_title(page.lang).to_owned(),
+            archive_desc_for(page.lang, canonicals),
             build_index_json_ld(page, origin, canonicals, search),
         )
     };
@@ -490,8 +701,8 @@ pub fn decorate_public_html(
         html,
         page,
         origin,
-        title,
-        description,
+        &title,
+        &description,
         search,
         Some(&ld),
     ))
@@ -698,7 +909,9 @@ pub fn render_index_markdown(
         page.lang.choose("Agent Resources", "Agent 与订阅入口")
     )
     .unwrap();
-    writeln!(out, "- [llms.txt]({origin}/llms.txt): Site directory for AI agents\n- [llms-full.txt]({origin}/llms-full.txt): Expanded Markdown of recent issues\n- [Atom Feed]({}): Machine-readable subscription feed\n- [Sitemap]({origin}/sitemap.xml): Canonical XML sitemap", abs(origin, &page.feed_path)).unwrap();
+    let rss_url = abs(origin, &feed_sibling(&page.feed_path, "rss.xml"));
+    let json_feed_url = abs(origin, &feed_sibling(&page.feed_path, "feed.json"));
+    writeln!(out, "- [llms.txt]({origin}/llms.txt): Site directory for AI agents\n- [llms-full.txt]({origin}/llms-full.txt): Expanded Markdown of recent issues\n- [API Catalog]({origin}/{API_CATALOG_PATH}): RFC 9727 machine-readable endpoint catalog\n- [Atom Feed]({}): Atom subscription feed\n- [RSS Feed]({rss_url}): RSS 2.0 subscription feed\n- [JSON Feed]({json_feed_url}): JSON Feed 1.1 subscription feed\n- [Sitemap]({origin}/sitemap.xml): Canonical XML sitemap", abs(origin, &page.feed_path)).unwrap();
     if search {
         writeln!(out, "- [Search for Agents]({origin}/.well-known/search?q={{query}}): Site-wide keyword and natural-language Markdown search (`GET` and `QUERY`)").unwrap();
     }
@@ -755,7 +968,11 @@ pub fn render_robots_txt(origin: &str, signal: &str, allow_train: bool, encrypte
     if encrypted {
         return DISALLOW_ALL.into();
     }
-    let mut out = format!("# AI Digest public site — search and AI agent discovery\n# Content Signals: https://contentsignals.org/\nUser-agent: *\nContent-Signal: {signal}\nAllow: /\n\n# AI Search & Assistant Crawlers\n");
+    let mut out = format!("# AI Digest public site — search and AI agent discovery\n# Content Signals: https://contentsignals.org/\nUser-agent: *\nContent-Signal: {signal}\nAllow: /\n\n# Search Engine Crawlers\n");
+    for bot in SEARCH_BOTS {
+        write!(out, "User-agent: {bot}\nAllow: /\n\n").unwrap();
+    }
+    out.push_str("# AI Search & Assistant Crawlers\n");
     for bot in AI_SEARCH_BOTS {
         write!(out, "User-agent: {bot}\nAllow: /\n\n").unwrap();
     }
@@ -796,7 +1013,12 @@ pub fn render_sitemap_xml(pages: &[GeoPage], origin: &str) -> String {
             "    <changefreq>{frequency}</changefreq>\n    <priority>{priority}</priority>"
         )
         .unwrap();
-        for (key, target) in &page.alternates {
+        for (key, target) in page
+            .alternates
+            .iter()
+            .filter(|(k, _)| k.as_str() != "x-default")
+            .chain(page.alternates.get_key_value("x-default"))
+        {
             if normalized_safe_url(target).is_none() {
                 continue;
             }
@@ -812,6 +1034,186 @@ pub fn render_sitemap_xml(pages: &[GeoPage], origin: &str) -> String {
     }
     out.push_str("</urlset>\n");
     out
+}
+
+pub fn render_rss_feed(
+    entries: &[&GeoPage],
+    origin: &str,
+    feed_path: &str,
+    site_path: &str,
+    lang: Lang,
+    now: DateTime<Utc>,
+) -> String {
+    let feed = xml_escape(&abs(origin, feed_path));
+    let site = xml_escape(&abs(origin, site_path));
+    let title_text = match site_path {
+        "/zh/" => "AI Digest（中文）",
+        "/en/" => "AI Digest (English)",
+        _ => "AI Digest",
+    };
+    let subtitle = lang.choose(
+        "Curated daily and weekly frontier AI briefings",
+        "每日与每周前沿 AI 简报",
+    );
+    let valid_date = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok();
+    let rfc2822 = |d: NaiveDate| {
+        Utc.from_utc_datetime(&d.and_time(NaiveTime::MIN))
+            .to_rfc2822()
+    };
+    let updated = entries
+        .first()
+        .and_then(|p| valid_date(&p.date_iso))
+        .unwrap_or_else(|| now.date_naive());
+    let mut out = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>{}</title>
+    <link>{site}</link>
+    <description>{}</description>
+    <language>{}</language>
+    <lastBuildDate>{}</lastBuildDate>
+    <atom:link href="{feed}" rel="self" type="application/rss+xml" />
+"#,
+        xml_escape(title_text),
+        xml_escape(subtitle),
+        xml_escape(lang.hreflang()),
+        xml_escape(&rfc2822(updated)),
+    );
+    for entry in entries.iter().take(20) {
+        let url = xml_escape(&abs(origin, &entry.canonical_path));
+        let date = valid_date(&entry.date_iso).unwrap_or(updated);
+        write!(
+            out,
+            r#"    <item>
+      <title>{}</title>
+      <link>{url}</link>
+      <guid isPermaLink="true">{url}</guid>
+      <pubDate>{}</pubDate>
+      <description>{}</description>
+    </item>
+"#,
+            xml_escape(&clean_meta(title(entry))),
+            xml_escape(&rfc2822(date)),
+            xml_escape(&clean_meta(description(entry))),
+        )
+        .unwrap();
+    }
+    out.push_str("  </channel>\n</rss>\n");
+    out
+}
+
+pub fn render_json_feed(
+    entries: &[&GeoPage],
+    origin: &str,
+    feed_path: &str,
+    site_path: &str,
+    lang: Lang,
+) -> String {
+    let title_text = match site_path {
+        "/zh/" => "AI Digest（中文）",
+        "/en/" => "AI Digest (English)",
+        _ => "AI Digest",
+    };
+    let subtitle = lang.choose(
+        "Curated daily and weekly frontier AI briefings",
+        "每日与每周前沿 AI 简报",
+    );
+    let items: Vec<Value> = entries
+        .iter()
+        .take(20)
+        .map(|entry| {
+            let url = abs(origin, &entry.canonical_path);
+            let md = abs(origin, &md_path(entry));
+            let desc = clean_meta(description(entry));
+            let mut item = json!({
+                "id": url,
+                "url": url,
+                "title": clean_meta(title(entry)),
+                "summary": desc,
+                "content_text": desc,
+                "language": entry.lang.hreflang(),
+                "_markdown_url": md
+            });
+            if !entry.date_iso.is_empty() {
+                item["date_published"] = json!(format!("{}T00:00:00Z", entry.date_iso));
+            }
+            if let Some(parsed) = &entry.parsed {
+                if !parsed.top_tags.is_empty() {
+                    item["tags"] = json!(parsed.top_tags);
+                }
+            }
+            item
+        })
+        .collect();
+    let feed = json!({
+        "version": "https://jsonfeed.org/version/1.1",
+        "title": title_text,
+        "home_page_url": abs(origin, site_path),
+        "feed_url": abs(origin, feed_path),
+        "description": subtitle,
+        "language": lang.hreflang(),
+        "icon": abs(origin, "/favicon.svg"),
+        "authors": [{"name": AUTHOR_NAME, "url": AUTHOR_URL}],
+        "items": items
+    });
+    format!("{feed:#}\n")
+}
+
+pub fn render_api_catalog(origin: &str, search: bool, lang_paths: bool) -> String {
+    let mut items = vec![
+        json!({"href": abs(origin, "/sitemap.xml"), "type": "application/xml"}),
+        json!({"href": abs(origin, "/feed.xml"), "type": "application/atom+xml"}),
+        json!({"href": abs(origin, "/rss.xml"), "type": "application/rss+xml"}),
+        json!({"href": abs(origin, "/feed.json"), "type": "application/feed+json"}),
+    ];
+    if lang_paths {
+        for lang_dir in ["/zh/", "/en/"] {
+            items.push(json!({"href": abs(origin, &format!("{lang_dir}feed.xml")), "type": "application/atom+xml"}));
+            items.push(json!({"href": abs(origin, &format!("{lang_dir}rss.xml")), "type": "application/rss+xml"}));
+            items.push(json!({"href": abs(origin, &format!("{lang_dir}feed.json")), "type": "application/feed+json"}));
+        }
+    }
+    let mut root_entry = json!({
+        "anchor": abs(origin, "/"),
+        "describedby": [
+            {"href": abs(origin, "/llms.txt"), "type": "text/markdown"},
+            {"href": abs(origin, "/llms-full.txt"), "type": "text/markdown"}
+        ],
+        "service-doc": [
+            {"href": abs(origin, &format!("/{SKILL_PATH}")), "type": "text/markdown"}
+        ],
+        "item": items
+    });
+    if search {
+        root_entry["search"] = json!([
+            {"href": abs(origin, "/.well-known/search"), "type": "text/markdown"}
+        ]);
+    }
+    let mut linkset = vec![root_entry];
+    if search {
+        linkset.push(json!({
+            "anchor": abs(origin, "/.well-known/search"),
+            "service-doc": [
+                {"href": SEARCH_DOCS_URL, "type": "text/html"},
+                {"href": abs(origin, "/llms.txt"), "type": "text/markdown"}
+            ],
+            "service-desc": [
+                {"href": abs(origin, &format!("/{SKILL_PATH}")), "type": "text/markdown"}
+            ],
+            "describedby": [
+                {"href": abs(origin, "/search-index.json"), "type": "application/json"}
+            ]
+        }));
+    }
+    linkset.push(json!({
+        "anchor": abs(origin, &format!("/{SKILL_INDEX}")),
+        "service-desc": [
+            {"href": abs(origin, &format!("/{SKILL_PATH}")), "type": "text/markdown"}
+        ]
+    }));
+    let catalog = json!({"linkset": linkset});
+    format!("{catalog:#}\n")
 }
 
 pub fn render_atom_feed(
@@ -935,9 +1337,29 @@ pub fn render_llms_txt(
     };
     let mut out = format!("# AI Digest\n\n> Curated bilingual (zh-CN / en) daily and weekly briefings on frontier AI models, research papers, systems engineering, and industry developments. Pages have direct `.md` mirrors.{negotiation}\n\n## Agent Endpoints\n\n");
     if search {
-        writeln!(out, "- [Search for Agents]({origin}/.well-known/search?q={{query}}): Site-wide Markdown search supporting `GET ?q=...` and HTTP `QUERY` (`text/plain` or JSON `{{\"q\":\"...\"}}`).").unwrap();
+        writeln!(out, "- [Search for Agents]({origin}/.well-known/search?q={{query}}): Site-wide Markdown search supporting `GET ?q=...` and HTTP `QUERY` (`text/plain` or JSON `{{\"q\":\"...\"}}`).\n- [Archive Search Index JSON]({origin}/search-index.json): Structured JSON search index of all canonical items.").unwrap();
     }
-    writeln!(out, "- [Full Recent Digest Bundle]({origin}/llms-full.txt): Combined Markdown of the latest daily and weekly issues.\n- [Agent Skills Discovery]({origin}/{SKILL_INDEX}): Machine-readable usage instructions for AI agents.\n- [XML Sitemap]({origin}/sitemap.xml): Canonical URL index with `hreflang` alternates.\n- [Atom Feed]({origin}/feed.xml): Machine-readable subscription feed.\n").unwrap();
+    writeln!(out, "- [API Catalog (RFC 9727)]({origin}/{API_CATALOG_PATH}): Machine-readable `application/linkset+json` discovery catalog.\n- [Full Recent Digest Bundle]({origin}/llms-full.txt): Combined Markdown of the latest daily and weekly issues.\n- [Agent Skills Discovery]({origin}/{SKILL_INDEX}): Machine-readable usage instructions for AI agents.\n- [XML Sitemap]({origin}/sitemap.xml): Canonical URL index with reciprocal `hreflang` alternates.\n- [Atom Feed]({origin}/feed.xml) · [RSS 2.0 Feed]({origin}/rss.xml) · [JSON Feed 1.1]({origin}/feed.json): Machine-readable subscription feeds.").unwrap();
+    let archive_links: Vec<String> = entries
+        .iter()
+        .filter_map(|(&lang, list)| {
+            let first = list.first()?;
+            let prefix = canonical_edition_prefix(&first.canonical_path, &first.kind).unwrap_or("");
+            Some(format!(
+                "[{} Archive Index]({origin}{prefix}/index.md)",
+                lang.choose("English", "Chinese")
+            ))
+        })
+        .collect();
+    if !archive_links.is_empty() {
+        writeln!(
+            out,
+            "- {}: Full Markdown archive directory.",
+            archive_links.join(" · ")
+        )
+        .unwrap();
+    }
+    out.push('\n');
     let unique_aliases = dedup_aliases(aliases);
     if !unique_aliases.is_empty() {
         out.push_str("## Latest Briefings\n\n");
@@ -1045,7 +1467,14 @@ pub fn render_agent_skill_files(
     if search {
         writeln!(skill, "\n## Site-Wide Search\n\n```sh\ncurl --get \"{origin}/.well-known/search\" --data-urlencode \"q=reasoning models\"\n```\n\nHTTP `QUERY` accepts `text/plain` or JSON `{{\"q\": \"...\"}}`.").unwrap();
     }
-    writeln!(skill, "\n## Feeds & Discovery\n\n- Expanded recent bundle at `{origin}/llms-full.txt`\n- XML Sitemap at `{origin}/sitemap.xml`\n- Atom Feed at `{origin}/feed.xml`").unwrap();
+    writeln!(skill, "\n## Feeds & Discovery\n\n- RFC 9727 API Catalog at `{origin}/{API_CATALOG_PATH}`\n- Expanded recent bundle at `{origin}/llms-full.txt`\n- XML Sitemap at `{origin}/sitemap.xml`\n- Atom Feed at `{origin}/feed.xml`, RSS 2.0 at `{origin}/rss.xml`, JSON Feed 1.1 at `{origin}/feed.json`").unwrap();
+    if search {
+        writeln!(
+            skill,
+            "- Archive JSON index at `{origin}/search-index.json`"
+        )
+        .unwrap();
+    }
     let digest = format!("sha256:{}", hex::encode(Sha256::digest(skill.as_bytes())));
     let index = json!({"$schema":AGENT_SKILLS_SCHEMA,"skills":[{"name":"ai-digest-reader","type":"skill-md",
         "description":"Read and search curated daily and weekly AI briefings from AI Digest using native Markdown endpoints and llms.txt.",
@@ -1103,8 +1532,9 @@ pub fn build_search_index(pages: &[GeoPage], origin: &str, now: DateTime<Utc>) -
 }
 
 pub fn build_link_header_for(search: bool, feed: &str, alternate_md: &str) -> String {
+    let json_feed = feed_sibling(feed, "feed.json");
     let mut header = format!(
-        r#"</llms.txt>; rel="describedby"; type="text/markdown", <{alternate_md}>; rel="alternate"; type="text/markdown", </sitemap.xml>; rel="sitemap"; type="application/xml", <{feed}>; rel="alternate"; type="application/atom+xml""#
+        r#"</llms.txt>; rel="describedby"; type="text/markdown", <{alternate_md}>; rel="alternate"; type="text/markdown", </{API_CATALOG_PATH}>; rel="api-catalog"; type="application/linkset+json", </sitemap.xml>; rel="sitemap"; type="application/xml", <{feed}>; rel="alternate"; type="application/atom+xml", <{json_feed}>; rel="alternate"; type="application/feed+json""#
     );
     if search {
         header.push_str(r#", </.well-known/search>; rel="search"; type="text/markdown""#);
@@ -1119,27 +1549,51 @@ pub fn build_link_header(search: bool, feed: &str) -> String {
 pub fn render_geo_headers(signal: &str, link: &str) -> String {
     let mut out = format!("/*\n  Content-Signal: {signal}\n  Link: {link}\n  Vary: Accept\n/404.html\n  X-Robots-Tag: noindex, nofollow\n  Cache-Control: no-store\n/robots.txt\n  Cache-Control: public, max-age=3600\n");
     for (path, kind, age) in [
-        ("/sitemap.xml", "application/xml", 3600),
-        ("/feed.xml", "application/atom+xml", 1800),
-        ("/zh/feed.xml", "application/atom+xml", 1800),
-        ("/en/feed.xml", "application/atom+xml", 1800),
-        ("/llms.txt", "text/plain", 1800),
-        ("/llms-full.txt", "text/plain", 1800),
-        ("/search-index.json", "application/json", 1800),
+        ("/sitemap.xml", "application/xml; charset=utf-8", 3600),
+        ("/feed.xml", "application/atom+xml; charset=utf-8", 1800),
+        ("/zh/feed.xml", "application/atom+xml; charset=utf-8", 1800),
+        ("/en/feed.xml", "application/atom+xml; charset=utf-8", 1800),
+        ("/rss.xml", "application/rss+xml; charset=utf-8", 1800),
+        ("/zh/rss.xml", "application/rss+xml; charset=utf-8", 1800),
+        ("/en/rss.xml", "application/rss+xml; charset=utf-8", 1800),
+        ("/feed.json", "application/feed+json; charset=utf-8", 1800),
+        (
+            "/zh/feed.json",
+            "application/feed+json; charset=utf-8",
+            1800,
+        ),
+        (
+            "/en/feed.json",
+            "application/feed+json; charset=utf-8",
+            1800,
+        ),
+        ("/og-card.png", "image/png", 86400),
+        ("/llms.txt", "text/plain; charset=utf-8", 1800),
+        ("/llms-full.txt", "text/plain; charset=utf-8", 1800),
+        (
+            "/search-index.json",
+            "application/json; charset=utf-8",
+            1800,
+        ),
+        (
+            "/.well-known/api-catalog",
+            r#"application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727""#,
+            3600,
+        ),
         (
             "/.well-known/agent-skills/index.json",
-            "application/json",
+            "application/json; charset=utf-8",
             3600,
         ),
         (
             "/.well-known/agent-skills/ai-digest-reader/SKILL.md",
-            "text/markdown",
+            "text/markdown; charset=utf-8",
             3600,
         ),
     ] {
         writeln!(
             out,
-            "{path}\n  Content-Type: {kind}; charset=utf-8\n  Cache-Control: public, max-age={age}"
+            "{path}\n  Content-Type: {kind}\n  Cache-Control: public, max-age={age}"
         )
         .unwrap();
     }
@@ -1148,8 +1602,12 @@ pub fn render_geo_headers(signal: &str, link: &str) -> String {
 
 pub fn render_pages_routes() -> String {
     let data = json!({"version":1,"include":["/*"],"exclude":[
-        "/favicon.svg","/robots.txt","/sitemap.xml","/feed.xml","/zh/feed.xml","/en/feed.xml","/llms.txt","/llms-full.txt",
-        "/search-index.json","/.well-known/agent-skills/*"]});
+        "/favicon.svg","/og-card.png","/robots.txt","/sitemap.xml",
+        "/feed.xml","/zh/feed.xml","/en/feed.xml",
+        "/rss.xml","/zh/rss.xml","/en/rss.xml",
+        "/feed.json","/zh/feed.json","/en/feed.json",
+        "/llms.txt","/llms-full.txt","/search-index.json",
+        "/.well-known/api-catalog","/.well-known/agent-skills/*"]});
     format!("{data:#}\n")
 }
 
@@ -1573,24 +2031,36 @@ pub fn write_public_geo_bundle(
     } else {
         Lang::En
     };
+    let primary_list = entries.get(&primary).map_or(&[][..], Vec::as_slice);
     generated.insert(
         "feed.xml".into(),
-        render_atom_feed(
-            entries.get(&primary).map_or(&[][..], Vec::as_slice),
-            &origin,
-            "/feed.xml",
-            "/",
-            primary,
-            now,
-        ),
+        render_atom_feed(primary_list, &origin, "/feed.xml", "/", primary, now),
+    );
+    generated.insert(
+        "rss.xml".into(),
+        render_rss_feed(primary_list, &origin, "/rss.xml", "/", primary, now),
+    );
+    generated.insert(
+        "feed.json".into(),
+        render_json_feed(primary_list, &origin, "/feed.json", "/", primary),
     );
     if lang_paths {
         for (lang, path) in [(Lang::ZhCn, "/zh/"), (Lang::En, "/en/")] {
             if let Some(list) = entries.get(&lang) {
-                let feed = format!("{path}feed.xml");
+                let atom = format!("{path}feed.xml");
                 generated.insert(
-                    feed.trim_start_matches('/').into(),
-                    render_atom_feed(list, &origin, &feed, path, lang, now),
+                    atom.trim_start_matches('/').into(),
+                    render_atom_feed(list, &origin, &atom, path, lang, now),
+                );
+                let rss = format!("{path}rss.xml");
+                generated.insert(
+                    rss.trim_start_matches('/').into(),
+                    render_rss_feed(list, &origin, &rss, path, lang, now),
+                );
+                let json_f = format!("{path}feed.json");
+                generated.insert(
+                    json_f.trim_start_matches('/').into(),
+                    render_json_feed(list, &origin, &json_f, path, lang),
                 );
             }
         }
@@ -1603,6 +2073,10 @@ pub fn write_public_geo_bundle(
     generated.insert(
         "llms-full.txt".into(),
         render_llms_full_txt(&origin, &canonical_markdown, search),
+    );
+    generated.insert(
+        API_CATALOG_PATH.into(),
+        render_api_catalog(&origin, search, lang_paths),
     );
     let unique_aliases = dedup_aliases(&aliases);
     let zh_latest = latest_md_for_lang(Lang::ZhCn, &unique_aliases, &entries);
@@ -1640,6 +2114,7 @@ pub fn write_public_geo_bundle(
     );
 
     let mut keep: BTreeSet<_> = generated.keys().cloned().collect();
+    keep.insert(PathBuf::from(OG_CARD_PATH));
     if worker_enabled(config) {
         keep.extend(["_worker.js".into(), "_routes.json".into()]);
     }
@@ -1655,6 +2130,16 @@ pub fn write_public_geo_bundle(
         }
         written.push(path);
     }
+    let og_path = public.join(OG_CARD_PATH);
+    match fs::read(&og_path) {
+        Ok(old) if old == assets::OG_CARD_PNG => {}
+        Ok(_) => atomic_write_bytes(&og_path, assets::OG_CARD_PNG)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            atomic_write_bytes(&og_path, assets::OG_CARD_PNG)?
+        }
+        Err(e) => return Err(e.into()),
+    }
+    written.push(og_path);
     Ok(written)
 }
 

@@ -30,9 +30,9 @@ It is **not** a hosted SaaS newsletter, a cookie-scraping X bot, or a heavy JS f
 ## Features
 
 - **Single self-contained Rust binary** — async source recall (`fetch`), deduplication ledger (`ledger`), curation helpers (`cand`, `page`, `xparse`), HTML renderer (`render`), static site & GEO publisher (`publish`), and dual-runtime verifier (`verify`) with zero runtime interpreter dependencies.
-- **High-craft wide editorial reader** — warm light/dark themes with zero white flash, clean editorial stream with a highlighted lead story, always-expanded Cmd+F-friendly sidebar TOC, instant distance-adaptive jumps, anchor-locked ZH/EN language switching, unified pill search drawer (`/`), keyboard navigation (`j`/`k`/`[`/`]`), and inline LaTeX math.
-- **Native bilingual routes & static `latest`** — pairs `<stem>.en.md` into symmetric `/zh/` & `/en/` site trees (or single-file `--md-en` bilingual HTML) with direct HTTP 200 `/daily/latest` and `/weekly/latest` pages.
-- **Public-first Level 5/5 GEO & Agent Readiness** — emits `robots.txt` Content Signals, `sitemap.xml`, `llms.txt`/`llms-full.txt`, Atom feeds, JSON-LD, `.md` mirrors, Agent Skills discovery, and a Cloudflare Pages `_worker.js` supporting `Accept: text/markdown` and `GET`/`HEAD`/`QUERY` `/.well-known/search`.
+- **Broadsheet editorial reader** — warm light/dark themes with zero white flash, issue summary lead, highlighted `LEAD` story with multi-source citation pills, 3-tier font scaling (`S` / `M` / `L`), always-expanded Cmd+F-friendly sidebar TOC, instant distance-adaptive jumps, anchor-locked ZH/EN language switching, unified pill search drawer (`/`), keyboard navigation (`j`/`k`/`[`/`]`), and inline LaTeX math.
+- **Native bilingual routes & static `latest`** — pairs `<stem>.en.md` into symmetric `/zh/` & `/en/` site trees (or single-file `--md-en` bilingual HTML) with `hreflang` alternates (including `x-default`) and direct HTTP 200 `/daily/latest` and `/weekly/latest` pages.
+- **Public-first Level 5/5 GEO & Agent Readiness** — emits `robots.txt` Content Signals, `sitemap.xml`, `llms.txt`/`llms-full.txt`, Atom (`/feed.xml`), RSS 2.0 (`/rss.xml`), and JSON Feed 1.1 (`/feed.json`) feeds, JSON-LD structured data, `.md` mirrors, `/.well-known/api-catalog` (RFC 9727), Agent Skills discovery, and a Cloudflare Pages `_worker.js` supporting `Accept: text/markdown` and `GET`/`HEAD`/`QUERY` `/.well-known/search`.
 - **Hardened security & opt-in encryption** — build-time SHA-256 hash-locked CSP (zero `'unsafe-inline'` scripts), strict security headers, Markdown XSS neutralization, entity-aware privacy scanning, and one-flag client-side AES-256-GCM encryption (`--init --encrypt`).
 - **~155 zero-key open sources** — RSS/Atom, arXiv, Hugging Face, GitHub, lab blogs, HN, and Reddit out of the box, with optional read-only X recall requiring no personal cookies.
 
@@ -62,7 +62,11 @@ AI Digest is built to be operated and read directly by coding agents (Claude Cod
 npx skills add eatingDream/ai-digest
 ```
 
-Point your agent to [`llms.txt`](llms.txt), [`skills/ai-digest/SKILL.md`](skills/ai-digest/SKILL.md), [`docs/ai-guide.md`](docs/ai-guide.md) (full config table, env vars, CLI matrix & safe X recall), or [`AGENTS.md`](AGENTS.md). Every public deployed site also exposes `/llms.txt`, `Accept: text/markdown`, and `/.well-known/search?q=<query>`.
+Point your agent to [`llms.txt`](llms.txt), [`skills/ai-digest/SKILL.md`](skills/ai-digest/SKILL.md), [`docs/ai-guide.md`](docs/ai-guide.md) (full config table, env vars, CLI matrix & safe X recall), or [`AGENTS.md`](AGENTS.md). Every public deployed site also exposes:
+
+- `/llms.txt`, `/llms-full.txt`, and `/.well-known/api-catalog` (RFC 9727 endpoint catalog)
+- `Accept: text/markdown` content negotiation, per-page `.md` mirrors, and `/.well-known/search?q=<query>`
+- `/feed.xml` (Atom), `/rss.xml` (RSS 2.0), `/feed.json` (JSON Feed 1.1), `sitemap.xml` with `hreflang`, and JSON-LD schema markup
 
 ## Safety & Privacy
 

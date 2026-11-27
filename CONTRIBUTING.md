@@ -13,7 +13,7 @@ Thanks for helping out. [简体中文](CONTRIBUTING.zh-CN.md)
 ## Local checks
 
 ```bash
-# Frontend (Node 22+)
+# Frontend (Node 24+)
 npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web run build
