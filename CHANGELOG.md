@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.3.0](https://github.com/eatingDream/ai-digest/compare/v1.2.0...v1.3.0) (2026-11-28)
+
+
+### Features
+
+* align UI with shared Lucid Indigo ui-theme.json config ([#73](https://github.com/eatingDream/ai-digest/issues/73)) ([bc9cf03](https://github.com/eatingDream/ai-digest/commit/bc9cf033bc8e77b34bba1880f8d8f5ce5eb07544))
+
 ## [1.2.0](https://github.com/eatingDream/ai-digest/compare/v1.1.1...v1.2.0) (2026-11-27)
 
 
