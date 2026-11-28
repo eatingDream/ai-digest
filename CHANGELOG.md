@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.4.0](https://github.com/eatingDream/ai-digest/compare/v1.3.0...v1.4.0) (2026-11-28)
+
+
+### Features
+
+* **geo:** overhaul SEO titles, sitemap freshness, IndexNow, and compact nav UI ([#75](https://github.com/eatingDream/ai-digest/issues/75)) ([c6ec6f0](https://github.com/eatingDream/ai-digest/commit/c6ec6f089e88abb528966b3f29cf1f45791fe5f7))
+
 ## [1.3.0](https://github.com/eatingDream/ai-digest/compare/v1.2.0...v1.3.0) (2026-11-28)
 
 
