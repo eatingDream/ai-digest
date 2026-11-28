@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The project uses [Semantic Versioning](https://semver.org/) and updates this file automatically via [Release Please](https://github.com/googleapis/release-please) from Conventional Commits.
 
+## [1.4.1](https://github.com/eatingDream/ai-digest/compare/v1.4.0...v1.4.1) (2026-11-28)
+
+
+### Performance Improvements
+
+* **edge:** cache HTML/Markdown in caches.default and exclude static assets ([#77](https://github.com/eatingDream/ai-digest/issues/77)) ([086f5af](https://github.com/eatingDream/ai-digest/commit/086f5af5fcb542203a56deef292bcd68e4ac610b))
+
 ## [1.4.0](https://github.com/eatingDream/ai-digest/compare/v1.3.0...v1.4.0) (2026-11-28)
 
 
