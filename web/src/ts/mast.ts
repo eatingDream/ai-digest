@@ -184,13 +184,19 @@ export function initMast(): MastController {
     return "Theme: System";
   };
 
+  const resolveEffectiveTheme = (mode: ThemeMode): "dark" | "light" =>
+    mode === "dark" || (mode !== "light" && Boolean(darkQuery?.matches))
+      ? "dark"
+      : "light";
+
   const syncThemeMeta = (mode: ThemeMode): void => {
-    const dk =
-      mode === "dark" || (mode !== "light" && Boolean(darkQuery?.matches));
+    const dk = resolveEffectiveTheme(mode) === "dark";
     const cs = dk ? "dark" : "light";
     root.style.colorScheme = cs;
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dk ? "#121110" : "#f6f3ec");
+    if (meta) {
+      meta.setAttribute("content", dk ? __THEME_DARK_BG__ : __THEME_LIGHT_BG__);
+    }
     const csMeta = document.querySelector('meta[name="color-scheme"]');
     if (csMeta) csMeta.setAttribute("content", cs);
   };
@@ -204,40 +210,136 @@ export function initMast(): MastController {
     }
   };
 
-  const applyTheme = (mode: ThemeMode, animateSwap: boolean): void => {
-    if (animateSwap) {
-      root.classList.add("theme-swap");
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          root.classList.remove("theme-swap");
-        });
-      });
-    }
+  const applyThemeDom = (mode: ThemeMode): void => {
     if (mode === "system") {
       delete root.dataset.theme;
     } else {
       root.dataset.theme = mode;
     }
+    syncThemeMeta(mode);
+  };
+
+  let activeVt: {
+    skipTransition?: () => void;
+    finished?: Promise<void>;
+  } | null = null;
+
+  let curTheme = readTheme();
+  applyThemeDom(curTheme);
+  syncThemeButtons(curTheme);
+
+  const cycleTheme = (ev?: MouseEvent): void => {
+    const prevEffective = resolveEffectiveTheme(curTheme);
+    const idx = THEME_MODES.indexOf(curTheme);
+    const nextMode = THEME_MODES[(idx + 1) % THEME_MODES.length];
+    const nextEffective = resolveEffectiveTheme(nextMode);
+    curTheme = nextMode;
     try {
-      localStorage.setItem(THEME_KEY, mode);
+      localStorage.setItem(THEME_KEY, nextMode);
     } catch {
       // Ignore storage errors.
     }
-    syncThemeMeta(mode);
-    syncThemeButtons(mode);
-  };
+    syncThemeButtons(nextMode);
 
-  let curTheme = readTheme();
-  applyTheme(curTheme, false);
+    if (prevEffective === nextEffective) {
+      applyThemeDom(nextMode);
+      return;
+    }
 
-  const cycleTheme = (): void => {
-    const idx = THEME_MODES.indexOf(curTheme);
-    curTheme = THEME_MODES[(idx + 1) % THEME_MODES.length];
-    applyTheme(curTheme, true);
+    const docWithVt = document as Document & {
+      startViewTransition?: (cb: () => void) => {
+        ready: Promise<void>;
+        finished?: Promise<void>;
+        skipTransition?: () => void;
+      };
+    };
+
+    const hadActiveVt = activeVt !== null;
+    if (hadActiveVt) {
+      try {
+        activeVt?.skipTransition?.();
+      } catch {
+        // Ignore skip errors.
+      }
+      activeVt = null;
+      root.classList.remove("is-theme-vt");
+    }
+
+    if (
+      !reducedMotion &&
+      !hadActiveVt &&
+      typeof docWithVt.startViewTransition === "function"
+    ) {
+      const trigger =
+        (ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null) ??
+        themeBtns.find((b) => b.offsetParent !== null) ??
+        themeBtns[0] ??
+        null;
+      const rect = trigger?.getBoundingClientRect();
+      const x =
+        ev && ev.detail > 0
+          ? ev.clientX
+          : rect
+            ? rect.left + rect.width / 2
+            : Math.max(24, window.innerWidth - 56);
+      const y =
+        ev && ev.detail > 0
+          ? ev.clientY
+          : rect
+            ? rect.top + rect.height / 2
+            : 26;
+      const endRadius = Math.hypot(
+        Math.max(x, window.innerWidth - x),
+        Math.max(y, window.innerHeight - y)
+      );
+      root.classList.add("is-theme-vt");
+      const vt = docWithVt.startViewTransition(() => {
+        if (curTheme !== nextMode) return;
+        applyThemeDom(nextMode);
+      });
+      activeVt = vt;
+      vt.finished
+        ?.catch(() => {})
+        .finally(() => {
+          if (activeVt === vt) {
+            activeVt = null;
+            root.classList.remove("is-theme-vt");
+          }
+        });
+      vt.ready
+        .then(() => {
+          root.animate(
+            {
+              clipPath: [
+                `circle(0px at ${x}px ${y}px)`,
+                `circle(${endRadius}px at ${x}px ${y}px)`,
+              ],
+            },
+            {
+              duration: __MOTION_THEME_REVEAL_MS__,
+              delay: __MOTION_THEME_REVEAL_DELAY_MS__,
+              easing: __MOTION_EASE__,
+              fill: "both",
+              pseudoElement: "::view-transition-new(root)",
+            }
+          );
+        })
+        .catch(() => {});
+    } else if (!reducedMotion) {
+      root.classList.add("theme-swap");
+      applyThemeDom(nextMode);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          root.classList.remove("theme-swap");
+        });
+      });
+    } else {
+      applyThemeDom(nextMode);
+    }
   };
 
   for (const btn of themeBtns) {
-    btn.addEventListener("click", cycleTheme);
+    btn.addEventListener("click", (ev) => cycleTheme(ev));
   }
   darkQuery?.addEventListener?.("change", () => {
     if (curTheme === "system") syncThemeMeta("system");

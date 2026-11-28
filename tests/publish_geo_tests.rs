@@ -593,13 +593,13 @@ fn incremental_encryption_cache_rotation_root_latest_and_legacy_node_verify() {
 <head>
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow, noarchive">
-<meta name="theme-color" content="#faf8f4">
+<meta name="theme-color" content="#F8FAFD">
 <title>{{pw_title}}</title>
 <script>
 (function () {
   var t = localStorage.getItem("digest-theme");
   var m = document.querySelector('meta[name="theme-color"]');
-  if (m && t === "dark") m.setAttribute("content", "#141311");
+  if (m && t === "dark") m.setAttribute("content", "#0B0D12");
 })();
 </script>
 </head>

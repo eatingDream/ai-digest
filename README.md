@@ -7,10 +7,10 @@
 **A single-binary Rust + TypeScript editorial pipeline that turns ~155 open AI sources into a daily & weekly digest published as a hardened, GEO-ready static site.**
 
 [![CI](https://github.com/eatingDream/ai-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/eatingDream/ai-digest/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/eatingDream/ai-digest?color=b85432)](https://github.com/eatingDream/ai-digest/releases)
-![Rust](https://img.shields.io/badge/rust-1.88%2B-dea584?logo=rust&logoColor=1f1c18)
+[![Release](https://img.shields.io/github/v/release/eatingDream/ai-digest?color=2952cc)](https://github.com/eatingDream/ai-digest/releases)
+![Rust](https://img.shields.io/badge/rust-1.88%2B-3b82f6?logo=rust&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/typescript-5.x-3178c6?logo=typescript&logoColor=white)
-[![License: MIT](https://img.shields.io/badge/license-MIT-4f6d5a)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
 English | [简体中文](README.zh-CN.md) · [Live Demo](https://ai-digest-demo.pages.dev) · [Releases](https://github.com/eatingDream/ai-digest/releases) · [AI Guide (`llms.txt`)](llms.txt)
 
@@ -30,7 +30,7 @@ It is **not** a hosted SaaS newsletter, a cookie-scraping X bot, or a heavy JS f
 ## Features
 
 - **Single self-contained Rust binary** — async source recall (`fetch`), deduplication ledger (`ledger`), curation helpers (`cand`, `page`, `xparse`), HTML renderer (`render`), static site & GEO publisher (`publish`), and dual-runtime verifier (`verify`) with zero runtime interpreter dependencies.
-- **Broadsheet editorial reader** — warm light/dark themes with zero white flash, issue summary lead, highlighted `LEAD` story with multi-source citation pills, 3-tier font scaling (`S` / `M` / `L`), always-expanded Cmd+F-friendly sidebar TOC, instant distance-adaptive jumps, anchor-locked ZH/EN language switching, unified pill search drawer (`/`), keyboard navigation (`j`/`k`/`[`/`]`), and inline LaTeX math.
+- **Broadsheet editorial reader** — config-driven Lucid Indigo dark/light themes (`web/ui-theme.json`) with zero white flash and circular view-transition reveal, issue summary lead, highlighted `LEAD` story with multi-source citation pills, 3-tier font scaling (`S` / `M` / `L`), always-expanded Cmd+F-friendly sidebar TOC, instant distance-adaptive jumps, anchor-locked ZH/EN language switching, unified pill search drawer (`/`), keyboard navigation (`j`/`k`/`[`/`]`), and inline LaTeX math.
 - **Native bilingual routes & static `latest`** — pairs `<stem>.en.md` into symmetric `/zh/` & `/en/` site trees (or single-file `--md-en` bilingual HTML) with `hreflang` alternates (including `x-default`) and direct HTTP 200 `/daily/latest` and `/weekly/latest` pages.
 - **Public-first Level 5/5 GEO & Agent Readiness** — emits `robots.txt` Content Signals, `sitemap.xml`, `llms.txt`/`llms-full.txt`, Atom (`/feed.xml`), RSS 2.0 (`/rss.xml`), and JSON Feed 1.1 (`/feed.json`) feeds, JSON-LD structured data, `.md` mirrors, `/.well-known/api-catalog` (RFC 9727), Agent Skills discovery, and a Cloudflare Pages `_worker.js` supporting `Accept: text/markdown` and `GET`/`HEAD`/`QUERY` `/.well-known/search`.
 - **Hardened security & opt-in encryption** — build-time SHA-256 hash-locked CSP (zero `'unsafe-inline'` scripts), strict security headers, Markdown XSS neutralization, entity-aware privacy scanning, and one-flag client-side AES-256-GCM encryption (`--init --encrypt`).

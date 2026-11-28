@@ -505,7 +505,7 @@ fn builtin_unlock(options: UnlockOptions<'_>) -> Result<String> {
 <html lang="{lang}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#121110">
+<meta name="theme-color" content="{theme_dark}">
 <meta name="color-scheme" content="dark">
 <script>{boot}</script>
 <title>{title}</title>
@@ -529,6 +529,7 @@ fn builtin_unlock(options: UnlockOptions<'_>) -> Result<String> {
 <script>{unlock}</script>
 </body></html>
 "##,
+        theme_dark = assets::THEME_DARK_BG,
         boot = assets::BOOT_JS,
         css = assets::UNLOCK_CSS,
         unlock = assets::UNLOCK_JS,

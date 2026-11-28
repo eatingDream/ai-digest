@@ -1,179 +1,180 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" width="1120" height="620" role="img" aria-labelledby="t d" font-family="-apple-system,'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" width="1120" height="620" role="img" aria-labelledby="t d" font-family="-apple-system,'SF Pro Text','PingFang SC','Noto Sans CJK SC',BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif">
   <title id="t">AI Digest 架构图</title>
-  <desc id="d">约 155 个公开信源与可选安全 X 召回汇入单文件 Rust 二进制 ai-digest 并行异步抓取与去重初筛层，经由 LLM 一手核验精选产出双语 Markdown，再由内置 TypeScript/CSS 前端资产渲染为单文件 HTML 并通过 Level 5/5 GEO、哈希锁定 CSP 与可选 AES-256-GCM 加密发布至 Cloudflare Pages，最后由 Rust 与 Node 双运行时端到端校验。</desc>
+  <desc id="d">约 155 个公开信源与可选安全 X 召回汇入单文件 Rust 二进制 ai-digest 并行异步抓取与去重初筛层，经由 LLM 一手核验精选产出双语 Markdown，再由配置驱动的 Lucid Indigo TypeScript/CSS 前端资产渲染为单文件 HTML 并通过 Level 5/5 GEO、哈希锁定 CSP 与可选 AES-256-GCM 加密发布至 Cloudflare Pages，最后由 Rust 与 Node 双运行时端到端校验。</desc>
   <defs>
-    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#b85432"/></marker>
-    <marker id="ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#8b7e72"/></marker>
-    <filter id="sh" x="-4%" y="-6%" width="108%" height="118%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#2a241e" flood-opacity=".08"/></filter>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#2952CC"/></marker>
+    <marker id="ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#64748B"/></marker>
+    <filter id="sh" x="-4%" y="-6%" width="108%" height="118%"><feDropShadow dx="0" dy="1.5" stdDeviation="2.5" flood-color="#0F1420" flood-opacity=".06"/></filter>
   </defs>
 
-  <!-- Warm paper canvas -->
-  <rect x="0.5" y="0.5" width="1119" height="619" rx="18" fill="#faf8f4" stroke="#e4ddd2"/>
+  <!-- Lucid Indigo light slate canvas -->
+  <rect x="0.5" y="0.5" width="1119" height="619" rx="18" fill="#F8FAFD" stroke="#DCE4F2"/>
 
   <!-- Brand emblem + title -->
   <g transform="translate(24,18)">
-    <rect width="30" height="30" rx="8" fill="#b85432"/>
-    <path d="M15 6.2 8.7 23.4h3.2l1.3-3.8h3.6l1.3 3.8h3.2L15 6.2Zm-1 10.6 1-3.3 1 3.3h-2Z" fill="#faf8f4"/>
-    <circle cx="22.8" cy="7.8" r="2.2" fill="#f3c6a5"/>
+    <rect width="30" height="30" rx="8" fill="#0B0D12" stroke="#6895FF" stroke-opacity="0.55" stroke-width="1.2"/>
+    <rect x="6.5" y="7" width="17" height="3.5" rx="1.2" fill="#6895FF"/>
+    <path d="M7 14.5h16M7 18.8h12.5M7 23h8.8" stroke="#F2F4F8" stroke-width="1.9" stroke-linecap="round"/>
+    <circle cx="21.5" cy="23" r="1.6" fill="#34D399"/>
   </g>
-  <text x="64" y="39" font-size="18" font-weight="700" fill="#1f1c18">AI Digest · Rust 单二进制与 TypeScript 杂志级静态架构</text>
-  <text x="1094" y="38" text-anchor="end" font-size="12" fill="#7c7267">单文件 Rust 二进制 · Level 5/5 GEO · 可选 AES-256-GCM</text>
+  <text x="64" y="39" font-size="18" font-weight="700" fill="#0F1420">AI Digest · Rust 单二进制与 TypeScript 杂志级静态架构</text>
+  <text x="1094" y="38" text-anchor="end" font-size="12" fill="#64748B">单文件 Rust 二进制 · Level 5/5 GEO · 可选 AES-256-GCM</text>
 
   <!-- Stage 1: Sources -->
-  <rect x="22" y="66" width="194" height="346" rx="14" fill="#f4efe6" stroke="#ded4c5"/>
-  <text x="119" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#9f4222">1 · 公开与可选信源</text>
+  <rect x="22" y="66" width="194" height="346" rx="14" fill="#F1F5FB" stroke="#DCE4F2"/>
+  <text x="119" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E40AF">1 · 公开与可选信源</text>
 
-  <g filter="url(#sh)"><rect x="34" y="108" width="170" height="64" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="34" y="108" width="4.5" height="64" rx="2.2" fill="#b85432"/></g>
-  <text x="48" y="131" font-size="13" font-weight="650" fill="#1f1c18">公开订阅源（约 155 个）</text>
-  <text x="48" y="148" font-size="11" fill="#645b51">RSS · Atom · 官网博客</text>
-  <text x="48" y="163" font-size="10.5" fill="#8b7e72">零 API 密钥开箱即用</text>
+  <g filter="url(#sh)"><rect x="34" y="108" width="170" height="64" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="34" y="108" width="4.5" height="64" rx="2.2" fill="#2952CC"/></g>
+  <text x="48" y="131" font-size="13" font-weight="650" fill="#0F1420">公开订阅源（约 155 个）</text>
+  <text x="48" y="148" font-size="11" fill="#4A5568">RSS · Atom · 官网博客</text>
+  <text x="48" y="163" font-size="10.5" fill="#64748B">零 API 密钥开箱即用</text>
 
-  <g filter="url(#sh)"><rect x="34" y="182" width="170" height="64" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="34" y="182" width="4.5" height="64" rx="2.2" fill="#c96b3b"/></g>
-  <text x="48" y="205" font-size="13" font-weight="650" fill="#1f1c18">研究与开源代码</text>
-  <text x="48" y="222" font-size="11" fill="#645b51">arXiv 12 分类 · HF 日榜</text>
-  <text x="48" y="237" font-size="10.5" fill="#8b7e72">GitHub Release 与趋势</text>
+  <g filter="url(#sh)"><rect x="34" y="182" width="170" height="64" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="34" y="182" width="4.5" height="64" rx="2.2" fill="#3B82F6"/></g>
+  <text x="48" y="205" font-size="13" font-weight="650" fill="#0F1420">研究与开源代码</text>
+  <text x="48" y="222" font-size="11" fill="#4A5568">arXiv 12 分类 · HF 日榜</text>
+  <text x="48" y="237" font-size="10.5" fill="#64748B">GitHub Release 与趋势</text>
 
-  <g filter="url(#sh)"><rect x="34" y="256" width="170" height="64" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="34" y="256" width="4.5" height="64" rx="2.2" fill="#d98a4e"/></g>
-  <text x="48" y="279" font-size="13" font-weight="650" fill="#1f1c18">社区与媒体政策</text>
-  <text x="48" y="296" font-size="11" fill="#645b51">HN · Reddit · Lobsters</text>
-  <text x="48" y="311" font-size="10.5" fill="#8b7e72">播客 · YouTube · 政策发布</text>
+  <g filter="url(#sh)"><rect x="34" y="256" width="170" height="64" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="34" y="256" width="4.5" height="64" rx="2.2" fill="#6895FF"/></g>
+  <text x="48" y="279" font-size="13" font-weight="650" fill="#0F1420">社区与媒体政策</text>
+  <text x="48" y="296" font-size="11" fill="#4A5568">HN · Reddit · Lobsters</text>
+  <text x="48" y="311" font-size="10.5" fill="#64748B">播客 · YouTube · 政策发布</text>
 
-  <g filter="url(#sh)"><rect x="34" y="330" width="170" height="68" rx="10" fill="#fffdf9" stroke="#d8c8b4" stroke-dasharray="4 3"/><rect x="34" y="330" width="4.5" height="68" rx="2.2" fill="#7c7267"/></g>
-  <text x="48" y="352" font-size="13" font-weight="650" fill="#1f1c18">可选安全 X 召回</text>
-  <text x="48" y="369" font-size="10.5" fill="#645b51">免费：网页检索 / RSS 桥接</text>
-  <text x="48" y="384" font-size="10.5" fill="#645b51">付费：xAI x_search / X API v2</text>
+  <g filter="url(#sh)"><rect x="34" y="330" width="170" height="68" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-dasharray="4 3"/><rect x="34" y="330" width="4.5" height="68" rx="2.2" fill="#64748B"/></g>
+  <text x="48" y="352" font-size="13" font-weight="650" fill="#0F1420">可选安全 X 召回</text>
+  <text x="48" y="369" font-size="10.5" fill="#4A5568">免费：网页检索 / RSS 桥接</text>
+  <text x="48" y="384" font-size="10.5" fill="#4A5568">付费：xAI x_search / X API v2</text>
 
   <!-- Stage 2: Recall & Triage -->
-  <rect x="242" y="66" width="194" height="346" rx="14" fill="#f2efe9" stroke="#ded4c5"/>
-  <text x="339" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#874826">2 · 召回与初筛</text>
+  <rect x="242" y="66" width="194" height="346" rx="14" fill="#EEF2F8" stroke="#DCE4F2"/>
+  <text x="339" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E40AF">2 · 召回与初筛</text>
 
-  <g filter="url(#sh)"><rect x="254" y="108" width="170" height="78" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="254" y="108" width="4.5" height="78" rx="2.2" fill="#b85432"/></g>
-  <text x="268" y="131" font-size="13" font-weight="650" fill="#1f1c18">ai-digest fetch</text>
-  <text x="268" y="149" font-size="11" fill="#645b51">Tokio + rustls 异步并发</text>
-  <text x="268" y="165" font-size="11" fill="#645b51">自然日窗口 + 缺批重试</text>
-  <text x="268" y="180" font-size="10.5" fill="#8b7e72">自动剥离点赞/星标噪音</text>
+  <g filter="url(#sh)"><rect x="254" y="108" width="170" height="78" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="254" y="108" width="4.5" height="78" rx="2.2" fill="#2952CC"/></g>
+  <text x="268" y="131" font-size="13" font-weight="650" fill="#0F1420">ai-digest fetch</text>
+  <text x="268" y="149" font-size="11" fill="#4A5568">Tokio + rustls 异步并发</text>
+  <text x="268" y="165" font-size="11" fill="#4A5568">自然日窗口 + 缺批重试</text>
+  <text x="268" y="180" font-size="10.5" fill="#64748B">自动剥离点赞/星标噪音</text>
 
-  <g filter="url(#sh)"><rect x="254" y="200" width="170" height="78" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="254" y="200" width="4.5" height="78" rx="2.2" fill="#c96b3b"/></g>
-  <text x="268" y="223" font-size="13" font-weight="650" fill="#1f1c18">去重与历史账本</text>
-  <text x="268" y="241" font-size="11" fill="#645b51">ai-digest ledger 追踪</text>
-  <text x="268" y="257" font-size="11" fill="#645b51">★ 已推 / ☆ 看过未推</text>
-  <text x="268" y="272" font-size="10.5" fill="#8b7e72">仅在实质新进展时复推</text>
+  <g filter="url(#sh)"><rect x="254" y="200" width="170" height="78" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="254" y="200" width="4.5" height="78" rx="2.2" fill="#3B82F6"/></g>
+  <text x="268" y="223" font-size="13" font-weight="650" fill="#0F1420">去重与历史账本</text>
+  <text x="268" y="241" font-size="11" fill="#4A5568">ai-digest ledger 追踪</text>
+  <text x="268" y="257" font-size="11" fill="#4A5568">★ 已推 / ☆ 看过未推</text>
+  <text x="268" y="272" font-size="10.5" fill="#64748B">仅在实质新进展时复推</text>
 
-  <g filter="url(#sh)"><rect x="254" y="292" width="170" height="106" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="254" y="292" width="4.5" height="106" rx="2.2" fill="#64748b"/></g>
-  <text x="268" y="315" font-size="13" font-weight="650" fill="#1f1c18">候选短名单产物</text>
-  <text x="268" y="333" font-size="11" fill="#645b51">• triage.md（按频道分组）</text>
-  <text x="268" y="349" font-size="11" fill="#645b51">• triage-papers.md（分层）</text>
-  <text x="268" y="365" font-size="11" fill="#645b51">• candidates.jsonl（cand）</text>
-  <text x="268" y="381" font-size="11" fill="#645b51">• x-leads.md（xparse）</text>
+  <g filter="url(#sh)"><rect x="254" y="292" width="170" height="106" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="254" y="292" width="4.5" height="106" rx="2.2" fill="#64748B"/></g>
+  <text x="268" y="315" font-size="13" font-weight="650" fill="#0F1420">候选短名单产物</text>
+  <text x="268" y="333" font-size="11" fill="#4A5568">• triage.md（按频道分组）</text>
+  <text x="268" y="349" font-size="11" fill="#4A5568">• triage-papers.md（分层）</text>
+  <text x="268" y="365" font-size="11" fill="#4A5568">• candidates.jsonl（cand）</text>
+  <text x="268" y="381" font-size="11" fill="#4A5568">• x-leads.md（xparse）</text>
 
   <!-- Stage 3: LLM Curation -->
-  <rect x="462" y="66" width="194" height="346" rx="14" fill="#f4efe6" stroke="#ded4c5"/>
-  <text x="559" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#9f4222">3 · LLM 内容精选</text>
+  <rect x="462" y="66" width="194" height="346" rx="14" fill="#F1F5FB" stroke="#DCE4F2"/>
+  <text x="559" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E40AF">3 · LLM 内容精选</text>
 
-  <g filter="url(#sh)"><rect x="474" y="108" width="170" height="86" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="474" y="108" width="4.5" height="86" rx="2.2" fill="#b85432"/></g>
-  <text x="488" y="131" font-size="13" font-weight="650" fill="#1f1c18">一手出处核验</text>
-  <text x="488" y="149" font-size="11" fill="#645b51">prompts/&lt;语言&gt;/*.md</text>
-  <text x="488" y="165" font-size="11" fill="#645b51">ai-digest page（防 SSRF）</text>
-  <text x="488" y="181" font-size="10.5" fill="#8b7e72">遵循 filter-notes 选材标准</text>
+  <g filter="url(#sh)"><rect x="474" y="108" width="170" height="86" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="474" y="108" width="4.5" height="86" rx="2.2" fill="#2952CC"/></g>
+  <text x="488" y="131" font-size="13" font-weight="650" fill="#0F1420">一手出处核验</text>
+  <text x="488" y="149" font-size="11" fill="#4A5568">prompts/&lt;语言&gt;/*.md</text>
+  <text x="488" y="165" font-size="11" fill="#4A5568">ai-digest page（防 SSRF）</text>
+  <text x="488" y="181" font-size="10.5" fill="#64748B">遵循 filter-notes 选材标准</text>
 
-  <g filter="url(#sh)"><rect x="474" y="208" width="170" height="86" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="474" y="208" width="4.5" height="86" rx="2.2" fill="#c96b3b"/></g>
-  <text x="488" y="231" font-size="13" font-weight="650" fill="#1f1c18">七大固定版面</text>
-  <text x="488" y="249" font-size="11" fill="#645b51">模型 · 论文 · 工具与项目</text>
-  <text x="488" y="265" font-size="11" fill="#645b51">行业 · 算力基建 · 安全政策</text>
-  <text x="488" y="281" font-size="10.5" fill="#8b7e72">观点长文 · 只看内容分量</text>
+  <g filter="url(#sh)"><rect x="474" y="208" width="170" height="86" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="474" y="208" width="4.5" height="86" rx="2.2" fill="#3B82F6"/></g>
+  <text x="488" y="231" font-size="13" font-weight="650" fill="#0F1420">七大固定版面</text>
+  <text x="488" y="249" font-size="11" fill="#4A5568">模型 · 论文 · 工具与项目</text>
+  <text x="488" y="265" font-size="11" fill="#4A5568">行业 · 算力基建 · 安全政策</text>
+  <text x="488" y="281" font-size="10.5" fill="#64748B">观点长文 · 只看内容分量</text>
 
-  <g filter="url(#sh)"><rect x="474" y="308" width="170" height="90" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="474" y="308" width="4.5" height="90" rx="2.2" fill="#4f6d5a"/></g>
-  <text x="488" y="331" font-size="13" font-weight="650" fill="#1f1c18">双语 Markdown 成稿</text>
-  <text x="488" y="349" font-size="11" fill="#645b51">digest-&lt;P&gt;.md</text>
-  <text x="488" y="365" font-size="11" fill="#645b51">+ 可选 digest-&lt;P&gt;.en.md</text>
-  <text x="488" y="381" font-size="10.5" fill="#8b7e72">发布时自动配对双语路径</text>
+  <g filter="url(#sh)"><rect x="474" y="308" width="170" height="90" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="474" y="308" width="4.5" height="90" rx="2.2" fill="#10B981"/></g>
+  <text x="488" y="331" font-size="13" font-weight="650" fill="#0F1420">双语 Markdown 成稿</text>
+  <text x="488" y="349" font-size="11" fill="#4A5568">digest-&lt;P&gt;.md</text>
+  <text x="488" y="365" font-size="11" fill="#4A5568">+ 可选 digest-&lt;P&gt;.en.md</text>
+  <text x="488" y="381" font-size="10.5" fill="#64748B">发布时自动配对双语路径</text>
 
   <!-- Stage 4: Render & Security -->
-  <rect x="682" y="66" width="206" height="346" rx="14" fill="#f2efe9" stroke="#ded4c5"/>
-  <text x="785" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#874826">4 · 渲染与安全加固</text>
+  <rect x="682" y="66" width="206" height="346" rx="14" fill="#EEF2F8" stroke="#DCE4F2"/>
+  <text x="785" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E40AF">4 · 渲染与安全加固</text>
 
-  <g filter="url(#sh)"><rect x="694" y="108" width="182" height="92" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="694" y="108" width="4.5" height="92" rx="2.2" fill="#b85432"/></g>
-  <text x="708" y="131" font-size="13" font-weight="650" fill="#1f1c18">ai-digest render + web/</text>
-  <text x="708" y="149" font-size="11" fill="#645b51">内嵌 TS/CSS 杂志级阅读器</text>
-  <text x="708" y="165" font-size="11" fill="#645b51">52px 顶栏 · 手风琴侧栏目录</text>
-  <text x="708" y="181" font-size="11" fill="#645b51">行内公式 · 折叠顶栏搜索</text>
-  <text x="708" y="195" font-size="10.5" fill="#8b7e72">单文件 HTML + /favicon.svg</text>
+  <g filter="url(#sh)"><rect x="694" y="108" width="182" height="92" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="694" y="108" width="4.5" height="92" rx="2.2" fill="#2952CC"/></g>
+  <text x="708" y="131" font-size="13" font-weight="650" fill="#0F1420">ai-digest render + web/</text>
+  <text x="708" y="149" font-size="11" fill="#4A5568">配置驱动静夜靛蓝阅读器</text>
+  <text x="708" y="165" font-size="11" fill="#4A5568">52px 顶栏 · 手风琴侧栏目录</text>
+  <text x="708" y="181" font-size="11" fill="#4A5568">行内公式 · 折叠顶栏搜索</text>
+  <text x="708" y="195" font-size="10.5" fill="#64748B">单文件 HTML + /favicon.svg</text>
 
-  <g filter="url(#sh)"><rect x="694" y="212" width="182" height="86" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="694" y="212" width="4.5" height="86" rx="2.2" fill="#4f6d5a"/></g>
-  <text x="708" y="235" font-size="13" font-weight="650" fill="#1f1c18">ai-digest publish &amp; GEO</text>
-  <text x="708" y="253" font-size="11" fill="#645b51">对称 /zh/ 与 /en/ 双语树</text>
-  <text x="708" y="269" font-size="11" fill="#645b51">llms.txt · .md · _worker.js</text>
-  <text x="708" y="285" font-size="10.5" fill="#8b7e72">默认公开根路径（ENCRYPT=0）</text>
+  <g filter="url(#sh)"><rect x="694" y="212" width="182" height="86" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="694" y="212" width="4.5" height="86" rx="2.2" fill="#10B981"/></g>
+  <text x="708" y="235" font-size="13" font-weight="650" fill="#0F1420">ai-digest publish &amp; GEO</text>
+  <text x="708" y="253" font-size="11" fill="#4A5568">对称 /zh/ 与 /en/ 双语树</text>
+  <text x="708" y="269" font-size="11" fill="#4A5568">llms.txt · .md · _worker.js</text>
+  <text x="708" y="285" font-size="10.5" fill="#64748B">默认公开根路径（ENCRYPT=0）</text>
 
-  <g filter="url(#sh)"><rect x="694" y="310" width="182" height="88" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="694" y="310" width="4.5" height="88" rx="2.2" fill="#8a3b2c"/></g>
-  <text x="708" y="333" font-size="13" font-weight="650" fill="#1f1c18">纵深安全门控</text>
-  <text x="708" y="351" font-size="11" fill="#645b51">构建期 SHA-256 哈希锁定 CSP</text>
-  <text x="708" y="367" font-size="11" fill="#645b51">HTML5 实体解码隐私扫描</text>
-  <text x="708" y="383" font-size="10.5" fill="#8b7e72">按需开启 AES-256-GCM + SLUG</text>
+  <g filter="url(#sh)"><rect x="694" y="310" width="182" height="88" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="694" y="310" width="4.5" height="88" rx="2.2" fill="#DC2626"/></g>
+  <text x="708" y="333" font-size="13" font-weight="650" fill="#0F1420">纵深安全门控</text>
+  <text x="708" y="351" font-size="11" fill="#4A5568">构建期 SHA-256 哈希锁定 CSP</text>
+  <text x="708" y="367" font-size="11" fill="#4A5568">HTML5 实体解码隐私扫描</text>
+  <text x="708" y="383" font-size="10.5" fill="#64748B">按需开启 AES-256-GCM + SLUG</text>
 
   <!-- Stage 5: Deploy & Verify -->
-  <rect x="914" y="66" width="184" height="346" rx="14" fill="#f4efe6" stroke="#ded4c5"/>
-  <text x="1006" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#9f4222">5 · 部署与校验</text>
+  <rect x="914" y="66" width="184" height="346" rx="14" fill="#F1F5FB" stroke="#DCE4F2"/>
+  <text x="1006" y="92" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E40AF">5 · 部署与校验</text>
 
-  <g filter="url(#sh)"><rect x="926" y="108" width="160" height="106" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="926" y="108" width="4.5" height="106" rx="2.2" fill="#d97706"/></g>
-  <text x="940" y="131" font-size="13" font-weight="650" fill="#1f1c18">Cloudflare Pages</text>
-  <text x="940" y="149" font-size="11" fill="#645b51">全球边缘静态分发</text>
-  <text x="940" y="165" font-size="11" fill="#645b51">HSTS · COOP · CORP</text>
-  <text x="940" y="181" font-size="11" fill="#645b51">latest / 索引 no-store</text>
-  <text x="940" y="198" font-size="10.5" fill="#8b7e72">零后端源站暴露面</text>
+  <g filter="url(#sh)"><rect x="926" y="108" width="160" height="106" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="926" y="108" width="4.5" height="106" rx="2.2" fill="#0284C7"/></g>
+  <text x="940" y="131" font-size="13" font-weight="650" fill="#0F1420">Cloudflare Pages</text>
+  <text x="940" y="149" font-size="11" fill="#4A5568">全球边缘静态分发</text>
+  <text x="940" y="165" font-size="11" fill="#4A5568">HSTS · COOP · CORP</text>
+  <text x="940" y="181" font-size="11" fill="#4A5568">latest / 索引 no-store</text>
+  <text x="940" y="198" font-size="10.5" fill="#64748B">零后端源站暴露面</text>
 
-  <g filter="url(#sh)"><rect x="926" y="228" width="160" height="82" rx="10" fill="#fffdf9" stroke="#e5ddd0"/><rect x="926" y="228" width="4.5" height="82" rx="2.2" fill="#4f6d5a"/></g>
-  <text x="940" y="251" font-size="13" font-weight="650" fill="#1f1c18">Rust + Node 校验</text>
-  <text x="940" y="269" font-size="11" fill="#645b51">ai-digest verify &amp; WebCrypto</text>
-  <text x="940" y="285" font-size="11" fill="#645b51">公开页逐字校验或</text>
-  <text x="940" y="299" font-size="10.5" fill="#8b7e72">AES-GCM 解密对拍校验</text>
+  <g filter="url(#sh)"><rect x="926" y="228" width="160" height="82" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/><rect x="926" y="228" width="4.5" height="82" rx="2.2" fill="#10B981"/></g>
+  <text x="940" y="251" font-size="13" font-weight="650" fill="#0F1420">Rust + Node 校验</text>
+  <text x="940" y="269" font-size="11" fill="#4A5568">ai-digest verify &amp; WebCrypto</text>
+  <text x="940" y="285" font-size="11" fill="#4A5568">公开页逐字校验或</text>
+  <text x="940" y="299" font-size="10.5" fill="#64748B">AES-GCM 解密对拍校验</text>
 
-  <g filter="url(#sh)"><rect x="926" y="324" width="160" height="74" rx="10" fill="#1f1c18" stroke="#36302a"/></g>
-  <text x="940" y="347" font-size="12.5" font-weight="650" fill="#f3efe7">公开在线演示站</text>
-  <text x="940" y="365" font-size="10.5" fill="#df7d56">ai-digest-demo.pages.dev</text>
-  <text x="940" y="382" font-size="10.5" fill="#b8aea2">/en/ · /zh-CN/ · 免密码直达</text>
+  <g filter="url(#sh)"><rect x="926" y="324" width="160" height="74" rx="10" fill="#0B0D12" stroke="#1E293B"/></g>
+  <text x="940" y="347" font-size="12.5" font-weight="650" fill="#F2F4F8">公开在线演示站</text>
+  <text x="940" y="365" font-size="10.5" fill="#6895FF">ai-digest-demo.pages.dev</text>
+  <text x="940" y="382" font-size="10.5" fill="#A6B0C3">/en/ · /zh-CN/ · 免密码直达</text>
 
   <!-- Main horizontal flow arrows -->
-  <line x1="216" y1="238" x2="239" y2="238" stroke="#b85432" stroke-width="2" marker-end="url(#ar)"/>
-  <line x1="436" y1="238" x2="459" y2="238" stroke="#b85432" stroke-width="2" marker-end="url(#ar)"/>
-  <line x1="656" y1="238" x2="679" y2="238" stroke="#b85432" stroke-width="2" marker-end="url(#ar)"/>
-  <line x1="888" y1="238" x2="911" y2="238" stroke="#b85432" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="216" y1="238" x2="239" y2="238" stroke="#2952CC" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="436" y1="238" x2="459" y2="238" stroke="#2952CC" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="656" y1="238" x2="679" y2="238" stroke="#2952CC" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="888" y1="238" x2="911" y2="238" stroke="#2952CC" stroke-width="2" marker-end="url(#ar)"/>
 
   <!-- Bottom orchestration & CI band -->
-  <rect x="22" y="438" width="528" height="158" rx="14" fill="#f4efe6" stroke="#ded4c5"/>
-  <text x="42" y="465" font-size="13.5" font-weight="700" fill="#1f1c18">Agent 运行器与定时自动化</text>
-  <text x="42" y="485" font-size="11.5" fill="#645b51">兼容 Claude Code、Codex、Antigravity、Cursor 或定时任务驱动的任意带 Shell/文件工具 agent。</text>
-  <g filter="url(#sh)"><rect x="40" y="502" width="154" height="76" rx="9" fill="#fffdf9" stroke="#e5ddd0"/></g>
-  <text x="52" y="524" font-size="12" font-weight="650" fill="#1f1c18">日报 / 周报定时跑批</text>
-  <text x="52" y="542" font-size="10.5" fill="#645b51">按 DIGEST_TZ 切自然日</text>
-  <text x="52" y="558" font-size="10.5" fill="#8b7e72">锁文件防并发冲突</text>
-  <g filter="url(#sh)"><rect x="210" y="502" width="154" height="76" rx="9" fill="#fffdf9" stroke="#e5ddd0"/></g>
-  <text x="222" y="524" font-size="12" font-weight="650" fill="#1f1c18">独立数据工作区</text>
-  <text x="222" y="542" font-size="10.5" fill="#645b51">DIGEST_ROOT 隔离</text>
-  <text x="222" y="558" font-size="10.5" fill="#8b7e72">runs/、site/ 与 ledger</text>
-  <g filter="url(#sh)"><rect x="380" y="502" width="154" height="76" rx="9" fill="#fffdf9" stroke="#e5ddd0"/></g>
-  <text x="392" y="524" font-size="12" font-weight="650" fill="#1f1c18">凭据彻底移出仓库</text>
-  <text x="392" y="542" font-size="10.5" fill="#645b51">0600 权限文件 / 环境变量</text>
-  <text x="392" y="558" font-size="10.5" fill="#8b7e72">最小权限 API Token</text>
+  <rect x="22" y="438" width="528" height="158" rx="14" fill="#F1F5FB" stroke="#DCE4F2"/>
+  <text x="42" y="465" font-size="13.5" font-weight="700" fill="#0F1420">Agent 运行器与定时自动化</text>
+  <text x="42" y="485" font-size="11.5" fill="#4A5568">兼容 Claude Code、Codex、Antigravity、Cursor 或定时任务驱动的任意带 Shell/文件工具 agent。</text>
+  <g filter="url(#sh)"><rect x="40" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
+  <text x="52" y="524" font-size="12" font-weight="650" fill="#0F1420">日报 / 周报定时跑批</text>
+  <text x="52" y="542" font-size="10.5" fill="#4A5568">按 DIGEST_TZ 切自然日</text>
+  <text x="52" y="558" font-size="10.5" fill="#64748B">锁文件防并发冲突</text>
+  <g filter="url(#sh)"><rect x="210" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
+  <text x="222" y="524" font-size="12" font-weight="650" fill="#0F1420">独立数据工作区</text>
+  <text x="222" y="542" font-size="10.5" fill="#4A5568">DIGEST_ROOT 隔离</text>
+  <text x="222" y="558" font-size="10.5" fill="#64748B">runs/、site/ 与 ledger</text>
+  <g filter="url(#sh)"><rect x="380" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
+  <text x="392" y="524" font-size="12" font-weight="650" fill="#0F1420">凭据彻底移出仓库</text>
+  <text x="392" y="542" font-size="10.5" fill="#4A5568">0600 权限文件 / 环境变量</text>
+  <text x="392" y="558" font-size="10.5" fill="#64748B">最小权限 API Token</text>
 
-  <rect x="570" y="438" width="528" height="158" rx="14" fill="#f2efe9" stroke="#ded4c5"/>
-  <text x="590" y="465" font-size="13.5" font-weight="700" fill="#1f1c18">GitHub Actions CI、安全门禁与多平台发版</text>
-  <text x="590" y="485" font-size="11.5" fill="#645b51">每个 PR 自动跑 Rust + Vitest + 端到端对拍与脱敏扫描，合并 main 后自动发版与部署演示站。</text>
-  <g filter="url(#sh)"><rect x="588" y="502" width="154" height="76" rx="9" fill="#fffdf9" stroke="#e5ddd0"/></g>
-  <text x="600" y="524" font-size="12" font-weight="650" fill="#1f1c18">Rust 与 TS 测试 CI</text>
-  <text x="600" y="542" font-size="10.5" fill="#645b51">cargo clippy/test + vitest</text>
-  <text x="600" y="558" font-size="10.5" fill="#8b7e72">CSP、XSS 与体积预算</text>
-  <g filter="url(#sh)"><rect x="758" y="502" width="154" height="76" rx="9" fill="#fffdf9" stroke="#e5ddd0"/></g>
-  <text x="770" y="524" font-size="12" font-weight="650" fill="#1f1c18">脱敏扫描与 Gitleaks</text>
-  <text x="770" y="542" font-size="10.5" fill="#645b51">check_sanitized + strings</text>
-  <text x="770" y="558" font-size="10.5" fill="#8b7e72">Action 锁定 40 位 SHA</text>
-  <g filter="url(#sh)"><rect x="928" y="502" width="154" height="76" rx="9" fill="#fffdf9" stroke="#e5ddd0"/></g>
-  <text x="940" y="524" font-size="12" font-weight="650" fill="#1f1c18">四平台二进制发版</text>
-  <text x="940" y="542" font-size="10.5" fill="#645b51">Linux + macOS 预编译包</text>
-  <text x="940" y="558" font-size="10.5" fill="#8b7e72">Release Please 发版</text>
+  <rect x="570" y="438" width="528" height="158" rx="14" fill="#EEF2F8" stroke="#DCE4F2"/>
+  <text x="590" y="465" font-size="13.5" font-weight="700" fill="#0F1420">GitHub Actions CI、安全门禁与多平台发版</text>
+  <text x="590" y="485" font-size="11.5" fill="#4A5568">每个 PR 自动跑 Rust + Vitest + 端到端对拍与脱敏扫描，合并 main 后自动发版与部署演示站。</text>
+  <g filter="url(#sh)"><rect x="588" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
+  <text x="600" y="524" font-size="12" font-weight="650" fill="#0F1420">Rust 与 TS 测试 CI</text>
+  <text x="600" y="542" font-size="10.5" fill="#4A5568">cargo clippy/test + vitest</text>
+  <text x="600" y="558" font-size="10.5" fill="#64748B">CSP、XSS 与体积预算</text>
+  <g filter="url(#sh)"><rect x="758" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
+  <text x="770" y="524" font-size="12" font-weight="650" fill="#0F1420">脱敏扫描与 Gitleaks</text>
+  <text x="770" y="542" font-size="10.5" fill="#4A5568">check_sanitized + strings</text>
+  <text x="770" y="558" font-size="10.5" fill="#64748B">Action 锁定 40 位 SHA</text>
+  <g filter="url(#sh)"><rect x="928" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
+  <text x="940" y="524" font-size="12" font-weight="650" fill="#0F1420">四平台二进制发版</text>
+  <text x="940" y="542" font-size="10.5" fill="#4A5568">Linux + macOS 预编译包</text>
+  <text x="940" y="558" font-size="10.5" fill="#64748B">Release Please 发版</text>
 
   <!-- Subtle vertical feedback arrows -->
-  <path d="M286,438 L286,416" stroke="#8b7e72" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ad)"/>
-  <path d="M559,438 L559,416" stroke="#8b7e72" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ad)"/>
-  <path d="M1006,438 L1006,416" stroke="#8b7e72" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ad)"/>
+  <path d="M286,438 L286,416" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ad)"/>
+  <path d="M559,438 L559,416" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ad)"/>
+  <path d="M1006,438 L1006,416" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ad)"/>
 </svg>

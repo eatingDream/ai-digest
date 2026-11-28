@@ -264,7 +264,7 @@ export function initFilter(opts: FilterOptions): FilterController {
     debounceTimer = window.setTimeout(() => {
       query = (input.value || "").trim();
       apply(true);
-    }, 120);
+    }, __MOTION_SEARCH_DEBOUNCE_MS__);
   });
 
   input?.addEventListener("keydown", (e: KeyboardEvent) => {

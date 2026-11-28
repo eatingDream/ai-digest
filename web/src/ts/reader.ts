@@ -9,7 +9,7 @@ import {
 
 const TOC_ALL_KEY = "digest-toc-all";
 const LONG_JUMP_PX = 900;
-const SHORT_JUMP_MAX_MS = 200;
+const SHORT_JUMP_MAX_MS = __MOTION_SHORT_JUMP_MS__;
 
 const CHECK_SVG =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>';
@@ -358,7 +358,7 @@ function initReaderPane(
       el.classList.remove("is-arrived");
       if (lastArrivedEl === el) lastArrivedEl = null;
       arrivedTimer = 0;
-    }, 1200);
+    }, __MOTION_ARRIVED_MS__);
   };
 
   const fastScrollTo = (
@@ -846,7 +846,7 @@ function initReaderPane(
       window.setTimeout(() => {
         btn.classList.remove("is-copied");
         btn.innerHTML = origHtml;
-      }, 1600);
+      }, __MOTION_COPY_HOLD_MS__);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(finish, finish);

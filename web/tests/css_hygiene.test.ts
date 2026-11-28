@@ -2,6 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  buildCss,
+  buildJs,
+  loadUiTheme,
+  renderThemeRootCss,
+  UI_THEME_PATH,
+  type UiThemeConfig,
+} from "../build.ts";
 
 const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 const DIST = join(TESTS_DIR, "..", "dist");
@@ -313,13 +321,106 @@ describe("web/dist artifacts and byte budgets", () => {
     const boot = readFileSync(join(DIST, "boot.js"), "utf8");
     expect(boot).toContain("digest-theme");
     expect(boot).toContain("digest-font");
-    expect(boot).toContain("#121110");
-    expect(boot).toContain("#f6f3ec");
+    expect(boot).toContain("#0B0D12");
+    expect(boot).toContain("#F8FAFD");
     expect(boot).toContain("color-scheme");
     expect(boot).toContain("colorScheme");
 
     const cli = readFileSync(join(DIST, "verify_decrypt.mjs"), "utf8");
     expect(cli.startsWith("#!/usr/bin/env node\n")).toBe(true);
+  });
+
+  it("drives CSS custom properties and JS theme/motion constants from web/ui-theme.json", async () => {
+    const rawTheme = readFileSync(UI_THEME_PATH, "utf8");
+    const theme = loadUiTheme();
+    expect(rawTheme).toBe(`${JSON.stringify(theme, null, 2)}\n`);
+    expect(theme.name).toBe("Lucid Indigo");
+    expect(theme.palette.dark.bg).toBe("#0B0D12");
+    expect(theme.palette.light.bg).toBe("#F8FAFD");
+    expect(theme.palette.dark.accent).toBe("#6895FF");
+    expect(theme.palette.light.accent).toBe("#2952CC");
+
+    const readerCss = readFileSync(join(DIST, "reader.css"), "utf8");
+    expect(readerCss.toLowerCase()).toContain("#0b0d12");
+    expect(readerCss.toLowerCase()).toContain("#f8fafd");
+    expect(readerCss.toLowerCase()).toContain("#6895ff");
+    expect(readerCss.toLowerCase()).toContain("#2952cc");
+
+    const readerJs = readFileSync(join(DIST, "reader.js"), "utf8");
+    expect(readerJs).toContain("startViewTransition");
+    expect(readerJs).toContain("::view-transition-new(root)");
+    expect(readerJs).toContain("#0B0D12");
+    expect(readerJs).toContain("#F8FAFD");
+
+    const customTheme: UiThemeConfig = {
+      ...theme,
+      palette: {
+        dark: {
+          ...theme.palette.dark,
+          bg: "#050816",
+          accent: "#38BDF8",
+          ctaBg: "#E2E8F0",
+        },
+        light: {
+          ...theme.palette.light,
+          bg: "#F0F6FF",
+          accent: "#0284C7",
+          ctaBg: "#082F49",
+        },
+      },
+      motion: {
+        ...theme.motion,
+        ease: "cubic-bezier(0.25, 1, 0.5, 1)",
+        pressMs: 155,
+        fastMs: 175,
+        baseMs: 215,
+        mastMs: 235,
+        cardMs: 265,
+        drawerMs: 310,
+        pageTransitionMs: 135,
+        themeRevealMs: 520,
+        themeRevealDelayMs: 35,
+        arrivedHighlightMs: 1450,
+        shortJumpMaxMs: 245,
+        searchDebounceMs: 145,
+        copyDoneHoldMs: 1950,
+      },
+    };
+
+    const customRoot = renderThemeRootCss(customTheme);
+    expect(customRoot).toContain("--bg:light-dark(#f0f6ff,#050816)");
+    expect(customRoot).toContain("--cta-bg:light-dark(#082f49,#e2e8f0)");
+    expect(customRoot).toContain("--ease:cubic-bezier(.25,1,.5,1)");
+    expect(customRoot).toContain("--dur-drawer:.31s");
+
+    const customCss = await buildCss({ theme: customTheme, write: false });
+    const customJs = await buildJs({ theme: customTheme, write: false });
+
+    for (const bundleName of ["reader.css", "index.css", "unlock.css", "404.css"]) {
+      const code = customCss[bundleName]?.code.toLowerCase() ?? "";
+      expect(code).toContain("#050816");
+      expect(code).toContain("#f0f6ff");
+      expect(code).toContain("#38bdf8");
+      expect(code).toContain("#0284c7");
+      expect(code).toContain("cubic-bezier(.25,1,.5,1)");
+      expect(code).toContain("135ms");
+    }
+    expect(customCss["reader.css"]?.code).toContain("215ms");
+    expect(customCss["reader.css"]?.code).toContain(".31s");
+    expect(customCss["reader.css"]?.code).toContain("1.45s");
+    expect(customCss["unlock.css"]?.code.toLowerCase()).toContain("#e2e8f0");
+    expect(customCss["unlock.css"]?.code.toLowerCase()).toContain("#082f49");
+
+    expect(customJs.outputs["boot.js"]).toContain("#050816");
+    expect(customJs.outputs["boot.js"]).toContain("#F0F6FF");
+    expect(customJs.outputs["reader.js"]).toContain("#050816");
+    expect(customJs.outputs["reader.js"]).toContain("#F0F6FF");
+    expect(customJs.outputs["reader.js"]).toContain("520");
+    expect(customJs.outputs["reader.js"]).toContain("delay:35");
+    expect(customJs.outputs["reader.js"]).toContain("1450");
+    expect(customJs.outputs["reader.js"]).toContain("245");
+    expect(customJs.outputs["reader.js"]).toContain("145");
+    expect(customJs.outputs["reader.js"]).toContain("1950");
   });
 
   it("removes hyphens:auto everywhere and enforces border-radius:0 on partial-border rules", () => {
@@ -381,7 +482,7 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(readerCss).toContain(".ts-panel{display:grid;grid:0fr/1fr");
     expect(readerCss).toContain(".search-scrim{position:fixed");
     expect(readerCss).toContain(".toc-top{position:sticky;top:0");
-    expect(readerCss).toContain(".sr-only{position:fixed;top:0;left:0");
+    expect(readerCss).toContain(".sr-only{position:fixed");
     expect(readerCss).toContain("::-webkit-search-cancel-button");
     expect(readerCss).toContain(".is-arrived{");
     expect(readerCss).toContain(".to-top{position:fixed");

@@ -36,13 +36,13 @@ const LEGACY_TEMPLATE: &str = r##"<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow, noarchive">
-<meta name="theme-color" content="#faf8f4">
+<meta name="theme-color" content="#F8FAFD">
 <title>{{pw_title}}</title>
 <script>
 (function () {
   var t = localStorage.getItem("digest-theme");
   var m = document.querySelector('meta[name="theme-color"]');
-  if (m && t === "dark") m.setAttribute("content", "#141311");
+  if (m && t === "dark") m.setAttribute("content", "#0B0D12");
 })();
 </script>
 </head>
@@ -1022,9 +1022,12 @@ fn lock_and_csp_accept_known_scripts_and_reject_injection_before_hashing() {
         crypto::wrap_envelope(&vector_envelope(1, NODE_V1), UnlockOptions::default()).unwrap(),
         render::render_404_html(),
     ];
+    assert_eq!(assets::THEME_DARK_BG, "#0B0D12");
+    assert_eq!(assets::THEME_LIGHT_BG, "#F8FAFD");
     let allowlist = ScriptAllowlist::default();
     let first = crypto::script_hash(assets::BOOT_JS);
     for shell in &shells {
+        assert!(shell.contains(r##"<meta name="theme-color" content="#0B0D12">"##));
         let found = crypto::collect_script_hashes(shell, &allowlist).unwrap();
         assert_eq!(found[0], first);
         let order = [

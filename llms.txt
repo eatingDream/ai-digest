@@ -1,6 +1,6 @@
 # ai-digest
 
-> Open-source Rust (`ai-digest` single binary) + TypeScript/CSS pipeline that fetches ~155 frontier AI sources, guides an LLM agent to curate daily and weekly Markdown digests, renders single-file warm-editorial HTML, and publishes a hardened, GEO/agent-ready Cloudflare Pages site (public by default, opt-in AES-256-GCM encryption).
+> Open-source Rust (`ai-digest` single binary) + TypeScript/CSS pipeline that fetches ~155 frontier AI sources, guides an LLM agent to curate daily and weekly Markdown digests, renders single-file Lucid Indigo editorial HTML, and publishes a hardened, GEO/agent-ready Cloudflare Pages site (public by default, opt-in AES-256-GCM encryption).
 
 ## For AI Agents
 

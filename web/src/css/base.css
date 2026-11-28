@@ -5,7 +5,7 @@ body{font:15.5px/1.66 var(--font-ui);overflow-wrap:break-word;-webkit-font-smoot
 ol,ul{padding:0;list-style:none}
 h1,h2,h3,p{text-wrap:pretty}
 h1,h2,h3{hyphens:none;letter-spacing:-.01em}
-::selection{background:light-dark(#b854322e,#df7d5647)}
+::selection{background:var(--selection)}
 a{color:var(--accent-ink);text-decoration:none}
 button,input{font:inherit;color:inherit;background:0;border:0;padding:0}
 button{cursor:pointer}
@@ -15,5 +15,5 @@ svg{width:16px;height:16px;flex:none}
 .ta-l{text-align:left}.ta-c{text-align:center}.ta-r{text-align:right}
 @view-transition{navigation:auto}
 ::view-transition-group(root){animation:none}
-::view-transition-old(root),::view-transition-new(root){animation-duration:.12s;animation-timing-function:ease-out}
+::view-transition-old(root),::view-transition-new(root){animation-duration:var(--dur-page);animation-timing-function:var(--ease)}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}@view-transition{navigation:none}}
