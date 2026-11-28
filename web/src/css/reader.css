@@ -18,12 +18,12 @@ code,.math-raw,.prose pre,.folio-sections a{border:var(--b)}
 .issue-meta,.must-dek,.sec-note,.story-meta,.toc-side,.edition,.subhead{color:var(--ink-3)}
 .issue-nav.top>*,.dock-nav>*,.copy-link,.toc-close,.dock-top{display:inline-flex;align-items:center;justify-content:center;border-radius:9em;color:var(--ink-2)}
 .badge,.story-links a,.dock-toc,.chip,.font-seg,.font-btn{display:inline-flex;align-items:center}
-.front-must,.theme-item,.issue-nav.bottom>*,.to-top{background:var(--surface);border:var(--b);border-radius:12px}
+.front-must,.theme-item,.to-top{background:var(--surface);border:var(--b);border-radius:12px}
 .sec-cnt,.folio-sections a,.toc-expand-all,.toc-handle,.to-top,.src-more,.fb-clear,.font-seg,.font-btn{border-radius:9em}
 .must-list li,.sec-head,.subhead,.toc-front,.story,.issue-summary{border-bottom:var(--b)}
 .sec-no,.ts-no,.front h2,.look>span,.toc-expand-all,.copy-link.is-copied,.ts-sec[aria-expanded=true]::after,.edition[data-kind=weekly],.badge-accent,.badge[data-tag]:hover,.sources a:hover,.issue-summary h2,.summary-lead a:hover{color:var(--accent-ink)}
-.folio-sections a,.theme-item p,.source,.dek,.look,.detail,.extra,.ts-sec,.sources a,.summary-lead,.filter-banner{color:var(--ink-2)}
-.must-title,.dock-toc,.issue-nav.bottom>*{color:var(--ink)}
+.folio-sections a,.theme-item p,.source,.dek,.look,.detail,.extra,.ts-sec,.sources a,.summary-lead,.filter-banner,.issue-nav.bottom>*{color:var(--ink-2)}
+.must-title,.dock-toc{color:var(--ink)}
 .sec-no,.ts-no{font:600 12px var(--font-mono)}
 .sec-cnt,.ts-cnt,.ts-num,.when,.copy-link,.story-no,.detail>span,.extra>span{color:var(--ink-4)}
 :is(.folio-sections a,.toc-expand-all,.src-more):hover,.nav-week,.fb-clear{background:var(--accent-soft);color:var(--accent-ink)}
@@ -104,7 +104,6 @@ code,.math-raw,.prose pre,.folio-sections a{border:var(--b)}
 .story--lead .story-meta::before{content:"头条";font:600 11px/1.2 var(--font-ui);letter-spacing:var(--ls);text-transform:var(--tt);color:var(--accent-ink);background:var(--accent-soft);padding:2px 6px;border-radius:4px}
 :lang(en) .story--lead .story-meta::before{content:"LEAD"}
 .story--lead h3{font-size:1.32em}
-.issue-nav.bottom a:hover{border-color:var(--line-strong)}
 .kbd-focus{outline:2px solid var(--accent);outline-offset:4px}
 
 .story-meta{gap:4px 8px}
@@ -178,11 +177,13 @@ pre code{all:unset}
 .scrim.is-open{opacity:1}
 .dock-toc,.toc-close,.dock-nav>*,.dock-top{min-width:44px;min-height:44px}
 
-.issue-nav.bottom{display:grid;grid:auto/1fr 1fr;gap:12px;margin:0 0 40px}
-.issue-nav.bottom>*{display:grid;align-content:center;gap:4px;min-height:68px;padding:14px 16px;transition:border-color var(--dur-card) var(--ease),translate var(--dur-card) var(--ease)}
-.issue-nav.bottom>:is([data-kind=weekly],:nth-child(3)){grid-column:1/-1}
-.issue-nav.bottom a:hover{translate:0 -1px}
-.issue-nav.bottom a:active{scale:.98}
+.issue-nav.bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;min-height:40px;padding:10px 0 0;margin:12px 0 36px;border-radius:0;border-top:var(--b);font-size:13px}
+.issue-nav.bottom>*{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 0;white-space:nowrap}
+.issue-nav.bottom>.nav-next{margin-left:auto}
+.issue-nav.bottom>.nav-week+.nav-next{margin-left:0}
+.issue-nav.bottom>.nav-week{padding:3px 11px;border-radius:9em;font-size:12px;font-weight:500}
+.issue-nav.bottom a:hover{color:var(--accent-ink)}
+.issue-nav.bottom>.nav-week:hover{background:color-mix(in srgb,var(--accent) 20%,transparent)}
 
 @media(max-width:419px){.edition{display:none}}
 @media(max-width:639px){.mast-sep,.issue-nav.top{display:none}}

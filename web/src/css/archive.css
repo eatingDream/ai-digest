@@ -1,41 +1,46 @@
-.quick-pill>span:first-child,.month,.folio-kicker{font:600 11px var(--font-ui);letter-spacing:var(--ls);text-transform:var(--tt)}
-.quick-pill>span:first-child,.month,.quick-pill small,.mast-chip{color:var(--ink-3)}
-.folio-kicker,.quick-pill[data-kind=weekly]>span:first-child,[data-kind=weekly] .ai-date{color:var(--accent-ink)}
+.quick-pill>span,.month,.folio-kicker{letter-spacing:var(--ls);text-transform:var(--tt)}
+.mast-chip,.quick-pill>span,[data-kind=weekly] .ai-date,.month,.folio-kicker{font-size:11px;font-weight:600}
+.month,.mast-chip{color:var(--ink-3)}
 .mast-chip,.quick-pill,.grp>summary,.ai-date{font-variant-numeric:tabular-nums}
 .month,.grp>summary,.ai-row{border-radius:0;border-bottom:var(--b)}
 .mast-chip,.quick-pill{border:var(--b)}
 .quick-pill small,.grp>summary,.ai-date,.ai-wd,.ai-cnt{font-size:12.5px}
-.mast-chip,.ai-date,.ai-wd,.ai-cnt,.ai-title{white-space:nowrap}
-.mast-chip,[data-kind=weekly] .ai-date{height:24px;padding:0 10px;border-radius:9em;font-size:11px;font-weight:600}
+.mast-chip,.quick-pill,.ai-date,.ai-wd,.ai-cnt,.ai-title{white-space:nowrap}
+.mast-chip,.quick-pill>span,[data-kind=weekly] .ai-date{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9em}
 .quick-pill,.ai-row{color:var(--ink)}
-.grp>summary,.ai-date{color:var(--ink-2)}
-.ai-row:is(:hover,:focus-visible),[data-kind=weekly] .ai-row{background:var(--accent-softer)}
+.grp>summary,.ai-date,.quick-pill>span{color:var(--ink-2)}
+.quick-pill:hover,.ai-row:is(:hover,:focus-visible),[data-kind=weekly] .ai-row{background:var(--accent-softer)}
 
-.mast-chip{display:inline-flex;align-items:center;background:var(--well)}
+.mast-chip,.quick-pill>span{background:var(--well)}
+.quick-pill[data-kind=weekly]>span,[data-kind=weekly] .ai-date{color:var(--accent-ink);background:var(--accent-soft)}
 .folio-kicker{margin-bottom:4px}
 .paper{max-width:var(--shell-max);margin:auto;padding:0 var(--pad-x) 64px}
 .quick-bar,.timeline{display:grid}
-.quick-bar{gap:14px;margin-bottom:32px}
-.quick-pill{display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:82px;padding:16px 22px;border-radius:12px;background:var(--surface)}
-.quick-pill:hover{border-color:var(--line-strong);translate:0 -1px}
-.quick-pill:active{scale:.98}
-.quick-pill strong{font:700 19px/1.25 var(--font-display)}
+.quick-bar{gap:10px;margin-bottom:22px}
+.quick-pill,.grp>summary{display:flex;align-items:center}
+.quick-pill{flex-wrap:wrap;gap:6px 10px;min-height:40px;padding:7px 14px;border-radius:8px;background:var(--surface)}
+.quick-pill strong{font-size:13.5px;font-weight:600}
+.quick-pill::after,.grp>summary::after{margin-left:auto}
+.quick-pill::after{content:"→";transition:translate var(--dur-fast) var(--ease)}
+.quick-pill:hover{border-color:var(--line-strong)}
+.quick-pill:hover::after{translate:2px 0}
+.quick-pill:active{scale:.99}
 
 .timeline{gap:28px}
 .month{position:sticky;top:var(--mast-h);z-index:5;padding:8px 0;background:var(--bg)}
-.grp>summary{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 0;list-style:none;cursor:pointer}
+.grp>summary{gap:12px;min-height:46px;padding:8px 0;list-style:none;cursor:pointer}
 .grp>summary::-webkit-details-marker{display:none}
-.grp>summary::after{content:"\203a";margin-left:auto;color:var(--ink-4);transition:rotate var(--dur-mast) var(--ease)}
+.grp>summary::after{content:"›";transition:rotate var(--dur-mast) var(--ease)}
 .grp[open]>summary::after{rotate:90deg}
 
 .archive-item{content-visibility:auto;contain-intrinsic-size:auto 50px}
 .ai-row{display:grid;grid:auto/64px 40px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:50px;padding:8px 10px}
-.ai-wd,.ai-cnt{color:var(--ink-4)}
+.quick-pill small,.quick-pill::after,.grp>summary::after,.ai-wd,.ai-cnt{color:var(--ink-4)}
+.folio-kicker,.quick-pill:hover::after{color:var(--accent-ink)}
 .ai-title{overflow:hidden;text-overflow:ellipsis;font-size:15px}
 
 [data-kind=weekly] .ai-row{min-height:60px;box-shadow:inset 2px 0 0 var(--accent)}
-[data-kind=weekly] .ai-date{display:inline-grid;place-items:center;height:22px;padding:0 8px;background:var(--accent-soft)}
-[data-kind=weekly] .ai-title{font:650 15.5px var(--font-display)}
+[data-kind=weekly] .ai-title{font-weight:650}
 .colophon{margin-top:40px;padding-top:16px;border-top:var(--b)}
 
 @media(min-width:640px){.quick-bar{grid:auto/1fr 1fr}}

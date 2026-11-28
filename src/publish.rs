@@ -872,6 +872,11 @@ impl Edition<'_> {
 
     fn make_index(&self) -> Page {
         let (shell_alt, _) = self.alternate(None, "");
+        let issue_prefix = if self.encrypt {
+            self.prefix
+        } else {
+            self.canonical
+        };
         let archive: Vec<_> = self
             .pages
             .iter()
@@ -888,7 +893,7 @@ impl Edition<'_> {
                 ArchiveIssue {
                     date: p.issue.end,
                     weekly: p.issue.kind == "weekly",
-                    href: page_path(self.prefix, &p.issue.rel()),
+                    href: page_path(issue_prefix, &p.issue.rel()),
                     title: p.parsed.title.clone(),
                     headline: p
                         .parsed
@@ -902,11 +907,22 @@ impl Edition<'_> {
                 }
             })
             .collect();
+        let folio_dek = if self.encrypt {
+            String::new()
+        } else {
+            self.lang
+                .choose(
+                    "Curated bilingual daily and weekly frontier AI briefings from ~155 primary sources — arXiv, Hugging Face, GitHub, and research labs — covering models, papers, open-source engineering, compute, and safety.",
+                    "双语每日与每周前沿 AI 简报：从 arXiv、Hugging Face、GitHub 与前沿实验室等约 155 个一手信源精选模型发布、学术论文、开源工程、算力与安全动态。",
+                )
+                .to_owned()
+        };
         let mut html = render::render_archive_html(
             &archive,
             self.lang,
             &RenderOptions {
                 lang_alt: shell_alt.clone(),
+                folio_dek,
                 ..RenderOptions::default()
             },
         );
@@ -1545,6 +1561,14 @@ fn strict_existing_artifacts(ctx: &SiteContext) -> Result<()> {
         })?;
     } else {
         crypto::assert_public_matches_plain(&paths.plain, &paths.public)?;
+        if !cfg.indexnow_key.is_empty() {
+            let key_path = paths.public.join(format!("{}.txt", cfg.indexnow_key));
+            ensure!(
+                fs::read_to_string(&key_path).ok().as_deref() == Some(cfg.indexnow_key.as_str()),
+                "prepared public bundle is missing matching IndexNow key file /{}.txt",
+                cfg.indexnow_key
+            );
+        }
     }
     let allowed = trusted_scripts(template.as_deref(), None, &plans)?;
     let expected =
@@ -1632,7 +1656,10 @@ fn strict_existing_artifacts(ctx: &SiteContext) -> Result<()> {
         crypto::assert_csp_policy_matches(worker_csp, expected_csp)?;
         ensure!(
             fs::read_to_string(&worker)? == geo::render_pages_worker(&worker_cfg)?
-                && fs::read_to_string(&routes)? == geo::render_pages_routes(),
+                && fs::read_to_string(&routes)?
+                    == geo::render_pages_routes_with_indexnow(
+                        Some(cfg.indexnow_key.as_str()).filter(|k| !k.is_empty()),
+                    ),
             "prepared Worker does not match the finalized headers and redirects"
         );
     } else {
@@ -2361,6 +2388,84 @@ async fn attach_domain(api: &PagesApi<'_>, cfg: &SiteConfig) -> Result<()> {
     Ok(())
 }
 
+const INDEXNOW_DEFAULT_ENDPOINT: &str = "https://api.indexnow.org/indexnow";
+const INDEXNOW_MAX_URLS: usize = 10_000;
+
+async fn submit_indexnow(cfg: &SiteConfig, origin: &str, canonical_urls: &[String]) -> Result<u16> {
+    let endpoint_raw = env::var("DIGEST_INDEXNOW_ENDPOINT")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| INDEXNOW_DEFAULT_ENDPOINT.to_owned());
+    let endpoint = Url::parse(&endpoint_raw).context("invalid DIGEST_INDEXNOW_ENDPOINT")?;
+    let loopback = loopback_base(&endpoint);
+    ensure!(
+        (endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback))
+            && endpoint.has_host()
+            && endpoint.username().is_empty()
+            && endpoint.password().is_none()
+            && endpoint.fragment().is_none(),
+        "invalid IndexNow endpoint"
+    );
+    let mut builder = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .user_agent(format!("ai-digest/{}", crate::version::VERSION));
+    if !loopback {
+        crate::net::validate_target(&endpoint)?;
+        if let Some(url::Host::Domain(host)) = endpoint.host() {
+            let port = endpoint
+                .port_or_known_default()
+                .context("missing IndexNow endpoint port")?;
+            let addrs = tokio::time::timeout(
+                Duration::from_secs(5),
+                tokio::net::lookup_host((host, port)),
+            )
+            .await
+            .context("IndexNow DNS lookup timed out")??;
+            let mut selected = None;
+            for addr in addrs {
+                ensure!(
+                    crate::net::is_public_ip(addr.ip()),
+                    "IndexNow endpoint resolved to a non-public IP"
+                );
+                selected.get_or_insert(addr);
+            }
+            let pinned = selected.context("IndexNow DNS returned no addresses")?;
+            builder = builder.resolve(host, pinned);
+        }
+    }
+    let origin_url = Url::parse(origin).context("invalid site origin")?;
+    let host = origin_url
+        .host_str()
+        .context("missing host in site origin")?;
+    let urls: Vec<&str> = canonical_urls
+        .iter()
+        .take(INDEXNOW_MAX_URLS)
+        .map(String::as_str)
+        .collect();
+    let payload = json!({
+        "host": host,
+        "key": cfg.indexnow_key,
+        "keyLocation": format!("{origin}/{}.txt", cfg.indexnow_key),
+        "urlList": urls,
+    });
+    let res = builder
+        .build()?
+        .post(endpoint)
+        .json(&payload)
+        .send()
+        .await?;
+    let status = res.status();
+    ensure!(
+        status.is_success(),
+        "IndexNow endpoint returned HTTP {}",
+        status.as_u16()
+    );
+    Ok(status.as_u16())
+}
+
 async fn verify_live(
     ctx: &SiteContext,
     deployment: &Value,
@@ -2801,15 +2906,21 @@ async fn run_site(
         .as_ref()
         .map(|c| c.password.as_str())
         .or(deploy_only_password.as_deref());
+    let origin = geo::site_origin(&cfg.domain);
     let symmetric;
+    let mut indexnow_urls = Vec::new();
     let mut rotation_rollback = None;
     if args.deploy_only {
         if !args.no_verify {
             let count = verify::verify_local(&ctx.paths, cfg.encrypt, password)?;
             log.line(format!("local verification: {count} pages, exact match"))?;
         }
-        symmetric =
-            ctx.lang == Lang::ZhCn && !source_refs(&ctx.paths.sources.join("en"))?.is_empty();
+        let plans = site_plans(&ctx)?;
+        symmetric = plans.symmetric;
+        if !cfg.encrypt && !cfg.indexnow_key.is_empty() {
+            let geo_pages: Vec<_> = plans.pages.values().map(|p| p.geo.clone()).collect();
+            indexnow_urls = geo::canonical_urls(&geo_pages, &origin);
+        }
     } else {
         let mut plans = site_plans(&ctx)?;
         symmetric = plans.symmetric;
@@ -2834,6 +2945,10 @@ async fn run_site(
             },
             log,
         )?;
+        if !cfg.encrypt && !cfg.indexnow_key.is_empty() {
+            let geo_pages: Vec<_> = plans.pages.values().map(|p| p.geo.clone()).collect();
+            indexnow_urls = geo::canonical_urls(&geo_pages, &origin);
+        }
         if rotating {
             let rollback = RotationRollback::begin(
                 stage,
@@ -2866,7 +2981,6 @@ async fn run_site(
     } else {
         url_prefix(&[&cfg.slug])
     };
-    let origin = geo::site_origin(&cfg.domain);
     let mut verified = None;
     if args.prepare_only {
         details.push("deploy: skipped (--prepare-only)".into());
@@ -2942,6 +3056,23 @@ roll back the remote deployment manually before restoring backups.",
         }
         details.push(format!("deploy: ok ({via})"));
         verified = live_count;
+        if !cfg.encrypt && !cfg.indexnow_key.is_empty() && !indexnow_urls.is_empty() {
+            let submitted = indexnow_urls.len().min(INDEXNOW_MAX_URLS);
+            match submit_indexnow(cfg, &origin, &indexnow_urls).await {
+                Ok(status) => {
+                    let _ = log.line(format!(
+                        "IndexNow: submitted {submitted} canonical URL(s) -> HTTP {status}"
+                    ));
+                    details.push(format!("indexnow: ok (HTTP {status}, {submitted} urls)"));
+                }
+                Err(error) => {
+                    let msg = format!("WARNING: IndexNow submission failed (non-fatal): {error:#}");
+                    let _ = log.line(&msg);
+                    eprintln!("{msg}");
+                    details.push("indexnow: warning (submission failed)".into());
+                }
+            }
+        }
     }
     if let Some(issue) = &requested_issue {
         details.push(format!("url: {origin}{prefix}/{}", issue.rel()));

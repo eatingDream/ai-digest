@@ -39,7 +39,9 @@ fn cli(root: &Path, args: &[&str]) -> Command {
         .env_remove("DIGEST_LANG")
         .env_remove("LEDGER_PATH")
         .env_remove("DIGEST_ENCRYPT")
-        .env_remove("SITE_SLUG");
+        .env_remove("SITE_SLUG")
+        .env_remove("DIGEST_INDEXNOW_KEY")
+        .env_remove("DIGEST_INDEXNOW_ENDPOINT");
     cmd
 }
 

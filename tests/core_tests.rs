@@ -743,6 +743,11 @@ fn navigation_publish_is_idempotent_for_both_html_generations() {
         }
         assert_eq!(once.matches("<!-- digest-nav-slot -->").count(), 1);
         assert_eq!(once.matches(r#"rel="prev" data-nav="prev""#).count(), 1);
+        assert!(
+            once.contains(r#"<nav class="issue-nav bottom num" aria-label="Issue navigation">"#)
+        );
+        assert!(once.contains(r#"<a class="nav-prev" href="/daily/2026-01-14"><span aria-hidden="true">←</span><span>Prev · Jan 14</span></a>"#));
+        assert!(once.contains(r#"<span class="nav-next" aria-disabled="true" aria-label="Next"><span>Next</span><span aria-hidden="true">→</span></span>"#));
         assert!(!once.contains("digest-nav-css:start"));
         assert!(!once.contains("digest-perf:start"));
         assert!(!once.contains("digest-lock:start"));
@@ -789,6 +794,8 @@ fn archive_week_summary_is_text_only_and_404_has_three_links() {
         .0;
     assert!(!summary.contains('<'));
     assert!(summary.contains("W03"));
+    assert!(html.contains(r#"<a class="quick-pill" data-kind="daily" href="/daily/latest"><span>Latest daily</span><strong><time datetime="2026-01-15">2026-01-15</time></strong><small class="num">10 items</small></a>"#));
+    assert!(html.contains(r#"<a class="quick-pill" data-kind="weekly" href="/weekly/latest"><span>Latest weekly</span><strong><time datetime="2026-01-18">W03 · 2026-01-18</time></strong><small class="num">10 items</small></a>"#));
     assert!(html.contains(r#"<details class="grp" data-week="2026-W03" open>"#));
     assert!(
         html.find(r#"<li class="archive-item" data-kind="weekly""#)

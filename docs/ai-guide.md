@@ -30,6 +30,8 @@ Environment variables take precedence over `site/CONFIG`.
 | `DIGEST_ENCRYPT` | `ENCRYPT` | Opt-in client-side AES-256-GCM password encryption (`1`/`true`/`yes`/`on`; disables public GEO) | `0` (public) |
 | `DIGEST_GEO_AI_TRAIN` | `GEO_AI_TRAIN` | Public `Content-Signal` & training-crawler policy (`yes` or `no`; `ENCRYPT=0` only) | `yes` |
 | `DIGEST_GEO_WORKER` | `GEO_WORKER` | Emit Pages `_worker.js` for `Accept: text/markdown` & `/.well-known/search` (`1`/`0`; `ENCRYPT=0` only) | `1` (on) |
+| `DIGEST_INDEXNOW_KEY` | `INDEXNOW_KEY` | Optional IndexNow key (`^[A-Za-z0-9-]{8,128}$`) emitting `/<key>.txt` and pushing canonical URLs post-deploy (`ENCRYPT=0` only; set `DOMAIN` to the public hostname serving `/<key>.txt`) | empty (disabled) |
+| `DIGEST_INDEXNOW_ENDPOINT` | — | Optional IndexNow API endpoint override | `https://api.indexnow.org/indexnow` |
 | `CF_ACCOUNT_ID` | `ACCOUNT_ID` | Cloudflare account ID | — |
 | `CF_ZONE_ID` | `ZONE_ID` | Zone of the domain (optional) | — |
 | `CF_PAGES_PROJECT` | `PROJECT` | Cloudflare Pages project name | `ai-digest` |

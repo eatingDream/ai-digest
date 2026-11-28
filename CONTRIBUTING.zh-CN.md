@@ -7,7 +7,7 @@
 - **一切改动走 PR**：`main` 对所有人受保护（含维护者 `enforce_admins`，仅允许 squash 合并以保持线性历史）。请从最新 `main` 切短期分支（`feat/`、`fix/`、`docs/`、`refactor/`、`test/`、`chore/`、`ci/`），一个 PR 只做一件事，绝不直接推送 `main` 或对公开历史 force-push。
 - **Conventional Commits 与自动发版**：PR 标题遵循 [Conventional Commits](https://www.conventionalcommits.org/)（如 `fix(fetch): ...`、`feat(render): ...`、`docs: ...`）。[Release Please](https://github.com/googleapis/release-please) 会自动根据合入标题同步递增 `Cargo.toml`、`Cargo.lock`、`web/package.json`、`web/package-lock.json` 与 [CHANGELOG.md](CHANGELOG.md) 并触发 `release.yml` 发版，日常 PR 无需手改版本号或更新日志。
 - **公开仓库红线**：绝不提交密钥、令牌、密码、盐值、`site/CONFIG`、真实网址/邮箱、本机路径或个人账号；示例和测试仅使用合成数据（`example.com`、虚构人名）。
-- **必需检查**（分支须与 `main` 同步）：`Frontend (TS + CSS + Vitest)`、`Rust (fmt + clippy + test)`、`E2E parity & release binary hygiene`、`Secret scan (gitleaks) + sanitization guard`。合并后自动删除远端分支；配置 Cloudflare Secrets 后 `.github/workflows/demo.yml` 会自动部署演示站。
+- **必需检查**（分支须与 `main` 同步）：`Frontend (TS + CSS + Vitest)`、`Rust (fmt + clippy + test)`、`E2E parity & release binary hygiene`、`Secret scan (gitleaks) + sanitization guard`。合并后自动删除远端分支。
 - **许可协议**：贡献内容默认以 [MIT](LICENSE) 许可发布。
 
 ## 本地检查

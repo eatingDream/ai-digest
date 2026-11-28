@@ -130,9 +130,9 @@
   <text x="940" y="299" font-size="10.5" fill="#64748B">AES-GCM decryption parity</text>
 
   <g filter="url(#sh)"><rect x="926" y="324" width="160" height="74" rx="10" fill="#0B0D12" stroke="#1E293B"/></g>
-  <text x="940" y="347" font-size="12.5" font-weight="650" fill="#F2F4F8">Live Public Demo</text>
-  <text x="940" y="365" font-size="10.5" fill="#6895FF">ai-digest-demo.pages.dev</text>
-  <text x="940" y="382" font-size="10.5" fill="#A6B0C3">/en/ · /zh-CN/ · Zero password</text>
+  <text x="940" y="347" font-size="12.5" font-weight="650" fill="#F2F4F8">Live Public Site</text>
+  <text x="940" y="365" font-size="10.5" fill="#6895FF">ai.dreamsi.cc</text>
+  <text x="940" y="382" font-size="10.5" fill="#A6B0C3">/zh/ · /en/ · Zero password</text>
 
   <!-- Main horizontal flow arrows -->
   <line x1="216" y1="238" x2="239" y2="238" stroke="#2952CC" stroke-width="2" marker-end="url(#ar)"/>
@@ -159,7 +159,7 @@
 
   <rect x="570" y="438" width="528" height="158" rx="14" fill="#EEF2F8" stroke="#DCE4F2"/>
   <text x="590" y="465" font-size="13.5" font-weight="700" fill="#0F1420">GitHub Actions CI, Security &amp; Multi-Target Releases</text>
-  <text x="590" y="485" font-size="11.5" fill="#4A5568">Every PR runs Rust + Vitest + E2E parity + redaction gates; main auto-deploys demo &amp; binaries.</text>
+  <text x="590" y="485" font-size="11.5" fill="#4A5568">Every PR runs Rust + Vitest + E2E parity + redaction gates; main auto-publishes releases &amp; binaries.</text>
   <g filter="url(#sh)"><rect x="588" y="502" width="154" height="76" rx="9" fill="#FFFFFF" stroke="#E2E8F0"/></g>
   <text x="600" y="524" font-size="12" font-weight="650" fill="#0F1420">Rust &amp; TS Test CI</text>
   <text x="600" y="542" font-size="10.5" fill="#4A5568">cargo clippy/test + vitest</text>

@@ -19,3 +19,5 @@ LANG=en
 LANG_ALT=
 # Optional when SLUG is set: expose root-level /latest, /zh/latest, /en/latest static pages (HTTP 200)
 # ROOT_LATEST=0
+# Optional IndexNow key (8-128 ASCII alphanumeric/hyphen chars) to emit /<key>.txt and push canonical URLs after public deploys
+# INDEXNOW_KEY=
