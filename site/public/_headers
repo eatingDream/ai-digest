@@ -10,13 +10,17 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   Content-Security-Policy: default-src 'none'; script-src 'sha256-K8AMXq9YtQjRNhY29wqFrBeVSAmso/fUzqfuqELyxS0=' 'sha256-72upgOtXUYYfpbOnby12zXpzQ+UsSDcDvAHrs1an1eU='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
 /favicon.svg
+  ! Vary
   Cache-Control: public, max-age=86400
+/assets/*
+  ! Vary
+  Cache-Control: public, max-age=31536000, immutable
 /<SITE_SLUG>/
-  Cache-Control: public, max-age=60, stale-while-revalidate=604800
+  Cache-Control: public, max-age=60, s-maxage=600, stale-while-revalidate=86400
 /<SITE_SLUG>/daily/*
-  Cache-Control: public, max-age=300, stale-while-revalidate=604800
+  Cache-Control: public, max-age=300, s-maxage=600, stale-while-revalidate=86400
 /<SITE_SLUG>/weekly/*
-  Cache-Control: public, max-age=300, stale-while-revalidate=604800
+  Cache-Control: public, max-age=300, s-maxage=600, stale-while-revalidate=86400
 /<SITE_SLUG>/latest
   Cache-Control: no-store
 /<SITE_SLUG>/latest/
