@@ -10,18 +10,72 @@ const ASSETS: [(&str, &str, &str); 10] = [
     ("index.js", "INDEX_JS", "/* index stub */"),
     ("unlock.js", "UNLOCK_JS", "/* unlock stub */"),
     ("lock.js", "LOCK_JS", "/* lock stub */"),
-    ("worker.js", "WORKER_JS", "const CFG = __WORKER_CFG_JSON__;\nexport default { async fetch() { return new Response(\"stub\"); } };\n"),
+    (
+        "worker.js",
+        "WORKER_JS",
+        "const CFG = __WORKER_CFG_JSON__;\nexport default { async fetch() { return new Response(\"stub\"); } };\n",
+    ),
 ];
-const FAVICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#b85432"/><path d="M8 24 14 8h4l6 16h-4l-1-4h-6l-1 4zm6-7h4l-2-6z" fill="#faf8f4"/></svg>"##;
+
+struct ThemeTokens {
+    dark_bg: String,
+    light_bg: String,
+    dark_accent: String,
+    light_accent: String,
+}
+
+impl Default for ThemeTokens {
+    fn default() -> Self {
+        Self {
+            dark_bg: "#0B0D12".to_owned(),
+            light_bg: "#F8FAFD".to_owned(),
+            dark_accent: "#6895FF".to_owned(),
+            light_accent: "#2952CC".to_owned(),
+        }
+    }
+}
 
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("output directory"));
     println!("cargo:rerun-if-env-changed=AI_DIGEST_REQUIRE_WEB_DIST");
     println!("cargo:rerun-if-env-changed=AI_DIGEST_WEB_DIST");
+    println!("cargo:rerun-if-changed=web/ui-theme.json");
     let required = env::var("AI_DIGEST_REQUIRE_WEB_DIST").as_deref() == Ok("1")
         || env::var("PROFILE").as_deref() == Ok("release");
+    let theme = load_theme_tokens(&root.join("web/ui-theme.json"), required);
+    let favicon_fallback = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><rect x="1" y="1" width="30" height="30" rx="7" fill="{dark_bg}" stroke="{dark_accent}" stroke-opacity="0.55" stroke-width="1.2"/><rect x="7" y="7.5" width="18" height="3.6" rx="1.4" fill="{dark_accent}"/><path d="M7.5 15.5h17M7.5 19.8h13.5M7.5 24.1h9.5" stroke="#F2F4F8" stroke-width="2" stroke-linecap="round"/><circle cx="23" cy="24.1" r="1.7" fill="#34D399"/></svg>"##,
+        dark_bg = theme.dark_bg,
+        dark_accent = theme.dark_accent,
+    );
+
     let mut generated = String::new();
+    writeln!(
+        generated,
+        "pub const THEME_DARK_BG: &str = {:?};",
+        theme.dark_bg
+    )
+    .unwrap();
+    writeln!(
+        generated,
+        "pub const THEME_LIGHT_BG: &str = {:?};",
+        theme.light_bg
+    )
+    .unwrap();
+    writeln!(
+        generated,
+        "pub const THEME_ACCENT_DARK: &str = {:?};",
+        theme.dark_accent
+    )
+    .unwrap();
+    writeln!(
+        generated,
+        "pub const THEME_ACCENT_LIGHT: &str = {:?};",
+        theme.light_accent
+    )
+    .unwrap();
+
     let web = env::var_os("AI_DIGEST_WEB_DIST")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("web/dist"));
@@ -38,7 +92,7 @@ fn main() {
         &mut generated,
         &root.join("docs/logo.svg"),
         "FAVICON_SVG",
-        FAVICON,
+        &favicon_fallback,
         false,
     );
     embed_bytes(
@@ -48,6 +102,127 @@ fn main() {
         OG_CARD_STUB,
     );
     fs::write(out.join("web_assets.rs"), generated).expect("write embedded asset manifest");
+}
+
+fn load_theme_tokens(path: &std::path::Path, required: bool) -> ThemeTokens {
+    let Ok(raw) = fs::read_to_string(path) else {
+        assert!(
+            !required,
+            "missing {}; ensure web/ui-theme.json exists",
+            path.display()
+        );
+        return ThemeTokens::default();
+    };
+    let palette =
+        extract_json_object(&raw, "palette").expect("palette object in web/ui-theme.json");
+    let dark = extract_json_object(palette, "dark").expect("palette.dark in web/ui-theme.json");
+    let light = extract_json_object(palette, "light").expect("palette.light in web/ui-theme.json");
+    ThemeTokens {
+        dark_bg: extract_hex_color(dark, "bg", "palette.dark.bg"),
+        light_bg: extract_hex_color(light, "bg", "palette.light.bg"),
+        dark_accent: extract_hex_color(dark, "accent", "palette.dark.accent"),
+        light_accent: extract_hex_color(light, "accent", "palette.light.accent"),
+    }
+}
+
+fn find_json_key_value<'a>(src: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("\"{key}\"");
+    let mut rest = src;
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut esc = false;
+    let bytes = src.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'{' | b'[' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            b'"' if depth == 1 && src[i..].starts_with(&needle) => {
+                rest = src[i + needle.len()..].trim_start();
+                if let Some(after_colon) = rest.strip_prefix(':') {
+                    return Some(after_colon.trim_start());
+                }
+                i += needle.len();
+            }
+            b'"' => {
+                in_str = true;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    let _ = rest;
+    None
+}
+
+fn extract_json_object<'a>(src: &'a str, key: &str) -> Option<&'a str> {
+    let val = find_json_key_value(src, key)?;
+    let bytes = val.as_bytes();
+    if bytes.first().copied() != Some(b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut esc = false;
+    for (idx, &b) in bytes.iter().enumerate() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&val[..=idx]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn extract_hex_color(src: &str, key: &str, label: &str) -> String {
+    let val = find_json_key_value(src, key)
+        .unwrap_or_else(|| panic!("missing {label} in web/ui-theme.json"));
+    let stripped = val
+        .strip_prefix('"')
+        .unwrap_or_else(|| panic!("{label} must be a string in web/ui-theme.json"));
+    let end = stripped
+        .find('"')
+        .unwrap_or_else(|| panic!("unterminated {label} string in web/ui-theme.json"));
+    let hex = &stripped[..end];
+    assert!(
+        hex.len() == 7 && hex.starts_with('#') && hex[1..].bytes().all(|b| b.is_ascii_hexdigit()),
+        "{label} must be #RRGGBB in web/ui-theme.json (got {hex:?})"
+    );
+    hex.to_owned()
 }
 
 const OG_CARD_STUB: &[u8] = &[

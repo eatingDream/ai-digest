@@ -16,7 +16,7 @@ try {
   const cs = dk ? "dark" : "light";
   r.style.colorScheme = cs;
   const m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.setAttribute("content", dk ? "#121110" : "#f6f3ec");
+  if (m) m.setAttribute("content", dk ? __THEME_DARK_BG__ : __THEME_LIGHT_BG__);
   const c = document.querySelector('meta[name="color-scheme"]');
   if (c) c.setAttribute("content", cs);
 } catch {

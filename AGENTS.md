@@ -38,7 +38,7 @@ CI (`.github/workflows/ci.yml`) also checks `strings target/release/ai-digest` f
 | `src/geo.rs` | Public Level 5/5 GEO & Agent Readiness (`ENCRYPT=0` only): `robots.txt` Content Signals, `sitemap.xml`, `llms.txt`/`llms-full.txt`, Atom feeds, JSON-LD, `.md` mirrors, `/.well-known/agent-skills/`, `search-index.json`, and `_worker.js` config injection |
 | `src/crypto.rs`, `src/net.rs`, `src/verify.rs` | Privacy scan, build-time SHA-256 CSP header finalizer, opt-in AES-256-GCM+gzip encryption (`ENCRYPT=1`), SSRF-hardened HTTP client, native verifier |
 | `src/publish.rs`, `src/i18n.rs`, `src/model.rs`, `src/assets.rs`, `src/version.rs` | Publish orchestrator (`--init`, `--issue`, `--remove`, `--rebuild`, `--rerender-all`, `--rotate-password`, `--demo`), bilingual i18n, shared models |
-| `web/src/{css,ts}/`, `web/build.ts`, `web/dist/`, `web/tests/` | Strict TypeScript + CSS frontend, deterministic `esbuild` pipeline (committed `web/dist/*` + `verify_decrypt.mjs`), Vitest suite (budgets, CSS hygiene, Worker, WebCrypto parity) |
+| `web/ui-theme.json`, `web/src/{css,ts}/`, `web/build.ts`, `web/dist/`, `web/tests/` | Declarative Lucid Indigo palette + motion config, strict TypeScript + CSS frontend, deterministic `esbuild` pipeline (committed `web/dist/*` + `verify_decrypt.mjs`), Vitest suite (budgets, CSS hygiene, Worker, WebCrypto parity) |
 | `fetch/` | Source registry (`sources.toml`), `preferences.example.json`, optional X recall protocol (`x-recall*.md`), arXiv troubleshooting |
 | `prompts/<en\|zh-CN>/{papers,daily,weekly}.md` | Self-contained agent prompts; each starts with a "Run contract" table |
 | `filter-notes.md`, `x-sources.md` | Selection rules and reader-preference profile template (`.zh-CN.md` twins) |

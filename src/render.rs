@@ -438,11 +438,12 @@ fn page_head(
 <html lang="{lang}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#121110">
+<meta name="theme-color" content="{}">
 <meta name="color-scheme" content="dark">
 <script>{}</script>
 <title>{}</title>
 "##,
+        assets::THEME_DARK_BG,
         assets::BOOT_JS,
         esc(title)
     );

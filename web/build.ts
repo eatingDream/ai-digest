@@ -1,4 +1,10 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -7,6 +13,69 @@ const WEB_DIR = dirname(fileURLToPath(import.meta.url));
 const SRC_CSS = join(WEB_DIR, "src", "css");
 const SRC_TS = join(WEB_DIR, "src", "ts");
 const DIST = join(WEB_DIR, "dist");
+export const UI_THEME_PATH = join(WEB_DIR, "ui-theme.json");
+
+export interface UiThemePalette {
+  readonly bg: string;
+  readonly bgAlt: string;
+  readonly bgMuted: string;
+  readonly surface: string;
+  readonly surfaceElevated: string;
+  readonly well: string;
+  readonly mastBg: string;
+  readonly ink: string;
+  readonly ink2: string;
+  readonly ink3: string;
+  readonly ink4: string;
+  readonly line: string;
+  readonly lineStrong: string;
+  readonly ctaBg: string;
+  readonly ctaInk: string;
+  readonly ctaHover: string;
+  readonly accent: string;
+  readonly accentInk: string;
+  readonly accentSoft: string;
+  readonly accentSofter: string;
+  readonly accentLine: string;
+  readonly selection: string;
+  readonly hot: string;
+  readonly rowHover: string;
+  readonly gridLine: string;
+  readonly spotGlare: string;
+  readonly scrim: string;
+}
+
+export interface UiThemeMotion {
+  readonly ease: string;
+  readonly easeSpring: string;
+  readonly pressMs: number;
+  readonly fastMs: number;
+  readonly baseMs: number;
+  readonly mastMs: number;
+  readonly indicatorMs: number;
+  readonly cardMs: number;
+  readonly drawerMs: number;
+  readonly drawerCloseDelayMs: number;
+  readonly pageTransitionMs: number;
+  readonly themeRevealMs: number;
+  readonly themeRevealDelayMs: number;
+  readonly snapWheelResetMs: number;
+  readonly snapWheelLockMs: number;
+  readonly sceneNavLockMs: number;
+  readonly copyDoneHoldMs: number;
+  readonly arrivedHighlightMs: number;
+  readonly shortJumpMaxMs: number;
+  readonly searchDebounceMs: number;
+}
+
+export interface UiThemeConfig {
+  readonly name: string;
+  readonly palette: {
+    readonly dark: UiThemePalette;
+    readonly light: UiThemePalette;
+  };
+  readonly motion: UiThemeMotion;
+}
 
 interface CssBundleSpec {
   readonly out: string;
@@ -25,20 +94,267 @@ interface CssBlock {
   raw: boolean;
 }
 
-interface CssBuildSize {
+export interface CssBuildSize {
   readonly bytes: number;
   readonly limit: number;
+  readonly code: string;
 }
 
-interface PageBudget {
+export interface PageBudget {
   readonly name: string;
   readonly bytes: number;
 }
 
-interface JsBuildReport {
+export interface JsBuildReport {
   readonly sizes: Record<string, number>;
+  readonly outputs: Record<string, string>;
   readonly pageBudgets: readonly PageBudget[];
   readonly jsLimit: number;
+}
+
+export interface BuildOptions {
+  readonly theme?: UiThemeConfig;
+  readonly write?: boolean;
+}
+
+const PALETTE_KEYS: readonly (keyof UiThemePalette)[] = [
+  "bg",
+  "bgAlt",
+  "bgMuted",
+  "surface",
+  "surfaceElevated",
+  "well",
+  "mastBg",
+  "ink",
+  "ink2",
+  "ink3",
+  "ink4",
+  "line",
+  "lineStrong",
+  "ctaBg",
+  "ctaInk",
+  "ctaHover",
+  "accent",
+  "accentInk",
+  "accentSoft",
+  "accentSofter",
+  "accentLine",
+  "selection",
+  "hot",
+  "rowHover",
+  "gridLine",
+  "spotGlare",
+  "scrim",
+];
+
+const MOTION_STRING_KEYS: readonly (keyof UiThemeMotion)[] = [
+  "ease",
+  "easeSpring",
+];
+
+const MOTION_MS_KEYS: readonly (keyof UiThemeMotion)[] = [
+  "pressMs",
+  "fastMs",
+  "baseMs",
+  "mastMs",
+  "indicatorMs",
+  "cardMs",
+  "drawerMs",
+  "drawerCloseDelayMs",
+  "pageTransitionMs",
+  "themeRevealMs",
+  "themeRevealDelayMs",
+  "snapWheelResetMs",
+  "snapWheelLockMs",
+  "sceneNavLockMs",
+  "copyDoneHoldMs",
+  "arrivedHighlightMs",
+  "shortJumpMaxMs",
+  "searchDebounceMs",
+];
+
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+function isRecord(val: unknown): val is Record<string, unknown> {
+  return typeof val === "object" && val !== null && !Array.isArray(val);
+}
+
+function validatePalette(raw: unknown, label: string): UiThemePalette {
+  if (!isRecord(raw)) {
+    throw new Error(`Invalid ui-theme.json: ${label} must be an object`);
+  }
+  for (const key of PALETTE_KEYS) {
+    const val = raw[key];
+    if (typeof val !== "string" || val.trim().length === 0) {
+      throw new Error(
+        `Invalid ui-theme.json: ${label}.${key} must be a non-empty string`,
+      );
+    }
+    if (/[{};]/.test(val)) {
+      throw new Error(
+        `Invalid ui-theme.json: ${label}.${key} contains unsafe CSS characters`,
+      );
+    }
+  }
+  for (const hexKey of ["bg", "accent"] as const) {
+    const v = String(raw[hexKey]);
+    if (!HEX_COLOR_RE.test(v)) {
+      throw new Error(
+        `Invalid ui-theme.json: ${label}.${hexKey} must be a 6-digit hex color (got "${v}")`,
+      );
+    }
+  }
+  return raw as unknown as UiThemePalette;
+}
+
+export function validateUiTheme(raw: unknown): UiThemeConfig {
+  if (!isRecord(raw)) {
+    throw new Error("Invalid ui-theme.json: root must be a JSON object");
+  }
+  if (typeof raw.name !== "string" || raw.name.trim().length === 0) {
+    throw new Error("Invalid ui-theme.json: name must be a non-empty string");
+  }
+  if (!isRecord(raw.palette)) {
+    throw new Error("Invalid ui-theme.json: palette must be an object");
+  }
+  const dark = validatePalette(raw.palette.dark, "palette.dark");
+  const light = validatePalette(raw.palette.light, "palette.light");
+
+  if (!isRecord(raw.motion)) {
+    throw new Error("Invalid ui-theme.json: motion must be an object");
+  }
+  for (const key of MOTION_STRING_KEYS) {
+    const val = raw.motion[key];
+    if (typeof val !== "string" || val.trim().length === 0 || /[{};]/.test(val)) {
+      throw new Error(
+        `Invalid ui-theme.json: motion.${key} must be a valid CSS timing function`,
+      );
+    }
+  }
+  for (const key of MOTION_MS_KEYS) {
+    const val = raw.motion[key];
+    const min = key === "themeRevealDelayMs" ? 0 : 1;
+    if (typeof val !== "number" || !Number.isFinite(val) || val < min) {
+      throw new Error(
+        `Invalid ui-theme.json: motion.${key} must be a finite number >= ${min}`,
+      );
+    }
+  }
+
+  return {
+    name: raw.name,
+    palette: { dark, light },
+    motion: raw.motion as unknown as UiThemeMotion,
+  };
+}
+
+export function loadUiTheme(path = UI_THEME_PATH): UiThemeConfig {
+  const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  return validateUiTheme(raw);
+}
+
+function compactColorToken(raw: string): string {
+  const trimmed = raw.trim();
+  const hex6 = trimmed.match(/^#([0-9a-fA-F]{6})$/);
+  if (hex6) {
+    const h = hex6[1].toLowerCase();
+    if (h[0] === h[1] && h[2] === h[3] && h[4] === h[5]) {
+      return `#${h[0]}${h[2]}${h[4]}`;
+    }
+    return `#${h}`;
+  }
+  const rgba = trimmed.match(
+    /^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([0-9]*\.?[0-9]+)\s*\)$/i,
+  );
+  if (rgba) {
+    const r = Math.max(0, Math.min(255, Number(rgba[1])));
+    const g = Math.max(0, Math.min(255, Number(rgba[2])));
+    const b = Math.max(0, Math.min(255, Number(rgba[3])));
+    const a = Math.max(0, Math.min(255, Math.round(Number(rgba[4]) * 255)));
+    const hx = [r, g, b, a]
+      .map((n) => n.toString(16).padStart(2, "0"))
+      .join("");
+    if (
+      hx[0] === hx[1] &&
+      hx[2] === hx[3] &&
+      hx[4] === hx[5] &&
+      hx[6] === hx[7]
+    ) {
+      return `#${hx[0]}${hx[2]}${hx[4]}${hx[6]}`;
+    }
+    return `#${hx}`;
+  }
+  return trimmed;
+}
+
+function compactDurationMs(ms: number): string {
+  const asMs = `${ms}ms`;
+  const sec = (ms / 1000).toString().replace(/^0\./, ".");
+  const asSec = `${sec}s`;
+  return asSec.length < asMs.length ? asSec : asMs;
+}
+
+function compactTimingFn(fn: string): string {
+  return fn
+    .trim()
+    .replace(/\s*,\s*/g, ",")
+    .replace(/\b0+\.(\d)/g, ".$1");
+}
+
+export function renderThemeRootCss(theme: UiThemeConfig): string {
+  const { dark, light } = theme.palette;
+  const { motion } = theme;
+  const ld = (key: keyof UiThemePalette): string =>
+    `light-dark(${compactColorToken(light[key])},${compactColorToken(dark[key])})`;
+
+  const pairs: readonly [string, string][] = [
+    ["--bg", ld("bg")],
+    ["--bg-alt", ld("bgAlt")],
+    ["--bg-muted", ld("bgMuted")],
+    ["--surface", ld("surface")],
+    ["--well", ld("well")],
+    ["--mast-bg", ld("mastBg")],
+    ["--ink", ld("ink")],
+    ["--ink-2", ld("ink2")],
+    ["--ink-3", ld("ink3")],
+    ["--ink-4", ld("ink4")],
+    ["--line", ld("line")],
+    ["--line-strong", ld("lineStrong")],
+    ["--cta-bg", ld("ctaBg")],
+    ["--cta-ink", ld("ctaInk")],
+    ["--accent", ld("accent")],
+    ["--accent-ink", ld("accentInk")],
+    ["--accent-soft", ld("accentSoft")],
+    ["--accent-softer", ld("accentSofter")],
+    ["--selection", ld("selection")],
+    ["--hot", ld("hot")],
+    ["--scrim", ld("scrim")],
+    ["--ease", compactTimingFn(motion.ease)],
+    ["--ease-spring", compactTimingFn(motion.easeSpring)],
+    ["--dur-press", compactDurationMs(motion.pressMs)],
+    ["--dur-fast", compactDurationMs(motion.fastMs)],
+    ["--dur-base", compactDurationMs(motion.baseMs)],
+    ["--dur-mast", compactDurationMs(motion.mastMs)],
+    ["--dur-card", compactDurationMs(motion.cardMs)],
+    ["--dur-drawer", compactDurationMs(motion.drawerMs)],
+    ["--dur-page", compactDurationMs(motion.pageTransitionMs)],
+    ["--dur-arrived", compactDurationMs(motion.arrivedHighlightMs)],
+  ];
+  return `:root{${pairs.map(([k, v]) => `${k}:${v}`).join(";")}}`;
+}
+
+export function buildThemeDefines(theme: UiThemeConfig): Record<string, string> {
+  return {
+    __THEME_DARK_BG__: JSON.stringify(theme.palette.dark.bg),
+    __THEME_LIGHT_BG__: JSON.stringify(theme.palette.light.bg),
+    __MOTION_EASE__: JSON.stringify(theme.motion.ease),
+    __MOTION_THEME_REVEAL_MS__: String(theme.motion.themeRevealMs),
+    __MOTION_THEME_REVEAL_DELAY_MS__: String(theme.motion.themeRevealDelayMs),
+    __MOTION_ARRIVED_MS__: String(theme.motion.arrivedHighlightMs),
+    __MOTION_SHORT_JUMP_MS__: String(theme.motion.shortJumpMaxMs),
+    __MOTION_SEARCH_DEBOUNCE_MS__: String(theme.motion.searchDebounceMs),
+    __MOTION_COPY_HOLD_MS__: String(theme.motion.copyDoneHoldMs),
+  };
 }
 
 const CSS_BUNDLES: readonly CssBundleSpec[] = [
@@ -162,6 +478,7 @@ function mergeTopLevelBlocks(css: string): string {
 
   const mergeFirst = new Set<string>([":root", ":lang(en)", "body"]);
   const mergeLast = new Set<string>([
+    "@media(max-width:960px)",
     "@media(min-width:640px)",
     "@media(min-width:1024px)",
     "@media(prefers-reduced-motion:reduce)",
@@ -216,12 +533,24 @@ function mergeTopLevelBlocks(css: string): string {
     .join("");
 }
 
-async function buildCss(): Promise<Record<string, CssBuildSize>> {
+export async function buildCss(
+  options: BuildOptions = {},
+): Promise<Record<string, CssBuildSize>> {
+  const theme = validateUiTheme(options.theme ?? loadUiTheme());
+  const write = options.write ?? true;
+  const themeRootCss = renderThemeRootCss(theme);
   const sizes: Record<string, CssBuildSize> = {};
+
   for (const spec of CSS_BUNDLES) {
-    const raw = spec.parts
+    const partsRaw = spec.parts
       .map((name) => readFileSync(join(SRC_CSS, name), "utf8"))
       .join("\n");
+    const filteredRootCss = themeRootCss.replace(
+      /(--[a-z0-9-]+):[^;{}]+;?/g,
+      (decl, varName: string) =>
+        partsRaw.includes(`var(${varName})`) ? decl : "",
+    );
+    const raw = [filteredRootCss, partsRaw].join("\n");
     const first = await esbuild.transform(raw, {
       loader: "css",
       target: ["chrome115", "safari16", "firefox115"],
@@ -244,8 +573,10 @@ async function buildCss(): Promise<Record<string, CssBuildSize>> {
         `CSS budget exceeded: ${spec.out} is ${bytes} B (limit ${spec.limit} B)`,
       );
     }
-    writeFileSync(join(DIST, spec.out), outText, "utf8");
-    sizes[spec.out] = { bytes, limit: spec.limit };
+    if (write) {
+      writeFileSync(join(DIST, spec.out), outText, "utf8");
+    }
+    sizes[spec.out] = { bytes, limit: spec.limit, code: outText };
   }
   return sizes;
 }
@@ -266,8 +597,12 @@ function getSize(sizes: Record<string, number>, name: string): number {
   return value;
 }
 
-async function buildJs(): Promise<JsBuildReport> {
+export async function buildJs(options: BuildOptions = {}): Promise<JsBuildReport> {
+  const theme = validateUiTheme(options.theme ?? loadUiTheme());
+  const write = options.write ?? true;
+  const defines = buildThemeDefines(theme);
   const sizes: Record<string, number> = {};
+  const outputs: Record<string, string> = {};
 
   for (const spec of JS_IIFE_ENTRIES) {
     const res = await esbuild.build({
@@ -275,6 +610,7 @@ async function buildJs(): Promise<JsBuildReport> {
       bundle: true,
       format: "iife",
       target: "es2020",
+      define: defines,
       minify: true,
       legalComments: "none",
       charset: "utf8",
@@ -283,8 +619,11 @@ async function buildJs(): Promise<JsBuildReport> {
     });
     const outText = getOutputText(res, spec.entry);
     const bytes = byteLen(outText);
-    writeFileSync(join(DIST, spec.out), outText, "utf8");
+    if (write) {
+      writeFileSync(join(DIST, spec.out), outText, "utf8");
+    }
     sizes[spec.out] = bytes;
+    outputs[spec.out] = outText;
   }
 
   // Cloudflare Pages _worker.js (ESM, preserves literal __WORKER_CFG_JSON__ exactly once)
@@ -308,8 +647,11 @@ async function buildJs(): Promise<JsBuildReport> {
       );
     }
     const bytes = byteLen(outText);
-    writeFileSync(join(DIST, "worker.js"), outText, "utf8");
+    if (write) {
+      writeFileSync(join(DIST, "worker.js"), outText, "utf8");
+    }
     sizes["worker.js"] = bytes;
+    outputs["worker.js"] = outText;
   }
 
   // Node >=20 CLI verifier (ESM with shebang)
@@ -329,13 +671,16 @@ async function buildJs(): Promise<JsBuildReport> {
     });
     const outText = getOutputText(res, "verify_decrypt.ts");
     const bytes = byteLen(outText);
-    const outPath = join(DIST, "verify_decrypt.mjs");
-    writeFileSync(outPath, outText, "utf8");
-    chmodSync(outPath, 0o755);
+    if (write) {
+      const outPath = join(DIST, "verify_decrypt.mjs");
+      writeFileSync(outPath, outText, "utf8");
+      chmodSync(outPath, 0o755);
+    }
     sizes["verify_decrypt.mjs"] = bytes;
+    outputs["verify_decrypt.mjs"] = outText;
   }
 
-  // Enforce combined per-page JS budgets (Astra P2: include boot + page + lock / unlock)
+  // Enforce combined per-page JS budgets (include boot + page + lock / unlock)
   const JS_PAGE_LIMIT = 30720;
   const bootSize = getSize(sizes, "boot.js");
   const lockSize = getSize(sizes, "lock.js");
@@ -361,28 +706,42 @@ async function buildJs(): Promise<JsBuildReport> {
     }
   }
 
-  return { sizes, pageBudgets, jsLimit: JS_PAGE_LIMIT };
+  return { sizes, outputs, pageBudgets, jsLimit: JS_PAGE_LIMIT };
 }
 
 async function main(): Promise<void> {
   mkdirSync(DIST, { recursive: true });
-  const cssSizes = await buildCss();
-  const { sizes: jsSizes, pageBudgets, jsLimit } = await buildJs();
+  const theme = loadUiTheme();
+  const cssSizes = await buildCss({ theme, write: true });
+  const { sizes: jsSizes, pageBudgets, jsLimit } = await buildJs({
+    theme,
+    write: true,
+  });
 
-  console.log("Built web/dist/ artifacts:");
+  console.log(`Built web/dist/ artifacts (${theme.name}):`);
   for (const [name, info] of Object.entries(cssSizes)) {
-    console.log(`  CSS  ${name.padEnd(20)} ${String(info.bytes).padStart(6)} / ${info.limit} B`);
+    console.log(
+      `  CSS  ${name.padEnd(20)} ${String(info.bytes).padStart(6)} / ${info.limit} B`,
+    );
   }
   for (const [name, bytes] of Object.entries(jsSizes)) {
     console.log(`  JS   ${name.padEnd(20)} ${String(bytes).padStart(6)} B`);
   }
   console.log("Per-page JS budgets:");
   for (const pb of pageBudgets) {
-    console.log(`  ${pb.name.padEnd(32)} ${String(pb.bytes).padStart(6)} / ${jsLimit} B`);
+    console.log(
+      `  ${pb.name.padEnd(32)} ${String(pb.bytes).padStart(6)} / ${jsLimit} B`,
+    );
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+const isMain =
+  process.argv[1] !== undefined &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+
+if (isMain) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
