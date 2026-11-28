@@ -7,7 +7,7 @@ Thanks for helping out. [简体中文](CONTRIBUTING.zh-CN.md)
 - **PRs only**: `main` is protected for everyone (`enforce_admins`, linear squash-only history). Branch from latest `main` (`feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, `ci/`), keep one focused change per PR, and never push directly to `main` or force-push published history.
 - **Conventional Commits & releases**: use [Conventional Commits](https://www.conventionalcommits.org/) for PR titles (e.g. `fix(fetch): ...`, `feat(render): ...`, `docs: ...`). [Release Please](https://github.com/googleapis/release-please) automatically bumps `Cargo.toml`, `Cargo.lock`, `web/package.json`, `web/package-lock.json`, and [CHANGELOG.md](CHANGELOG.md), and cuts tagged GitHub Releases (`release.yml`) from merged PR titles — do not edit version or changelog files in normal PRs.
 - **Public repo hygiene**: never commit secrets, tokens, passwords, salts, `site/CONFIG`, real URLs/emails, machine paths, or personal handles. Examples and tests must use synthetic data only (`example.com`, fictional names).
-- **Required checks** (branch up to date with `main`): `Frontend (TS + CSS + Vitest)`, `Rust (fmt + clippy + test)`, `E2E parity & release binary hygiene`, and `Secret scan (gitleaks) + sanitization guard`. Merged branches are deleted automatically; optional demo deploys run via `.github/workflows/demo.yml` when Cloudflare secrets are configured.
+- **Required checks** (branch up to date with `main`): `Frontend (TS + CSS + Vitest)`, `Rust (fmt + clippy + test)`, `E2E parity & release binary hygiene`, and `Secret scan (gitleaks) + sanitization guard`. Merged branches are deleted automatically.
 - **License**: contributions are released under the [MIT License](LICENSE).
 
 ## Local checks

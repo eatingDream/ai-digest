@@ -12,7 +12,7 @@
 ![TypeScript](https://img.shields.io/badge/typescript-5.x-3178c6?logo=typescript&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-[English](README.md) | 简体中文 · [在线演示](https://ai-digest-demo.pages.dev) · [版本发布](https://github.com/eatingDream/ai-digest/releases) · [Agent 指南（`llms.txt`）](llms.txt)
+[English](README.md) | 简体中文 · [线上站点](https://ai.dreamsi.cc) · [版本发布](https://github.com/eatingDream/ai-digest/releases) · [Agent 指南（`llms.txt`）](llms.txt)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.zh-CN.png">

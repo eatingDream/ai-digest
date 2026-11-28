@@ -149,6 +149,7 @@ pub struct SiteConfig {
     pub content_signal: String,
     pub geo_worker: bool,
     pub geo_search: bool,
+    pub indexnow_key: String,
 }
 
 impl Default for SiteConfig {
@@ -168,6 +169,7 @@ impl Default for SiteConfig {
             content_signal: "ai-train=yes, search=yes, ai-input=yes".into(),
             geo_worker: true,
             geo_search: true,
+            indexnow_key: String::new(),
         }
     }
 }
@@ -226,10 +228,11 @@ impl SiteConfig {
             ("DIGEST_CONTENT_SIGNAL", "CONTENT_SIGNAL"),
             ("DIGEST_GEO_WORKER", "GEO_WORKER"),
             ("DIGEST_GEO_SEARCH", "GEO_SEARCH"),
+            ("DIGEST_INDEXNOW_KEY", "INDEXNOW_KEY"),
         ] {
             if let Some(value) = get(var) {
                 let value = value.trim();
-                if !value.is_empty() || key == "SLUG" {
+                if !value.is_empty() || matches!(key, "SLUG" | "INDEXNOW_KEY") {
                     data.insert(key.into(), value.into());
                 }
             }
@@ -246,6 +249,13 @@ impl SiteConfig {
         let lang =
             resolve_lang_with_env(cli_lang, get("DIGEST_LANG").as_deref(), Some(val("LANG")))?;
         validate_slug(val("SLUG"))?;
+        validate_indexnow_key(val("INDEXNOW_KEY"))?;
+        if !val("SLUG").is_empty() && !val("INDEXNOW_KEY").is_empty() {
+            ensure!(
+                !val("SLUG").eq_ignore_ascii_case(&format!("{}.txt", val("INDEXNOW_KEY"))),
+                "INDEXNOW_KEY file collides with SLUG directory"
+            );
+        }
         let (content_signal, geo_ai_train) =
             content_signal(val("CONTENT_SIGNAL"), val("GEO_AI_TRAIN"));
         let defaults = Self::default();
@@ -272,6 +282,7 @@ impl SiteConfig {
             geo_search: !falsy(val("GEO_SEARCH")),
             content_signal,
             geo_ai_train,
+            indexnow_key: val("INDEXNOW_KEY").into(),
         })
     }
 }
@@ -322,6 +333,18 @@ pub fn validate_slug(slug: &str) -> Result<()> {
                     .all(|b| b.is_ascii_alphanumeric() || b"._~-".contains(&b))
                 && !RESERVED_SLUGS.contains(&slug.to_ascii_lowercase().as_str()),
             "invalid SLUG: use at least 8 URL-safe characters and avoid reserved names"
+        );
+    }
+    Ok(())
+}
+
+pub fn validate_indexnow_key(key: &str) -> Result<()> {
+    if !key.is_empty() {
+        ensure!(
+            (8..=128).contains(&key.len())
+                && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !RESERVED_SLUGS.contains(&format!("{}.txt", key.to_ascii_lowercase()).as_str()),
+            "invalid INDEXNOW_KEY: expected 8-128 ASCII alphanumeric or hyphen characters"
         );
     }
     Ok(())

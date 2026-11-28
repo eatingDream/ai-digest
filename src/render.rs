@@ -1691,7 +1691,7 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
         &opts.folio_dek
     };
     writeln!(out, r#"<main id="main" class="paper"><header class="folio"><p class="folio-kicker">{}</p><h1>{}</h1><p class="folio-dek">{}</p></header><div class="quick-bar">"#,
-        lang.choose("Archive", "存档"), lang.choose("Daily & Weekly AI Briefings", "每日与每周 AI 简报"), esc(&protect_technical_hyphens(dek))).unwrap();
+        lang.choose("Archive", "存档"), lang.choose("AI Digest — Daily &amp; Weekly AI Briefings", "AI Digest · 每日与每周 AI 简报"), esc(&protect_technical_hyphens(dek))).unwrap();
     for (weekly, kind, key) in [
         (false, "daily", "latest_daily"),
         (true, "weekly", "latest_weekly"),
@@ -1706,8 +1706,13 @@ pub fn render_archive_html(issues: &[ArchiveIssue], lang: Lang, opts: &RenderOpt
                 .rsplit_once('/')
                 .filter(|(path, _)| path.rsplit('/').next() == Some(kind))
                 .map_or_else(|| href.clone(), |(path, _)| format!("{path}/latest"));
-            writeln!(out, r#"<a class="quick-pill" data-kind="{kind}" href="{}"><span class="kicker">{}</span><strong><time datetime="{}">{}</time></strong><small class="num">{}</small></a>"#,
-                esc(&href), t(lang, key), issue.date, esc(&i18n::date_long(lang, issue.date)), i18n::count_items(lang, issue.item_count)).unwrap();
+            let date_label = if weekly {
+                format!("W{:02} · {}", issue.date.iso_week().week(), issue.date)
+            } else {
+                issue.date.to_string()
+            };
+            writeln!(out, r#"<a class="quick-pill" data-kind="{kind}" href="{}"><span>{}</span><strong><time datetime="{}">{}</time></strong><small class="num">{}</small></a>"#,
+                esc(&href), t(lang, key), issue.date, esc(&date_label), i18n::count_items(lang, issue.item_count)).unwrap();
         }
     }
     out.push_str("</div><div class=\"timeline\">\n");
@@ -1890,6 +1895,31 @@ pub fn inject_nav(html: &str, options: &NavOptions) -> String {
     nav_fragment(&clean, options, options.lang, false)
 }
 
+fn bottom_nav_detail(link: &LinkItem) -> &str {
+    let raw = link.label.as_str();
+    let is_short_md = raw.len() == 5
+        && raw.as_bytes()[2] == b'.'
+        && raw
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| i == 2 || b.is_ascii_digit());
+    if is_short_md {
+        if let Some(seg) = link.url.trim_end_matches('/').rsplit('/').next() {
+            if seg.len() == 10
+                && seg.as_bytes()[4] == b'-'
+                && seg.as_bytes()[7] == b'-'
+                && seg
+                    .bytes()
+                    .enumerate()
+                    .all(|(i, b)| matches!(i, 4 | 7) || b.is_ascii_digit())
+            {
+                return seg;
+            }
+        }
+    }
+    raw
+}
+
 fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> String {
     let prefix = if bilingual && lang == Lang::En {
         "en-"
@@ -1947,9 +1977,36 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
                     r#"<a class="{class}" href="{url}"{semantics} aria-label="{label}">{body}</a>"#
                 )
             } else {
-                format!(
-                    r#"<a class="{class}" href="{url}"><span>{symbol} {label}</span><span>{detail}</span></a>"#
-                )
+                let full_detail = esc(bottom_nav_detail(link));
+                let body = match role {
+                    "prev" => {
+                        if full_detail.is_empty() {
+                            format!(r#"<span aria-hidden="true">←</span><span>{short_lbl}</span>"#)
+                        } else {
+                            format!(
+                                r#"<span aria-hidden="true">←</span><span>{short_lbl} · {full_detail}</span>"#
+                            )
+                        }
+                    }
+                    "next" => {
+                        if full_detail.is_empty() {
+                            format!(r#"<span>{short_lbl}</span><span aria-hidden="true">→</span>"#)
+                        } else {
+                            format!(
+                                r#"<span>{full_detail} · {short_lbl}</span><span aria-hidden="true">→</span>"#
+                            )
+                        }
+                    }
+                    "week" => {
+                        if full_detail.is_empty() {
+                            format!("<span>{label}</span>")
+                        } else {
+                            format!("<span>{label} · {full_detail}</span>")
+                        }
+                    }
+                    _ => format!("<span>{symbol} {label}</span>"),
+                };
+                format!(r#"<a class="{class}" href="{url}">{body}</a>"#)
             }
         } else if top && matches!(role, "prev" | "next") {
             let body = if role == "prev" {
@@ -1964,6 +2021,15 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
             format!(
                 r#"<span class="{class}" aria-disabled="true" aria-label="{label}">{body}</span>"#
             )
+        } else if !top && matches!(role, "prev" | "next") {
+            let body = if role == "prev" {
+                format!(r#"<span aria-hidden="true">←</span><span>{short_lbl}</span>"#)
+            } else {
+                format!(r#"<span>{short_lbl}</span><span aria-hidden="true">→</span>"#)
+            };
+            format!(
+                r#"<span class="{class}" aria-disabled="true" aria-label="{label}">{body}</span>"#
+            )
         } else {
             format!(
                 r#"<span class="{class}" aria-disabled="true" aria-label="{label}">{symbol}</span>"#
@@ -1973,15 +2039,15 @@ fn nav_fragment(html: &str, opts: &NavOptions, lang: Lang, bilingual: bool) -> S
     let links = |top| {
         let prev = nav_link(opts.previous.as_ref(), "nav_prev", "prev", "‹", top);
         let next = nav_link(opts.next.as_ref(), "nav_next", "next", "›", top);
-        let home = if top {
-            nav_link(opts.home.as_ref(), "nav_index", "index", "⊞", top)
-        } else {
-            String::new()
-        };
         let week = opts.weekly.as_ref().map_or_else(String::new, |link| {
             nav_link(Some(link), "nav_week", "week", "", top)
         });
-        format!("{prev}{home}{next}{week}")
+        if top {
+            let home = nav_link(opts.home.as_ref(), "nav_index", "index", "⊞", top);
+            format!("{prev}{home}{next}{week}")
+        } else {
+            format!("{prev}{week}{next}")
+        }
     };
     let label = esc(t(lang, "nav_aria"));
     let top = format!(

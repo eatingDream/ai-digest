@@ -119,7 +119,7 @@ const READER_FIXTURE_HTML = `<!DOCTYPE html>
     <div class="filter-empty" hidden><p>Empty</p><button type="button" class="filter-clear">Clear</button></div>
     <div class="end"></div>
     <footer class="colophon">Colophon</footer>
-    <nav class="issue-nav bottom"><a href="/prev">Prev</a></nav>
+    <nav class="issue-nav bottom"><a class="nav-prev" href="/prev">← Prev · 2026-11-25</a><a class="nav-week" href="/weekly/latest">Weekly</a><span class="nav-next" aria-disabled="true">Next →</span></nav>
   </main>
 </div>
 <nav class="dock">
@@ -449,8 +449,10 @@ describe("web/dist artifacts and byte budgets", () => {
     expect(readerCss).toMatch(/\.story-links\{[^}]*overflow-wrap:normal/);
     expect(readerCss).not.toMatch(/\.story-links a\{[^}]*overflow-wrap:anywhere/);
 
-    // Bottom issue nav keeps 2-column row even below 640px
-    expect(readerCss).toMatch(/\.issue-nav\.bottom\{[^}]*grid:auto\/1fr 1fr/);
+    // Bottom issue nav is a compact flex hairline row (zero puffy 68px cards)
+    expect(readerCss).toMatch(/\.issue-nav\.bottom\{[^}]*display:flex/);
+    expect(readerCss).toMatch(/\.issue-nav\.bottom\{[^}]*border-top:var\(/);
+    expect(readerCss).not.toContain("min-height:68px");
 
     // Top-level prefers-reduced-motion MUST NOT set opacity:0 on desktop .toc-side
     const topReducedRe =
@@ -491,6 +493,8 @@ describe("web/dist artifacts and byte budgets", () => {
 
     const indexCss = readFileSync(join(DIST, "index.css"), "utf8");
     expect(indexCss).toContain("min(1360px,90vw)");
+    expect(indexCss).toMatch(/\.quick-pill\{[^}]*min-height:40px/);
+    expect(indexCss).not.toContain("min-height:82px");
     expect(indexCss).not.toMatch(/&[.:[\s]/);
     expect(indexCss).not.toMatch(/transition\s*:\s*all\b/i);
   });

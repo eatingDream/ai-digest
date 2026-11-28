@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, TimeZone, Utc};
 use regex::Regex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -17,7 +17,8 @@ use crate::{
     i18n::{self, Lang},
     model::{
         atomic_write_bytes, atomic_write_text, clean_text, escape_json_for_script, files_under,
-        html_escape as esc, normalized_safe_url, strip_marked, xml_escape, ParsedIssue, ParsedItem,
+        full_width_len, html_escape as esc, normalized_safe_url, safe_external_url, strip_marked,
+        strip_tracking_params, validate_indexnow_key, xml_escape, ParsedIssue, ParsedItem,
         SearchDoc, SiteConfig, WorkerConfig,
     },
     parser::parse_digest_html_with_lang,
@@ -30,6 +31,7 @@ pub const SEARCH_INSTRUCTIONS: &str = "Use this search API to find relevant cont
 pub const AGENT_SKILLS_SCHEMA: &str = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
 pub const PUBLISHER_NAME: &str = "AI Digest";
 pub const AUTHOR_NAME: &str = "eatingDream";
+pub const HUB_URL: &str = "https://eatingdream.dev";
 pub const AUTHOR_URL: &str = "https://github.com/eatingDream";
 pub const REPO_URL: &str = "https://github.com/eatingDream/ai-digest";
 pub const API_CATALOG_PATH: &str = ".well-known/api-catalog";
@@ -218,6 +220,191 @@ fn clean_meta(text: &str) -> String {
     plain_math(&text.replace('\u{2011}', "-"))
 }
 
+fn origin_domain(origin: &str) -> &str {
+    let raw = origin.trim();
+    raw.strip_prefix("https://")
+        .or_else(|| raw.strip_prefix("http://"))
+        .unwrap_or(raw)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('.')
+}
+
+fn custom_domain(origin: &str) -> Option<&str> {
+    let domain = origin_domain(origin);
+    let host = domain.split(':').next().unwrap_or(domain);
+    (!host.is_empty()
+        && !host.eq_ignore_ascii_case("digest.example.com")
+        && !host.to_ascii_lowercase().ends_with(".pages.dev"))
+    .then_some(host)
+}
+
+fn site_alternate_names(origin: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(domain) = custom_domain(origin) {
+        names.push(format!("AI Digest ({domain})"));
+        names.push(domain.to_owned());
+    }
+    names.push("AI 每日简报".into());
+    names.push("Daily AI Briefing".into());
+    names
+}
+
+fn trunc_headline(text: &str, max_chars: usize, max_fw: f32, lang: Lang) -> String {
+    let cleaned = clean_text(&clean_meta(text));
+    if cleaned.chars().count() <= max_chars && full_width_len(&cleaned) <= max_fw {
+        return cleaned;
+    }
+    let mut cut = String::new();
+    let mut fw = 0.0f32;
+    for (count, ch) in cleaned.chars().enumerate() {
+        let w = if ch.is_ascii() { 0.5 } else { 1.0 };
+        if count + 1 > max_chars.saturating_sub(1) || fw + w > (max_fw - 1.0).max(1.0) {
+            break;
+        }
+        cut.push(ch);
+        fw += w;
+    }
+    if lang == Lang::En {
+        let cut_chars = cut.chars().count();
+        let next_char = cleaned.chars().nth(cut_chars);
+        if next_char.is_some_and(char::is_alphanumeric) {
+            if let Some(space) = cut.rfind(' ') {
+                if space >= cut.len() * 65 / 100 {
+                    cut.truncate(space);
+                }
+            }
+        }
+    }
+    let trimmed = cut.trim_end_matches([
+        ' ', ',', ';', ':', '·', '|', '—', '-', '(', '（', '，', '；', '：', '、', '。', '.',
+    ]);
+    format!("{trimmed}…")
+}
+
+fn seo_index_title(lang: Lang, origin: &str) -> String {
+    match custom_domain(origin) {
+        Some(domain) => {
+            let domain = trunc(domain, 48);
+            match lang {
+                Lang::ZhCn => {
+                    format!("AI Digest ({domain}) — 每日与每周前沿 AI 简报 | 模型·论文·开源工程")
+                }
+                Lang::En => {
+                    format!("AI Digest ({domain}) — Curated Daily & Weekly Frontier AI Briefings")
+                }
+            }
+        }
+        None => lang
+            .choose(
+                "AI Digest — Curated Daily & Weekly Frontier AI Briefings",
+                "AI Digest — 每日与每周前沿 AI 简报 | 模型·论文·开源工程",
+            )
+            .to_owned(),
+    }
+}
+
+pub fn seo_page_title(page: &GeoPage, origin: &str, fallback_title: &str) -> String {
+    if page.page_type == PageType::Index {
+        return seo_index_title(page.lang, origin);
+    }
+    let raw_headline = page.parsed.as_ref().and_then(|parsed| {
+        parsed
+            .must
+            .iter()
+            .map(|m| m.title.as_str())
+            .find(|s| !s.trim().is_empty())
+            .or_else(|| {
+                parsed
+                    .items
+                    .iter()
+                    .map(|it| it.title.as_str())
+                    .find(|s| !s.trim().is_empty())
+            })
+    });
+    let suffix = if page.kind == "weekly" {
+        let stamp = if !page.label.is_empty() {
+            page.label.as_str()
+        } else {
+            page.date_iso.as_str()
+        };
+        match (page.lang, stamp.is_empty()) {
+            (Lang::ZhCn, true) => " — AI Digest 周报".to_owned(),
+            (Lang::ZhCn, false) => format!(" — AI Digest 周报 ({stamp})"),
+            (Lang::En, true) => " — AI Digest Weekly".to_owned(),
+            (Lang::En, false) => format!(" — AI Digest Weekly ({stamp})"),
+        }
+    } else {
+        let stamp = if !page.date_iso.is_empty() {
+            page.date_iso.as_str()
+        } else {
+            page.label.as_str()
+        };
+        match (page.lang, stamp.is_empty()) {
+            (Lang::ZhCn, true) => " — AI Digest 日报".to_owned(),
+            (Lang::ZhCn, false) => format!(" — AI Digest 日报 ({stamp})"),
+            (Lang::En, true) => " — AI Digest Daily".to_owned(),
+            (Lang::En, false) => format!(" — AI Digest Daily ({stamp})"),
+        }
+    };
+    if let Some(raw) = raw_headline {
+        let (max_chars, max_fw) = match page.lang {
+            Lang::En => (70usize.saturating_sub(suffix.chars().count()).max(26), 40.0),
+            Lang::ZhCn => (42, (42.0 - full_width_len(&suffix)).max(18.0)),
+        };
+        return format!(
+            "{}{suffix}",
+            trunc_headline(raw, max_chars, max_fw, page.lang)
+        );
+    }
+    let raw_fallback = page
+        .parsed
+        .as_ref()
+        .map(|p| p.title.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(fallback_title);
+    let cleaned = clean_text(&clean_meta(raw_fallback));
+    if cleaned.is_empty() {
+        "AI Digest".into()
+    } else if !cleaned.contains("AI Digest") {
+        let head = trunc_headline(
+            &cleaned,
+            page.lang.choose(54, 34),
+            page.lang.choose(30.0, 34.0),
+            page.lang,
+        );
+        format!("{head} — AI Digest")
+    } else {
+        trunc_headline(
+            &cleaned,
+            page.lang.choose(68, 42),
+            page.lang.choose(36.0, 42.0),
+            page.lang,
+        )
+    }
+}
+
+fn is_primary_citation_url(url: &str) -> bool {
+    let Some(host) = url::Url::parse(url).ok().and_then(|u| {
+        u.host_str()
+            .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+    }) else {
+        return false;
+    };
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    !matches!(
+        host,
+        "x.com"
+            | "twitter.com"
+            | "reddit.com"
+            | "old.reddit.com"
+            | "news.ycombinator.com"
+            | "mp.weixin.qq.com"
+    )
+}
+
 fn feed_sibling(feed_path: &str, filename: &str) -> String {
     if let Some((dir, _)) = feed_path.rsplit_once('/') {
         if dir.is_empty() {
@@ -322,6 +509,7 @@ fn publisher_json(origin: &str) -> Value {
         "@type": "Organization",
         "@id": format!("{base}#publisher"),
         "name": PUBLISHER_NAME,
+        "alternateName": site_alternate_names(origin),
         "url": base,
         "logo": {
             "@type": "ImageObject",
@@ -332,9 +520,10 @@ fn publisher_json(origin: &str) -> Value {
         "founder": {
             "@type": "Person",
             "name": AUTHOR_NAME,
-            "url": AUTHOR_URL
+            "url": AUTHOR_URL,
+            "sameAs": [HUB_URL, AUTHOR_URL]
         },
-        "sameAs": [REPO_URL]
+        "sameAs": [HUB_URL, REPO_URL, AUTHOR_URL]
     })
 }
 
@@ -350,10 +539,11 @@ pub fn build_issue_json_ld(parsed: &ParsedIssue, page: &GeoPage, origin: &str) -
         "headline": headline,
         "description": description,
         "inLanguage": page.lang.hreflang(),
+        "isAccessibleForFree": true,
         "url": canonical,
         "mainEntityOfPage": {"@type": "WebPage", "@id": canonical},
         "image": {"@type": "ImageObject", "url": og_image, "width": 1200, "height": 630},
-        "author": {"@type": "Person", "name": AUTHOR_NAME, "url": AUTHOR_URL},
+        "author": {"@type": "Person", "name": AUTHOR_NAME, "url": AUTHOR_URL, "sameAs": [HUB_URL, AUTHOR_URL]},
         "isPartOf": {"@type": "WebSite", "@id": format!("{base}#website"), "name": PUBLISHER_NAME, "url": base},
         "publisher": publisher_json(origin),
         "encoding": {"@type": "MediaObject", "encodingFormat": "text/markdown", "contentUrl": abs(origin, &md_path(page))}
@@ -364,6 +554,43 @@ pub fn build_issue_json_ld(parsed: &ParsedIssue, page: &GeoPage, origin: &str) -
     }
     if !parsed.top_tags.is_empty() {
         article["keywords"] = json!(parsed.top_tags.join(", "));
+        let about: Vec<Value> = parsed
+            .top_tags
+            .iter()
+            .map(|tag| clean_text(&clean_meta(tag)))
+            .filter(|tag| !tag.is_empty())
+            .map(|name| json!({"@type": "Thing", "name": name}))
+            .collect();
+        if !about.is_empty() {
+            article["about"] = json!(about);
+        }
+    }
+    let mut seen_citations = BTreeSet::new();
+    let mut primary_citations = Vec::new();
+    let mut other_citations = Vec::new();
+    for item in &parsed.items {
+        for (_, href) in &item.links {
+            let Some(safe) = safe_external_url(href) else {
+                continue;
+            };
+            let clean = strip_tracking_params(&safe);
+            if !seen_citations.insert(clean.clone()) {
+                continue;
+            }
+            if is_primary_citation_url(&clean) {
+                primary_citations.push(clean);
+            } else {
+                other_citations.push(clean);
+            }
+        }
+    }
+    let citations: Vec<String> = primary_citations
+        .into_iter()
+        .chain(other_citations)
+        .take(25)
+        .collect();
+    if !citations.is_empty() {
+        article["citation"] = json!(citations);
     }
     let items: Vec<_> = parsed
         .items
@@ -419,26 +646,33 @@ pub fn build_index_json_ld(
     page: &GeoPage,
     origin: &str,
     entries: &[&GeoPage],
-    _search: bool,
+    search: bool,
 ) -> Value {
     let canonical = abs(origin, &page.canonical_path);
     let base = abs(origin, "/");
     let site_id = format!("{base}#website");
     let pub_id = format!("{base}#publisher");
     let description = archive_desc_for(page.lang, entries);
+    let search_template = if search {
+        abs(origin, "/.well-known/search?q={search_term_string}")
+    } else {
+        abs(origin, "/?q={search_term_string}")
+    };
     let site = json!({
         "@type": "WebSite",
         "@id": site_id,
         "name": PUBLISHER_NAME,
+        "alternateName": site_alternate_names(origin),
         "url": base,
         "description": archive_desc(page.lang),
         "inLanguage": ["zh-Hans", "en"],
         "publisher": {"@id": pub_id},
+        "sameAs": [HUB_URL, REPO_URL, AUTHOR_URL],
         "potentialAction": {
             "@type": "SearchAction",
             "target": {
                 "@type": "EntryPoint",
-                "urlTemplate": abs(origin, "/?q={search_term_string}")
+                "urlTemplate": search_template
             },
             "query-input": "required name=search_term_string"
         }
@@ -614,23 +848,6 @@ pub fn build_geo_head_tags(
     tags
 }
 
-fn compact_page_tab_title(page: &GeoPage) -> String {
-    if page.page_type == PageType::Index {
-        return "AI Digest".into();
-    }
-    if let Ok(date) = NaiveDate::parse_from_str(&page.date_iso, "%Y-%m-%d") {
-        if page.kind == "weekly" {
-            return format!("AI Digest · W · {:02}", date.iso_week().week());
-        }
-        return format!("AI Digest · D · {:02}/{:02}", date.month(), date.day());
-    }
-    if page.kind == "weekly" {
-        "AI Digest · Weekly".into()
-    } else {
-        "AI Digest".into()
-    }
-}
-
 pub fn inject_geo_head(
     html: &str,
     page: &GeoPage,
@@ -648,13 +865,13 @@ pub fn inject_geo_head(
     let html = strip_marked(html, "digest-meta");
     let html = strip_marked(&html, "digest-geo-head");
     let html = ROBOTS.replace_all(&html, "");
-    let tab_title = compact_page_tab_title(page);
+    let seo_title = seo_page_title(page, origin, title);
     let mut clean = TITLE
         .replacen(&html, 1, |_: &regex::Captures<'_>| {
-            format!("<title>{}</title>", esc(&plain_math(&tab_title)))
+            format!("<title>{}</title>", esc(&seo_title))
         })
         .into_owned();
-    let tags = build_geo_head_tags(page, origin, title, description, search, ld);
+    let tags = build_geo_head_tags(page, origin, &seo_title, description, search, ld);
     let block = format!("<!-- digest-geo-head:start --><!-- digest-meta:start -->\n{tags}<!-- digest-meta:end --><!-- digest-geo-head:end -->");
     // Use the original empty slot on an Opus page. The legacy fallback is the
     // closing head, after its renderer's scripts and stylesheet.
@@ -684,7 +901,7 @@ pub fn decorate_public_html(
     search: bool,
 ) -> Result<String> {
     page.parse_html(html)?;
-    let (title, description, ld) = if let Some(issue) = &page.parsed {
+    let (fallback_title, description, ld) = if let Some(issue) = &page.parsed {
         (
             issue.title.clone(),
             issue.description.clone(),
@@ -701,7 +918,7 @@ pub fn decorate_public_html(
         html,
         page,
         origin,
-        &title,
+        &fallback_title,
         &description,
         search,
         Some(&ld),
@@ -889,12 +1106,12 @@ pub fn render_index_markdown(
     search: bool,
     ld: Option<&Value>,
 ) -> String {
-    let heading = archive_title(page.lang);
-    let desc = archive_desc(page.lang);
+    let heading = seo_index_title(page.lang, origin);
+    let desc = archive_desc_for(page.lang, entries);
     let mut out = format!(
         "---\ntitle: {}\ndescription: {}\nlang: {}\ncanonical: {}\nurl: {}\n",
-        quote(heading),
-        quote(desc),
+        quote(&heading),
+        quote(&desc),
         quote(page.lang.as_str()),
         quote(&abs(origin, &page.canonical_path)),
         quote(&abs(origin, &md_path(page)))
@@ -903,9 +1120,18 @@ pub fn render_index_markdown(
         writeln!(out, "updated: {}", quote(&page.date_iso)).unwrap();
     }
     agent_frontmatter(&mut out, origin, search);
+    let identity = match page.lang {
+        Lang::En => format!(
+            "Canonical site: {origin}/ — Independent bilingual (`zh-CN` / `en`) daily and weekly briefings on frontier AI models, research papers, open-source engineering, compute, and safety, curated from ~155 primary AI sources (arXiv, Hugging Face, GitHub, and research labs) by [{AUTHOR_NAME}]({HUB_URL}) ([GitHub]({REPO_URL}))."
+        ),
+        Lang::ZhCn => format!(
+            "官方站点：{origin}/ — 独立双语（`zh-CN` / `en`）每日与每周前沿 AI 简报，从 arXiv、Hugging Face、GitHub 与前沿实验室等约 155 个一手 AI 信源精选模型发布、学术论文、开源工程、算力与安全动态，由 [{AUTHOR_NAME}]({HUB_URL})（[开源仓库]({REPO_URL})）维护发布。"
+        ),
+    };
     writeln!(
         out,
-        "---\n\n# {heading}\n\n> {desc}\n\n## {}\n",
+        "---\n\n# {}\n\n> {identity}\n\n## {}\n",
+        md_escape_text(&heading),
         page.lang.choose("Agent Resources", "Agent 与订阅入口")
     )
     .unwrap();
@@ -989,35 +1215,125 @@ pub fn render_robots_txt(origin: &str, signal: &str, allow_train: bool, encrypte
     out
 }
 
-pub fn render_sitemap_xml(pages: &[GeoPage], origin: &str) -> String {
-    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">\n");
+struct SitemapEntry<'a> {
+    page: &'a GeoPage,
+    canonical: String,
+    lastmod: &'a str,
+    changefreq: &'static str,
+    priority: &'static str,
+}
+
+fn ordered_sitemap_entries<'a>(pages: &'a [GeoPage], origin: &str) -> Vec<SitemapEntry<'a>> {
+    let latest_issue_date = pages
+        .iter()
+        .filter(|p| p.is_canonical && p.page_type == PageType::Issue && !p.date_iso.is_empty())
+        .map(|p| p.date_iso.as_str())
+        .max()
+        .unwrap_or("");
+    let mut indexes = Vec::new();
+    let mut issues = Vec::new();
     let mut seen = BTreeSet::new();
-    for page in pages.iter().filter(|page| page.is_canonical) {
+    for page in pages.iter().filter(|p| p.is_canonical) {
+        if page.page_type == PageType::Index {
+            indexes.push(page);
+        } else {
+            issues.push(page);
+        }
+    }
+    let index_rank = |path: &str| match path {
+        "/" => 0u8,
+        "/zh/" => 1,
+        "/en/" => 2,
+        _ => 3,
+    };
+    indexes.sort_by(|a, b| {
+        index_rank(&a.canonical_path)
+            .cmp(&index_rank(&b.canonical_path))
+            .then_with(|| a.canonical_path.cmp(&b.canonical_path))
+    });
+    issues.sort_by(|a, b| {
+        b.date_iso
+            .cmp(&a.date_iso)
+            .then_with(|| (a.kind != "weekly").cmp(&(b.kind != "weekly")))
+            .then_with(|| (a.lang != Lang::ZhCn).cmp(&(b.lang != Lang::ZhCn)))
+            .then_with(|| a.canonical_path.cmp(&b.canonical_path))
+    });
+
+    let mut out = Vec::with_capacity(indexes.len() + issues.len());
+    for page in indexes {
         let canonical = abs(origin, &page.canonical_path);
         if !seen.insert(canonical.clone()) {
             continue;
         }
-        writeln!(out, "  <url>\n    <loc>{}</loc>", xml_escape(&canonical)).unwrap();
-        if !page.date_iso.is_empty() {
-            writeln!(out, "    <lastmod>{}</lastmod>", xml_escape(&page.date_iso)).unwrap();
+        let lastmod = if !page.date_iso.is_empty() {
+            page.date_iso.as_str()
+        } else {
+            latest_issue_date
+        };
+        out.push(SitemapEntry {
+            page,
+            canonical,
+            lastmod,
+            changefreq: "daily",
+            priority: "1.0",
+        });
+    }
+    let mut lang_ranks = BTreeMap::<Lang, usize>::new();
+    for page in issues {
+        let canonical = abs(origin, &page.canonical_path);
+        if !seen.insert(canonical.clone()) {
+            continue;
         }
-        let (frequency, priority) = if page.page_type == PageType::Index {
-            ("daily", "1.0")
-        } else if page.kind == "weekly" {
+        let (changefreq, priority) = if page.kind == "weekly" {
             ("weekly", "0.9")
         } else {
-            ("monthly", "0.8")
+            let rank = lang_ranks.entry(page.lang).or_insert(0);
+            let is_recent = *rank < 7;
+            *rank += 1;
+            ("monthly", if is_recent { "0.9" } else { "0.8" })
         };
+        out.push(SitemapEntry {
+            page,
+            canonical,
+            lastmod: page.date_iso.as_str(),
+            changefreq,
+            priority,
+        });
+    }
+    out
+}
+
+pub fn canonical_urls(pages: &[GeoPage], origin: &str) -> Vec<String> {
+    ordered_sitemap_entries(pages, origin)
+        .into_iter()
+        .map(|entry| entry.canonical)
+        .collect()
+}
+
+pub fn render_sitemap_xml(pages: &[GeoPage], origin: &str) -> String {
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">\n");
+    for entry in ordered_sitemap_entries(pages, origin) {
         writeln!(
             out,
-            "    <changefreq>{frequency}</changefreq>\n    <priority>{priority}</priority>"
+            "  <url>\n    <loc>{}</loc>",
+            xml_escape(&entry.canonical)
         )
         .unwrap();
-        for (key, target) in page
+        if !entry.lastmod.is_empty() {
+            writeln!(out, "    <lastmod>{}</lastmod>", xml_escape(entry.lastmod)).unwrap();
+        }
+        writeln!(
+            out,
+            "    <changefreq>{}</changefreq>\n    <priority>{}</priority>",
+            entry.changefreq, entry.priority
+        )
+        .unwrap();
+        for (key, target) in entry
+            .page
             .alternates
             .iter()
             .filter(|(k, _)| k.as_str() != "x-default")
-            .chain(page.alternates.get_key_value("x-default"))
+            .chain(entry.page.alternates.get_key_value("x-default"))
         {
             if normalized_safe_url(target).is_none() {
                 continue;
@@ -1335,7 +1651,13 @@ pub fn render_llms_txt(
     } else {
         ""
     };
-    let mut out = format!("# AI Digest\n\n> Curated bilingual (zh-CN / en) daily and weekly briefings on frontier AI models, research papers, systems engineering, and industry developments. Pages have direct `.md` mirrors.{negotiation}\n\n## Agent Endpoints\n\n");
+    let heading = match custom_domain(origin) {
+        Some(domain) => format!("AI Digest ({domain})"),
+        None => "AI Digest".to_owned(),
+    };
+    let mut out = format!(
+        "# {heading}\n\n> Canonical site: {origin}/ — Independent bilingual (`zh-CN` / `en`) daily and weekly briefings on frontier AI models, research papers, open-source systems engineering, compute, and safety, curated from ~155 primary AI sources (arXiv, Hugging Face, GitHub, and research labs) by [{AUTHOR_NAME}]({HUB_URL}) ([source repository]({REPO_URL})). Pages have direct `.md` mirrors.{negotiation}\n\n## Agent Endpoints\n\n"
+    );
     if search {
         writeln!(out, "- [Search for Agents]({origin}/.well-known/search?q={{query}}): Site-wide Markdown search supporting `GET ?q=...` and HTTP `QUERY` (`text/plain` or JSON `{{\"q\":\"...\"}}`).\n- [Archive Search Index JSON]({origin}/search-index.json): Structured JSON search index of all canonical items.").unwrap();
     }
@@ -1547,6 +1869,14 @@ pub fn build_link_header(search: bool, feed: &str) -> String {
 }
 
 pub fn render_geo_headers(signal: &str, link: &str) -> String {
+    render_geo_headers_with_indexnow(signal, link, None)
+}
+
+pub fn render_geo_headers_with_indexnow(
+    signal: &str,
+    link: &str,
+    indexnow_key: Option<&str>,
+) -> String {
     let mut out = format!("/*\n  Content-Signal: {signal}\n  Link: {link}\n  Vary: Accept\n/404.html\n  X-Robots-Tag: noindex, nofollow\n  Cache-Control: no-store\n/robots.txt\n  Cache-Control: public, max-age=3600\n");
     for (path, kind, age) in [
         ("/sitemap.xml", "application/xml; charset=utf-8", 3600),
@@ -1597,17 +1927,45 @@ pub fn render_geo_headers(signal: &str, link: &str) -> String {
         )
         .unwrap();
     }
+    if let Some(key) = indexnow_key.filter(|k| !k.is_empty()) {
+        writeln!(
+            out,
+            "/{key}.txt\n  Content-Type: text/plain; charset=utf-8\n  Cache-Control: public, max-age=3600"
+        )
+        .unwrap();
+    }
     out
 }
 
 pub fn render_pages_routes() -> String {
-    let data = json!({"version":1,"include":["/*"],"exclude":[
-        "/favicon.svg","/og-card.png","/robots.txt","/sitemap.xml",
-        "/feed.xml","/zh/feed.xml","/en/feed.xml",
-        "/rss.xml","/zh/rss.xml","/en/rss.xml",
-        "/feed.json","/zh/feed.json","/en/feed.json",
-        "/llms.txt","/llms-full.txt","/search-index.json",
-        "/.well-known/api-catalog","/.well-known/agent-skills/*"]});
+    render_pages_routes_with_indexnow(None)
+}
+
+pub fn render_pages_routes_with_indexnow(indexnow_key: Option<&str>) -> String {
+    let mut exclude = vec![
+        "/favicon.svg".to_owned(),
+        "/og-card.png".into(),
+        "/robots.txt".into(),
+        "/sitemap.xml".into(),
+        "/feed.xml".into(),
+        "/zh/feed.xml".into(),
+        "/en/feed.xml".into(),
+        "/rss.xml".into(),
+        "/zh/rss.xml".into(),
+        "/en/rss.xml".into(),
+        "/feed.json".into(),
+        "/zh/feed.json".into(),
+        "/en/feed.json".into(),
+        "/llms.txt".into(),
+        "/llms-full.txt".into(),
+        "/search-index.json".into(),
+        "/.well-known/api-catalog".into(),
+        "/.well-known/agent-skills/*".into(),
+    ];
+    if let Some(key) = indexnow_key.filter(|k| !k.is_empty()) {
+        exclude.push(format!("/{key}.txt"));
+    }
+    let data = json!({"version": 1, "include": ["/*"], "exclude": exclude});
     format!("{data:#}\n")
 }
 
@@ -1695,7 +2053,12 @@ pub fn finalize_public_worker(public: &Path, config: &SiteConfig) -> Result<Opti
         return Ok(None);
     }
     atomic_write_text(&worker, &public_worker_source(public, config)?)?;
-    atomic_write_text(&routes, &render_pages_routes())?;
+    atomic_write_text(
+        &routes,
+        &render_pages_routes_with_indexnow(
+            Some(config.indexnow_key.as_str()).filter(|k| !k.is_empty()),
+        ),
+    )?;
     Ok(Some(worker))
 }
 
@@ -1838,6 +2201,22 @@ fn remove_file(path: &Path) -> io::Result<()> {
     }
 }
 
+fn indexnow_key_stem(rel: &Path) -> Option<&str> {
+    (rel.parent() == Some(Path::new("")))
+        .then(|| rel.file_name().and_then(|s| s.to_str()))
+        .flatten()
+        .filter(|name| !name.eq_ignore_ascii_case("robots.txt"))
+        .and_then(|name| name.strip_suffix(".txt"))
+        .filter(|stem| !stem.is_empty() && validate_indexnow_key(stem).is_ok())
+}
+
+fn is_managed_indexnow_file(public: &Path, rel: &Path) -> bool {
+    let Some(stem) = indexnow_key_stem(rel) else {
+        return false;
+    };
+    fs::read_to_string(public.join(rel)).is_ok_and(|body| body == stem)
+}
+
 fn is_geo_path(rel: &Path) -> bool {
     rel.starts_with(".well-known")
         || rel
@@ -1847,6 +2226,10 @@ fn is_geo_path(rel: &Path) -> bool {
             .file_name()
             .and_then(|s| s.to_str())
             .is_some_and(|name| GEO_ROOT_FILES.contains(&name))
+}
+
+fn is_geo_header_path(rel: &Path) -> bool {
+    is_geo_path(rel) || indexnow_key_stem(rel).is_some()
 }
 
 fn prune_geo(public: &Path, keep: Option<&BTreeSet<PathBuf>>) -> Result<()> {
@@ -1861,7 +2244,9 @@ fn prune_geo(public: &Path, keep: Option<&BTreeSet<PathBuf>>) -> Result<()> {
     }
     for path in files_under(public)? {
         let relative = path.strip_prefix(public)?;
-        if is_geo_path(relative) && keep.is_none_or(|keep| !keep.contains(relative)) {
+        if (is_geo_path(relative) || is_managed_indexnow_file(public, relative))
+            && keep.is_none_or(|keep| !keep.contains(relative))
+        {
             remove_file(&path)?;
         }
     }
@@ -1892,7 +2277,7 @@ fn merge_geo_headers(old: &str, geo: Option<&str>) -> String {
             path = trimmed;
         }
         if path == "/*"
-            || (!path.is_empty() && is_geo_path(Path::new(path.trim_start_matches('/'))))
+            || (!path.is_empty() && is_geo_header_path(Path::new(path.trim_start_matches('/'))))
             || (geo.is_some() && matches!(path, "/404.html" | "/robots.txt"))
         {
             continue;
@@ -2094,6 +2479,11 @@ pub fn write_public_geo_bundle(
         let index = build_search_index(pages, &origin, now);
         generated.insert("search-index.json".into(), format!("{index}\n"));
     }
+    let indexnow_key = Some(config.indexnow_key.as_str()).filter(|k| !k.is_empty());
+    if let Some(key) = indexnow_key {
+        validate_indexnow_key(key)?;
+        generated.insert(format!("{key}.txt").into(), key.to_owned());
+    }
     let old_headers = match fs::read_to_string(public.join("_headers")) {
         Ok(text) => text,
         Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
@@ -2104,9 +2494,10 @@ pub fn write_public_geo_bundle(
         .find(|p| p.page_type == PageType::Index && p.rel_md == "index.md")
         .or_else(|| pages.iter().find(|p| p.page_type == PageType::Index))
         .map_or_else(|| "/index.md".into(), md_path);
-    let geo_headers = render_geo_headers(
+    let geo_headers = render_geo_headers_with_indexnow(
         &config.content_signal,
         &build_link_header_for(search, "/feed.xml", &default_index_md),
+        indexnow_key,
     );
     generated.insert(
         "_headers".into(),

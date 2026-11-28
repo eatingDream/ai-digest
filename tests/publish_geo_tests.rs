@@ -61,6 +61,8 @@ fn cli(root: &Path, args: &[&str]) -> Command {
         "DIGEST_CF_API_BASE",
         "DIGEST_PRIVACY_PATTERNS_FILE",
         "DIGEST_SITE_PASSWORD",
+        "DIGEST_INDEXNOW_KEY",
+        "DIGEST_INDEXNOW_ENDPOINT",
     ] {
         cmd.env_remove(key);
     }
@@ -1796,10 +1798,22 @@ fn tier2_csp_geo_and_single_h1_regressions() {
             "{rel} must not contain legacy brand string AI精选"
         );
     }
+    let prod_index_html = get(&prod_pub, "index.html");
+    let prod_en_index_html = get(&prod_pub, "en/index.html");
     let daily_html = get(&prod_pub, "daily/latest.html");
     let weekly_html = get(&prod_pub, "weekly/latest.html");
-    assert!(daily_html.contains("<title>AI Digest · D · 01/15</title>"));
-    assert!(weekly_html.contains("<title>AI Digest · W · 03</title>"));
+    assert!(prod_index_html
+        .contains("<title>AI Digest — 每日与每周前沿 AI 简报 | 模型·论文·开源工程</title>"));
+    assert!(prod_en_index_html
+        .contains("<title>AI Digest — Curated Daily &amp; Weekly Frontier AI Briefings</title>"));
+    assert!(daily_html.contains(
+        "<title>Orion-3 Mini：Acme Labs 放出开放权重的小型推理模型 — AI Digest 日报 (2026-01-15)</title>"
+    ));
+    assert!(
+        weekly_html.contains("Orion-3 Mini")
+            && weekly_html.contains(" — AI Digest 周报 (2026-01-12_01-18)</title>"),
+        "unexpected weekly <title>: {weekly_html}"
+    );
     assert!(daily_html.contains(r#"class="filter-bar filter-drawer search-panel""#));
     assert!(daily_html.contains(r#"hidden aria-hidden="true" inert"#));
     assert!(daily_html.contains(r#"class="search-scrim""#));
@@ -1959,12 +1973,43 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
         val.to_owned()
     };
 
+    let root_index_html = get(&public, "index.html");
     let zh_daily_html = get(&public, &format!("zh/daily/{DAILY}.html"));
     let en_daily_html = get(&public, &format!("en/daily/{DAILY}.html"));
     let zh_weekly_html = get(&public, &format!("zh/weekly/{WEEKLY}.html"));
     let en_weekly_html = get(&public, &format!("en/weekly/{WEEKLY}.html"));
     let zh_index_html = get(&public, "zh/index.html");
     let en_index_html = get(&public, "en/index.html");
+
+    // Custom domain brand-disambiguated <title> on index pages + headline-first <title> on issues
+    for doc in [&root_index_html, &zh_index_html] {
+        assert!(doc.contains(
+            "<title>AI Digest (ai.example.org) — 每日与每周前沿 AI 简报 | 模型·论文·开源工程</title>"
+        ));
+        assert!(doc.contains("<h1>AI Digest · 每日与每周 AI 简报</h1>"));
+        assert!(doc.contains("155") && doc.contains("arXiv") && doc.contains("Hugging Face"));
+    }
+    assert!(
+        root_index_html.contains(r#"<link rel="canonical" href="https://ai.example.org/zh/">"#)
+            && root_index_html.contains(&format!(r#"href="/zh/daily/{DAILY}""#)),
+        "root / must align canonical to /zh/ and link directly to canonical /zh/ issues"
+    );
+    assert!(en_index_html.contains(
+        "<title>AI Digest (ai.example.org) — Curated Daily &amp; Weekly Frontier AI Briefings</title>"
+    ));
+    assert!(en_index_html.contains("<h1>AI Digest — Daily &amp; Weekly AI Briefings</h1>"));
+    assert!(
+        zh_daily_html.contains("Orion-3 Mini")
+            && zh_daily_html.contains(&format!(" — AI Digest 日报 ({DAILY})</title>"))
+    );
+    assert!(
+        en_daily_html.contains("Orion-3 Mini")
+            && en_daily_html.contains(&format!(" — AI Digest Daily ({DAILY})</title>"))
+    );
+    assert!(
+        en_weekly_html.contains("Orion-3 Mini")
+            && en_weekly_html.contains(&format!(" — AI Digest Weekly ({WEEKLY})</title>"))
+    );
 
     // Editorial lead descriptions are unique, real, and length-bounded
     let zh_desc = extract_meta_desc(&zh_daily_html);
@@ -2047,10 +2092,23 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
         .find(|n| n["@type"] == "NewsArticle")
         .expect("NewsArticle");
     assert_eq!(article["inLanguage"], "en");
+    assert_eq!(article["isAccessibleForFree"], true);
     assert_eq!(article["datePublished"], DAILY);
     assert_eq!(article["dateModified"], DAILY);
     assert_eq!(article["author"]["name"], "eatingDream");
     assert_eq!(article["publisher"]["name"], "AI Digest");
+    assert!(article["about"]
+        .as_array()
+        .expect("NewsArticle.about")
+        .iter()
+        .any(|t| t["@type"] == "Thing" && t["name"].as_str().is_some()));
+    let citations = article["citation"]
+        .as_array()
+        .expect("NewsArticle.citation");
+    assert!(
+        citations.contains(&json!("https://example.com/orion-3-mini")) && citations.len() <= 25,
+        "unexpected NewsArticle.citation: {citations:?}"
+    );
     assert_eq!(
         article["image"]["url"],
         "https://ai.example.org/og-card.png"
@@ -2119,6 +2177,18 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
         .expect("WebSite");
     assert_eq!(
         website["potentialAction"]["target"]["urlTemplate"],
+        "https://ai.example.org/.well-known/search?q={search_term_string}"
+    );
+    let alt_names = website["alternateName"]
+        .as_array()
+        .expect("WebSite.alternateName");
+    assert!(alt_names.contains(&json!("ai.example.org")));
+    assert!(alt_names.contains(&json!("AI Digest (ai.example.org)")));
+    assert!(alt_names.contains(&json!("AI 每日简报")));
+    assert!(alt_names.contains(&json!("Daily AI Briefing")));
+    let fallback_ld = geo::build_index_json_ld(&break_page, "https://ai.example.org", &[], false);
+    assert_eq!(
+        fallback_ld["@graph"][1]["potentialAction"]["target"]["urlTemplate"],
         "https://ai.example.org/?q={search_term_string}"
     );
     let org = igraph
@@ -2126,19 +2196,47 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
         .find(|n| n["@type"] == "Organization")
         .expect("Organization");
     assert_eq!(org["founder"]["name"], "eatingDream");
+    let same_as = org["sameAs"].as_array().expect("Organization.sameAs");
+    assert_eq!(
+        same_as,
+        &[
+            json!("https://eatingdream.dev"),
+            json!("https://github.com/eatingDream/ai-digest"),
+            json!("https://github.com/eatingDream"),
+        ]
+    );
     let coll = igraph
         .iter()
         .find(|n| n["@type"] == "CollectionPage")
         .expect("CollectionPage");
     assert_eq!(coll["dateModified"], "2026-01-18");
 
-    // 3. Sitemap validity: <lastmod> on index & issue URLs + reciprocal xhtml:link hreflang
+    // 3. Sitemap validity: Index 1.0 first, newest issues descending, <lastmod>, reciprocal xhtml:link hreflang
     let sitemap = get(&public, "sitemap.xml");
     assert!(sitemap.contains(r#"xmlns:xhtml="http://www.w3.org/1999/xhtml""#));
     assert!(sitemap
         .contains("<loc>https://ai.example.org/zh/</loc>\n    <lastmod>2026-01-18</lastmod>"));
     assert!(sitemap
         .contains("<loc>https://ai.example.org/en/</loc>\n    <lastmod>2026-01-18</lastmod>"));
+    let pos_zh_idx = sitemap
+        .find("<loc>https://ai.example.org/zh/</loc>")
+        .unwrap();
+    let pos_en_idx = sitemap
+        .find("<loc>https://ai.example.org/en/</loc>")
+        .unwrap();
+    let pos_weekly = sitemap
+        .find("<loc>https://ai.example.org/zh/weekly/2026-01-12_01-18</loc>")
+        .unwrap();
+    let pos_daily = sitemap
+        .find("<loc>https://ai.example.org/zh/daily/2026-01-15</loc>")
+        .unwrap();
+    assert!(
+        pos_zh_idx < pos_en_idx && pos_en_idx < pos_weekly && pos_weekly < pos_daily,
+        "sitemap must order Index pages first followed by newest issues descending:\n{sitemap}"
+    );
+    assert!(sitemap.contains(
+        "<loc>https://ai.example.org/zh/daily/2026-01-15</loc>\n    <lastmod>2026-01-15</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.9</priority>"
+    ));
     assert!(sitemap.contains(r#"hreflang="zh-Hans""#));
     assert!(sitemap.contains(r#"hreflang="en""#));
     assert!(sitemap.contains(r#"hreflang="x-default""#));
@@ -2188,6 +2286,11 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
 
     let llms = get(&public, "llms.txt");
     for needle in [
+        "AI Digest (ai.example.org)",
+        "https://ai.example.org/",
+        "155",
+        "https://eatingdream.dev",
+        "https://github.com/eatingDream/ai-digest",
         "/.well-known/api-catalog",
         "/feed.json",
         "/rss.xml",
@@ -2195,8 +2298,15 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
         "/zh/index.md",
         "/en/index.md",
     ] {
-        assert!(llms.contains(needle), "llms.txt missing {needle}");
+        assert!(llms.contains(needle), "llms.txt missing {needle}: {llms}");
     }
+    let zh_index_md = get(&public, "zh/index.md");
+    assert!(
+        zh_index_md.contains("https://ai.example.org/")
+            && zh_index_md.contains("https://eatingdream.dev")
+            && zh_index_md.contains("155"),
+        "zh/index.md missing identity disambiguation: {zh_index_md}"
+    );
 
     let skill_bytes = fs::read(public.join(geo::SKILL_PATH)).unwrap();
     let skill_idx: Value = serde_json::from_str(&get(&public, geo::SKILL_INDEX)).unwrap();
@@ -2246,6 +2356,225 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
             "encrypted mode must purge {removed}"
         );
     }
+}
+
+#[tokio::test]
+async fn indexnow_key_emission_push_payload_downtime_tolerance_and_private_purge() {
+    // 1. Strict INDEXNOW_KEY validation
+    for bad in [
+        "short77",
+        "bad/slash-key",
+        "bad.dot-key",
+        "bad_underscore",
+        "llms-full",
+        &"a".repeat(129),
+    ] {
+        assert!(
+            SiteConfig::parse(&format!("INDEXNOW_KEY={bad}\n"), None, |_| None).is_err(),
+            "INDEXNOW_KEY={bad} must fail validation"
+        );
+    }
+    let cfg_field = ["INDEXNOW", "KEY"].join("_");
+    let sample_val = "a".repeat(16);
+    let ok_cfg = SiteConfig::parse(&format!("{cfg_field}={sample_val}\n"), None, |_| None).unwrap();
+    assert_eq!(ok_cfg.indexnow_key, sample_val);
+
+    // 2. Sitemap priority tiers: 7 newest daily issues get 0.9, 8th+ older issues get 0.8
+    let mut many_pages = vec![geo::GeoPage {
+        rel_html: "index.html".into(),
+        rel_md: "index.md".into(),
+        url_path: "/".into(),
+        canonical_path: "/".into(),
+        page_type: geo::PageType::Index,
+        is_canonical: true,
+        ..geo::GeoPage::default()
+    }];
+    for day in 1..=9 {
+        let iso = format!("2026-01-{day:02}");
+        many_pages.push(geo::GeoPage {
+            rel_html: format!("daily/{iso}.html"),
+            rel_md: format!("daily/{iso}.md"),
+            url_path: format!("/daily/{iso}"),
+            canonical_path: format!("/daily/{iso}"),
+            kind: "daily".into(),
+            label: iso.clone(),
+            date_iso: iso,
+            is_canonical: true,
+            ..geo::GeoPage::default()
+        });
+    }
+    let many_xml = geo::render_sitemap_xml(&many_pages, "https://ai.example.org");
+    assert!(
+        many_xml.contains("<loc>https://ai.example.org/</loc>\n    <lastmod>2026-01-09</lastmod>")
+    );
+    assert!(
+        many_xml
+            .find("<loc>https://ai.example.org/daily/2026-01-09</loc>")
+            .unwrap()
+            < many_xml
+                .find("<loc>https://ai.example.org/daily/2026-01-01</loc>")
+                .unwrap(),
+        "sitemap must list newest issue URLs first: {many_xml}"
+    );
+    assert!(many_xml.contains(
+        "<loc>https://ai.example.org/daily/2026-01-03</loc>\n    <lastmod>2026-01-03</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.9</priority>"
+    ));
+    assert!(many_xml.contains(
+        "<loc>https://ai.example.org/daily/2026-01-02</loc>\n    <lastmod>2026-01-02</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>"
+    ));
+
+    // 3. End-to-end live deploy + wiremock IndexNow POST + Pages manifest upload
+    let cf_mock = MockServer::start().await;
+    let indexnow_mock = MockServer::start().await;
+    let upload = ["fixture", "upload"].join("-");
+    Mock::given(method("GET"))
+        .and(path(
+            "/accounts/example/pages/projects/fixture/upload-token",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result":{"jwt":upload}})))
+        .mount(&cf_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/pages/assets/check-missing"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result":[]})))
+        .mount(&cf_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/pages/assets/upsert-hashes"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&cf_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/accounts/example/pages/projects/fixture/domains"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"success":true,"result":[{"name":"ai.example.org"}]})),
+        )
+        .mount(&cf_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/accounts/example/pages/projects/fixture/deployments"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({"success":true,"result":{"url":"https://fixture.pages.dev"}}),
+            ),
+        )
+        .mount(&cf_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/indexnow"))
+        .respond_with(ResponseTemplate::new(202))
+        .expect(1)
+        .mount(&indexnow_mock)
+        .await;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let first_id = "b".repeat(16);
+    atomic_write_text(
+        &root.join("site/CONFIG"),
+        &format!(
+            "ACCOUNT_ID=example\nPROJECT=fixture\nDOMAIN=ai.example.org\nLANG=zh-CN\n{cfg_field}={first_id}\n"
+        ),
+    )
+    .unwrap();
+    issue_markdown(root, true);
+    add_daily(root);
+    add_weekly(root);
+
+    let public = root.join("site/public");
+    assert_eq!(get(&public, &format!("{first_id}.txt")), first_id);
+    assert!(get(&public, "_headers").contains(&format!(
+        "/{first_id}.txt\n  Content-Type: text/plain; charset=utf-8"
+    )));
+    let routes: Value = serde_json::from_str(&get(&public, "_routes.json")).unwrap();
+    assert!(routes["exclude"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(format!("/{first_id}.txt"))));
+
+    let token = ["mock", "credential"].join("-");
+    let deploy_ok = checked(
+        cli(root, &["publish", "--rebuild", "--no-verify"])
+            .env("DIGEST_CF_API_BASE", cf_mock.uri())
+            .env("CLOUDFLARE_API_TOKEN", &token)
+            .env(
+                "DIGEST_INDEXNOW_ENDPOINT",
+                format!("{}/indexnow", indexnow_mock.uri()),
+            )
+            .output()
+            .unwrap(),
+        0,
+    );
+    assert!(
+        String::from_utf8_lossy(&deploy_ok.stdout).contains("indexnow: ok (HTTP 202, 6 urls)"),
+        "stdout={}",
+        String::from_utf8_lossy(&deploy_ok.stdout)
+    );
+
+    let in_reqs = indexnow_mock.received_requests().await.unwrap();
+    assert_eq!(in_reqs.len(), 1);
+    let payload: Value = serde_json::from_slice(&in_reqs[0].body).unwrap();
+    assert_eq!(payload["host"], "ai.example.org");
+    assert_eq!(payload["key"], first_id);
+    assert_eq!(
+        payload["keyLocation"],
+        format!("https://ai.example.org/{first_id}.txt")
+    );
+    assert_eq!(
+        payload["urlList"],
+        json!([
+            "https://ai.example.org/zh/",
+            "https://ai.example.org/en/",
+            "https://ai.example.org/zh/weekly/2026-01-12_01-18",
+            "https://ai.example.org/en/weekly/2026-01-12_01-18",
+            "https://ai.example.org/zh/daily/2026-01-15",
+            "https://ai.example.org/en/daily/2026-01-15",
+        ])
+    );
+
+    // 4. Key rotation prunes previous <first_id>.txt & IndexNow HTTP 503 is non-fatal
+    let down_mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/indexnow"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&down_mock)
+        .await;
+    let second_id = "c".repeat(16);
+    let warn_out = checked(
+        cli(root, &["publish", "--rebuild", "--no-verify"])
+            .env("DIGEST_INDEXNOW_KEY", &second_id)
+            .env("DIGEST_CF_API_BASE", cf_mock.uri())
+            .env("CLOUDFLARE_API_TOKEN", &token)
+            .env(
+                "DIGEST_INDEXNOW_ENDPOINT",
+                format!("{}/indexnow", down_mock.uri()),
+            )
+            .output()
+            .unwrap(),
+        0,
+    );
+    assert!(!public.join(format!("{first_id}.txt")).exists());
+    assert_eq!(get(&public, &format!("{second_id}.txt")), second_id);
+    assert!(
+        String::from_utf8_lossy(&warn_out.stderr).contains("IndexNow submission failed"),
+        "stderr={}",
+        String::from_utf8_lossy(&warn_out.stderr)
+    );
+
+    // 5. Transition to ENCRYPT=1 purges <second_id>.txt and _headers route cleanly
+    password(root);
+    checked(
+        cli(root, &["publish", "--rebuild", "--prepare-only"])
+            .env("DIGEST_INDEXNOW_KEY", &second_id)
+            .env("DIGEST_ENCRYPT", "1")
+            .output()
+            .unwrap(),
+        0,
+    );
+    assert!(!public.join(format!("{second_id}.txt")).exists());
+    assert!(!get(&public, "_headers").contains(&second_id));
 }
 
 trait PipeRead {
