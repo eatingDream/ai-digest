@@ -560,6 +560,7 @@ describe("built web/dist/worker.js runtime behavior", () => {
     void edgeEnv;
 
     const cacheStore = new Map<string, Response>();
+    const matchCalls: Request[] = [];
     const prevCaches = (globalThis as { caches?: unknown }).caches;
     const pending: Promise<unknown>[] = [];
     const ctx = {
@@ -571,13 +572,28 @@ describe("built web/dist/worker.js runtime behavior", () => {
     (globalThis as { caches?: unknown }).caches = {
       default: {
         async match(req: RequestInfo | URL): Promise<Response | undefined> {
-          const key = typeof req === "string" ? req : req instanceof URL ? req.toString() : req.url;
-          const hit = cacheStore.get(key);
-          return hit ? hit.clone() : undefined;
+          const reqObj = req instanceof Request ? req : new Request(String(req));
+          matchCalls.push(reqObj);
+          const hit = cacheStore.get(reqObj.url);
+          if (!hit) return undefined;
+          const etag = hit.headers.get("etag");
+          const inm = reqObj.headers.get("if-none-match");
+          if (etag && inm && inm === etag) {
+            return new Response(null, { status: 304, headers: hit.headers });
+          }
+          return hit.clone();
         },
         async put(req: RequestInfo | URL, res: Response): Promise<void> {
           const key = typeof req === "string" ? req : req instanceof URL ? req.toString() : req.url;
-          cacheStore.set(key, res.clone());
+          const withEtag = new Response(res.clone().body, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: new Headers(res.headers),
+          });
+          if (!withEtag.headers.has("etag")) {
+            withEtag.headers.set("etag", '"v1-edge"');
+          }
+          cacheStore.set(key, withEtag);
         },
       },
     };
@@ -688,7 +704,32 @@ describe("built web/dist/worker.js runtime behavior", () => {
       );
       expect(cacheStore.has("https://digest.example.com/feed.xml")).toBe(true);
 
-      // 7. no-store routes and /.well-known/search bypass caches.default
+      // 6b. Conditional If-None-Match preserves validator on lookup and yields 304 vs 200
+      const cond304 = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          headers: { Accept: "text/html", "If-None-Match": '"v1-edge"' },
+        }),
+        localEnv,
+        ctx
+      );
+      expect(cond304.status).toBe(304);
+      expect(cond304.headers.get("x-edge-cache")).toBe("HIT");
+      expect(await cond304.text()).toBe("");
+      expect(matchCalls[matchCalls.length - 1]?.headers.get("if-none-match")).toBe('"v1-edge"');
+
+      const cond200 = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          headers: { Accept: "text/html", "If-None-Match": '"stale"' },
+        }),
+        localEnv,
+        ctx
+      );
+      expect(cond200.status).toBe(200);
+      expect(cond200.headers.get("x-edge-cache")).toBe("HIT");
+      expect(await cond200.text()).toContain("Daily HTML");
+
+      // 7. no-store routes and /.well-known/search bypass caches.default before lookup
+      const matchesBeforeBypass = matchCalls.length;
       const latestRes = await edgeWorker.default.fetch(
         new Request("https://digest.example.com/daily/latest"),
         localEnv,
@@ -697,6 +738,7 @@ describe("built web/dist/worker.js runtime behavior", () => {
       await Promise.all(pending.splice(0));
       expect(latestRes.headers.get("cache-control")).toBe("no-store");
       expect(latestRes.headers.get("x-edge-cache")).toBeNull();
+      expect(matchCalls.length).toBe(matchesBeforeBypass);
       expect(cacheStore.has("https://digest.example.com/daily/latest")).toBe(false);
 
       const searchRes = await edgeWorker.default.fetch(
@@ -707,6 +749,7 @@ describe("built web/dist/worker.js runtime behavior", () => {
       await Promise.all(pending.splice(0));
       expect(searchRes.status).toBe(200);
       expect(searchRes.headers.get("x-edge-cache")).toBeNull();
+      expect(matchCalls.length).toBe(matchesBeforeBypass);
       expect(
         cacheStore.has("https://digest.example.com/.well-known/search?q=transformer")
       ).toBe(false);

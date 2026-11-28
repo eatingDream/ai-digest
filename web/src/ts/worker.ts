@@ -460,6 +460,16 @@ function buildEdgeCacheKey(url: URL, isMarkdownRepr: boolean): Request {
   return new Request(cacheUrl.toString(), { method: "GET" });
 }
 
+function buildEdgeLookupRequest(cacheKey: Request, incoming: Request): Request {
+  const inm = incoming.headers.get("if-none-match");
+  const ims = incoming.headers.get("if-modified-since");
+  if (!inm && !ims) return cacheKey;
+  const headers = new Headers();
+  if (inm) headers.set("if-none-match", inm);
+  if (ims) headers.set("if-modified-since", ims);
+  return new Request(cacheKey.url, { method: "GET", headers });
+}
+
 export default {
   async fetch(
     request: Request,
@@ -497,19 +507,25 @@ export default {
       isGetOrHead &&
       !isDirectMd &&
       prefersMarkdown(request.headers.get("accept"));
-    const edgeCache = isGetOrHead ? getEdgeCache() : null;
+    const routePolicy = isGetOrHead ? matchCacheRule(pathname) : null;
+    const edgeCache =
+      isGetOrHead && !isNoStoreOrPrivate(routePolicy) ? getEdgeCache() : null;
     const cacheKey = edgeCache ? buildEdgeCacheKey(url, wantsMd) : null;
 
     if (edgeCache && cacheKey) {
-      const cached = await edgeCache.match(cacheKey);
+      const lookupReq = buildEdgeLookupRequest(cacheKey, request);
+      const cached = await edgeCache.match(lookupReq);
       if (cached) {
         const hitHeaders = new Headers(cached.headers);
         hitHeaders.set("x-edge-cache", "HIT");
-        return new Response(isHead ? null : cached.body, {
-          status: cached.status,
-          statusText: cached.statusText,
-          headers: hitHeaders,
-        });
+        return new Response(
+          isHead || cached.status === 304 ? null : cached.body,
+          {
+            status: cached.status,
+            statusText: cached.statusText,
+            headers: hitHeaders,
+          }
+        );
       }
     }
 
