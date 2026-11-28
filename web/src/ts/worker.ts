@@ -30,6 +30,15 @@ interface WorkerEnv {
   };
 }
 
+interface EdgeCache {
+  match(request: RequestInfo | URL): Promise<Response | undefined>;
+  put(request: RequestInfo | URL, response: Response): Promise<void>;
+}
+
+interface ExecutionCtx {
+  waitUntil?(promise: Promise<unknown>): void;
+}
+
 declare const __WORKER_CFG_JSON__: WorkerConfig;
 const CFG: WorkerConfig = __WORKER_CFG_JSON__;
 
@@ -410,10 +419,56 @@ function estimateMarkdownTokens(buf: ArrayBuffer | null, headers: Headers): stri
   return String(Math.max(1, Math.floor(byteLen / 4)));
 }
 
+const EDGE_CACHE_CONTROL =
+  "public, max-age=60, s-maxage=600, stale-while-revalidate=86400";
+
+function getEdgeCache(): EdgeCache | null {
+  const g = globalThis as { caches?: { default?: EdgeCache } };
+  return g.caches?.default ?? null;
+}
+
+function isCacheableContentType(ct: string): boolean {
+  const low = ct.toLowerCase();
+  if (!low) return true;
+  return (
+    low.includes("text/html") ||
+    low.includes("text/markdown") ||
+    low.includes("application/xml") ||
+    low.includes("text/xml") ||
+    low.includes("application/atom+xml") ||
+    low.includes("application/rss+xml") ||
+    low.includes("application/json") ||
+    low.includes("application/feed+json") ||
+    low.includes("application/linkset+json") ||
+    low.includes("text/plain")
+  );
+}
+
+function isNoStoreOrPrivate(cc: string | null): boolean {
+  if (!cc) return false;
+  const low = cc.toLowerCase();
+  return low.includes("no-store") || low.includes("private");
+}
+
+function buildEdgeCacheKey(url: URL, isMarkdownRepr: boolean): Request {
+  const cacheUrl = new URL(url.toString());
+  if (isMarkdownRepr) {
+    cacheUrl.searchParams.set("__repr", "md");
+  } else {
+    cacheUrl.searchParams.delete("__repr");
+  }
+  return new Request(cacheUrl.toString(), { method: "GET" });
+}
+
 export default {
-  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: WorkerEnv,
+    ctx?: ExecutionCtx
+  ): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
+    const method = request.method.toUpperCase();
 
     if (CFG.searchEnabled && pathname === "/.well-known/search") {
       return handleSearch(request, env, url);
@@ -435,81 +490,110 @@ export default {
       }
     }
 
-    if (pathname.endsWith(".md")) {
+    const isGetOrHead = method === "GET" || method === "HEAD";
+    const isHead = method === "HEAD";
+    const isDirectMd = pathname.endsWith(".md");
+    const wantsMd =
+      isGetOrHead &&
+      !isDirectMd &&
+      prefersMarkdown(request.headers.get("accept"));
+    const edgeCache = isGetOrHead ? getEdgeCache() : null;
+    const cacheKey = edgeCache ? buildEdgeCacheKey(url, wantsMd) : null;
+
+    if (edgeCache && cacheKey) {
+      const cached = await edgeCache.match(cacheKey);
+      if (cached) {
+        const hitHeaders = new Headers(cached.headers);
+        hitHeaders.set("x-edge-cache", "HIT");
+        return new Response(isHead ? null : cached.body, {
+          status: cached.status,
+          statusText: cached.statusText,
+          headers: hitHeaders,
+        });
+      }
+    }
+
+    let response: Response | null = null;
+
+    if (isDirectMd || wantsMd) {
       for (const cand of mapToMdCandidates(pathname)) {
         const mdResp = await env.ASSETS.fetch(
           new Request(new URL(cand, url.origin), {
-            method: request.method === "HEAD" ? "HEAD" : "GET",
+            method: isHead ? "HEAD" : "GET",
           })
         );
         if (mdResp.ok) {
-          const buf =
-            request.method === "HEAD" ? null : await mdResp.arrayBuffer();
+          const buf = isHead ? null : await mdResp.arrayBuffer();
           const headers = new Headers(mdResp.headers);
           applyBaseHeaders(headers, pathname, 200, {
             "Content-Type": "text/markdown; charset=utf-8",
             "x-markdown-tokens": estimateMarkdownTokens(buf, mdResp.headers),
             Link: localizeLinkHeader(CFG.linkHeader, cand),
           });
-          return new Response(buf, { status: 200, headers });
-        }
-      }
-    }
-
-    if (
-      (request.method === "GET" || request.method === "HEAD") &&
-      prefersMarkdown(request.headers.get("accept"))
-    ) {
-      for (const cand of mapToMdCandidates(pathname)) {
-        const mdResp = await env.ASSETS.fetch(
-          new Request(new URL(cand, url.origin), {
-            method: request.method === "HEAD" ? "HEAD" : "GET",
-          })
-        );
-        if (mdResp.ok) {
-          const buf =
-            request.method === "HEAD" ? null : await mdResp.arrayBuffer();
-          const headers = new Headers(mdResp.headers);
-          applyBaseHeaders(headers, pathname, 200, {
-            "Content-Type": "text/markdown; charset=utf-8",
-            "x-markdown-tokens": estimateMarkdownTokens(buf, mdResp.headers),
-            Link: localizeLinkHeader(CFG.linkHeader, cand),
-          });
-          return new Response(buf, { status: 200, headers });
-        }
-      }
-    }
-
-    const assetResp = await env.ASSETS.fetch(request);
-    const headers = new Headers(assetResp.headers);
-    let extra: Record<string, string> | undefined;
-    if (assetResp.status === 200 && pathname === "/.well-known/api-catalog") {
-      extra = {
-        "Content-Type":
-          'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
-      };
-    } else if (
-      assetResp.status === 200 &&
-      ALT_MD_LINK_RE.test(CFG.linkHeader) &&
-      (assetResp.headers.get("content-type") || "")
-        .toLowerCase()
-        .includes("text/html")
-    ) {
-      for (const cand of mapToMdCandidates(pathname)) {
-        const probe = await env.ASSETS.fetch(
-          new Request(new URL(cand, url.origin), { method: "HEAD" })
-        );
-        if (probe.ok) {
-          extra = { Link: localizeLinkHeader(CFG.linkHeader, cand) };
+          response = new Response(buf, { status: 200, headers });
           break;
         }
       }
     }
-    applyBaseHeaders(headers, pathname, assetResp.status, extra);
-    return new Response(assetResp.body, {
-      status: assetResp.status,
-      statusText: assetResp.statusText,
-      headers,
-    });
+
+    if (!response) {
+      const assetResp = await env.ASSETS.fetch(request);
+      const headers = new Headers(assetResp.headers);
+      let extra: Record<string, string> | undefined;
+      if (assetResp.status === 200 && pathname === "/.well-known/api-catalog") {
+        extra = {
+          "Content-Type":
+            'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
+        };
+      } else if (
+        assetResp.status === 200 &&
+        ALT_MD_LINK_RE.test(CFG.linkHeader) &&
+        (assetResp.headers.get("content-type") || "")
+          .toLowerCase()
+          .includes("text/html")
+      ) {
+        for (const cand of mapToMdCandidates(pathname)) {
+          const probe = await env.ASSETS.fetch(
+            new Request(new URL(cand, url.origin), { method: "HEAD" })
+          );
+          if (probe.ok) {
+            extra = { Link: localizeLinkHeader(CFG.linkHeader, cand) };
+            break;
+          }
+        }
+      }
+      applyBaseHeaders(headers, pathname, assetResp.status, extra);
+      response = new Response(assetResp.body, {
+        status: assetResp.status,
+        statusText: assetResp.statusText,
+        headers,
+      });
+    }
+
+    if (isGetOrHead && response.status === 200) {
+      const cc = response.headers.get("cache-control");
+      const ct = response.headers.get("content-type") || "";
+      if (!isNoStoreOrPrivate(cc) && isCacheableContentType(ct)) {
+        if (!cc) {
+          response.headers.set("Cache-Control", EDGE_CACHE_CONTROL);
+        }
+        if (edgeCache && cacheKey) {
+          if (method === "GET") {
+            const toCache = response.clone();
+            response.headers.set("x-edge-cache", "MISS");
+            const putPromise = edgeCache.put(cacheKey, toCache).catch(() => {});
+            if (ctx && typeof ctx.waitUntil === "function") {
+              ctx.waitUntil(putPromise);
+            } else {
+              await putPromise;
+            }
+          } else {
+            response.headers.set("x-edge-cache", "MISS");
+          }
+        }
+      }
+    }
+
+    return response;
   },
 };

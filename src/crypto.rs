@@ -882,7 +882,7 @@ pub fn finalize_csp_headers(
         text.push_str(&format!("  {key}: {value}\n"));
     }
     if !old.lines().any(|line| line.trim() == "/favicon.svg") {
-        text.push_str("/favicon.svg\n  Cache-Control: public, max-age=86400\n");
+        text.push_str("/favicon.svg\n  ! Vary\n  Cache-Control: public, max-age=86400\n");
     }
     text.push_str(&kept);
     atomic_write_text(&path, &text)?;

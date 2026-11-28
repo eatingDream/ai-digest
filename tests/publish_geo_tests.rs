@@ -466,6 +466,7 @@ fn csp_and_geo_artifacts_and_same_directory_public_to_encrypted_transition() {
     let rules = [
         "/*\n",
         "/favicon.svg\n",
+        "/assets/*\n",
         "\n/\n",
         "\n/daily/*\n",
         "\n/weekly/*\n",
@@ -480,6 +481,11 @@ fn csp_and_geo_artifacts_and_same_directory_public_to_encrypted_transition() {
         offsets.windows(2).all(|pair| pair[0] < pair[1]),
         "{offsets:?}"
     );
+    assert!(headers.contains("/favicon.svg\n  ! Vary\n"));
+    assert!(headers
+        .contains("/assets/*\n  ! Vary\n  Cache-Control: public, max-age=31536000, immutable"));
+    assert!(headers.contains("/og-card.png\n  ! Vary\n"));
+    assert!(headers.contains("s-maxage=600, stale-while-revalidate=86400"));
     let (global, cache) = geo::parse_headers(&headers);
     assert!(global.get("Link").unwrap().contains("/.well-known/search"));
     assert_eq!(global["Vary"], "Accept");
@@ -995,6 +1001,44 @@ const absent = await req('/missing');
 assert.equal(absent.status, 404);
 assert.equal(absent.headers.get('cache-control'), 'no-store');
 assert.equal(absent.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+// Edge cache (caches.default) HIT/MISS for HTML vs ?__repr=md, HEAD safety, and no-store bypass
+const edgeMap = new Map();
+const pendingWait = [];
+let fetchCount = 0;
+const countedEnv = { ASSETS: { async fetch(input) { fetchCount++; return env.ASSETS.fetch(input); } } };
+globalThis.caches = {
+    default: {
+        async match(r) { const k = typeof r === 'string' ? r : r.url; const v = edgeMap.get(k); return v ? v.clone() : undefined; },
+        async put(r, res) { const k = typeof r === 'string' ? r : r.url; edgeMap.set(k, res.clone()); },
+    }
+};
+const ctx = { waitUntil(p) { pendingWait.push(p); } };
+const edgeReq = (p, init) => worker.fetch(new Request('https://digest.example.com' + p, init), countedEnv, ctx);
+const r1 = await edgeReq('/en/daily/2026-01-15', { headers: { accept: 'text/html' } });
+await Promise.all(pendingWait.splice(0));
+assert.equal(r1.status, 200);
+assert.equal(r1.headers.get('x-edge-cache'), 'MISS');
+assert.match(r1.headers.get('cache-control'), /s-maxage=600/);
+const countAfterHtml = fetchCount;
+const r2 = await edgeReq('/en/daily/2026-01-15', { headers: { accept: '*/*' } });
+assert.equal(r2.headers.get('x-edge-cache'), 'HIT');
+assert.equal(fetchCount, countAfterHtml);
+assert.match(await r2.text(), /<!doctype html>/i);
+const rm1 = await edgeReq('/en/daily/2026-01-15', { headers: { accept: 'text/markdown' } });
+await Promise.all(pendingWait.splice(0));
+assert.equal(rm1.headers.get('x-edge-cache'), 'MISS');
+assert.ok(edgeMap.has('https://digest.example.com/en/daily/2026-01-15?__repr=md'));
+const countAfterMd = fetchCount;
+const rm2 = await edgeReq('/en/daily/2026-01-15', { method: 'HEAD', headers: { accept: 'text/markdown' } });
+assert.equal(rm2.headers.get('x-edge-cache'), 'HIT');
+assert.equal(await rm2.text(), '');
+assert.equal(fetchCount, countAfterMd);
+const rLatest = await edgeReq('/en/daily/latest', { headers: { accept: 'text/html' } });
+await Promise.all(pendingWait.splice(0));
+assert.equal(rLatest.headers.get('cache-control'), 'no-store');
+assert.equal(rLatest.headers.get('x-edge-cache'), null);
+assert.equal(edgeMap.has('https://digest.example.com/en/daily/latest'), false);
 "#;
     node.stdin
         .take()
@@ -2321,6 +2365,8 @@ fn seo_geo_comprehensive_hreflang_jsonld_feeds_api_catalog_and_security() {
     let routes: Value = serde_json::from_str(&get(&public, "_routes.json")).unwrap();
     let excludes = routes["exclude"].as_array().unwrap();
     for path in [
+        "/favicon.svg",
+        "/assets/*",
         "/.well-known/api-catalog",
         "/rss.xml",
         "/feed.json",

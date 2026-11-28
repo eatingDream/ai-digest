@@ -11,7 +11,8 @@ interface WorkerModule {
   default: {
     fetch(
       request: Request,
-      env: { ASSETS: { fetch(req: Request): Promise<Response> } }
+      env: { ASSETS: { fetch(req: Request): Promise<Response> } },
+      ctx?: { waitUntil?(p: Promise<unknown>): void }
     ): Promise<Response>;
   };
 }
@@ -495,5 +496,222 @@ describe("built web/dist/worker.js runtime behavior", () => {
     expect(catalog.headers.get("content-security-policy")).toBe("default-src 'none'");
     expect(catalog.headers.get("x-frame-options")).toBe("DENY");
     expect(catalog.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("caches GET HTML and Accept: text/markdown separately in caches.default with HEAD safety and no-store bypass", async () => {
+    const raw = readFileSync(WORKER_DIST, "utf8");
+    const edgeCfg: WorkerConfig = {
+      ...TEST_CFG,
+      cacheRules: [
+        ["/daily/latest", "no-store"],
+      ],
+    };
+    const injected = raw.replace("__WORKER_CFG_JSON__", JSON.stringify(edgeCfg));
+    const dataUrl =
+      "data:text/javascript;base64," + Buffer.from(injected, "utf8").toString("base64");
+    const edgeWorker = (await import(dataUrl)) as WorkerModule;
+
+    let assetFetches = 0;
+    const edgeEnv = {
+      ASSETS: {
+        async fetch(req: Request): Promise<Response> {
+          assetFetches++;
+          return env.ASSETS.fetch(req);
+        },
+      },
+    };
+    // Add /daily/latest and /feed.xml fixtures via local wrapper
+    const files: Record<string, { body: string; type: string }> = {
+      "/daily/2026-11-26": {
+        body: "<html><body>Daily HTML</body></html>",
+        type: "text/html; charset=utf-8",
+      },
+      "/daily/2026-11-26.md": {
+        body: "# Daily 2026-11-26\n\nMarkdown mirror body.\n",
+        type: "text/markdown",
+      },
+      "/daily/latest": {
+        body: "<html><body>Latest HTML</body></html>",
+        type: "text/html; charset=utf-8",
+      },
+      "/feed.xml": {
+        body: "<feed>atom</feed>",
+        type: "application/atom+xml; charset=utf-8",
+      },
+      "/search-index.json": {
+        body: JSON.stringify(SEARCH_INDEX),
+        type: "application/json",
+      },
+    };
+    const localEnv = {
+      ASSETS: {
+        async fetch(req: Request): Promise<Response> {
+          assetFetches++;
+          const u = new URL(req.url);
+          const hit = files[u.pathname];
+          if (!hit) return new Response("Not Found", { status: 404 });
+          return new Response(req.method === "HEAD" ? null : hit.body, {
+            status: 200,
+            headers: { "Content-Type": hit.type },
+          });
+        },
+      },
+    };
+    void edgeEnv;
+
+    const cacheStore = new Map<string, Response>();
+    const prevCaches = (globalThis as { caches?: unknown }).caches;
+    const pending: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil(p: Promise<unknown>) {
+        pending.push(p);
+      },
+    };
+
+    (globalThis as { caches?: unknown }).caches = {
+      default: {
+        async match(req: RequestInfo | URL): Promise<Response | undefined> {
+          const key = typeof req === "string" ? req : req instanceof URL ? req.toString() : req.url;
+          const hit = cacheStore.get(key);
+          return hit ? hit.clone() : undefined;
+        },
+        async put(req: RequestInfo | URL, res: Response): Promise<void> {
+          const key = typeof req === "string" ? req : req instanceof URL ? req.toString() : req.url;
+          cacheStore.set(key, res.clone());
+        },
+      },
+    };
+
+    try {
+      // 1. Cold HEAD must NOT pollute the GET cache entry with an empty body
+      const coldHead = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          method: "HEAD",
+          headers: { Accept: "text/html" },
+        }),
+        localEnv,
+        ctx
+      );
+      expect(coldHead.status).toBe(200);
+      expect(coldHead.headers.get("x-edge-cache")).toBe("MISS");
+      expect(await coldHead.text()).toBe("");
+      await Promise.all(pending.splice(0));
+      expect(cacheStore.size).toBe(0);
+
+      // 2. First GET HTML -> MISS, stores canonical URL without ?__repr=md
+      const htmlMiss = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          headers: { Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+        }),
+        localEnv,
+        ctx
+      );
+      await Promise.all(pending.splice(0));
+      expect(htmlMiss.status).toBe(200);
+      expect(htmlMiss.headers.get("x-edge-cache")).toBe("MISS");
+      expect(htmlMiss.headers.get("cache-control")).toBe(
+        "public, max-age=60, s-maxage=600, stale-while-revalidate=86400"
+      );
+      expect(await htmlMiss.text()).toContain("Daily HTML");
+      expect(cacheStore.has("https://digest.example.com/daily/2026-11-26")).toBe(true);
+
+      // 3. Different browser Accept header hits the SAME cached HTML entry without ASSETS.fetch
+      const fetchesBeforeHit = assetFetches;
+      const htmlHit = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          headers: { Accept: "*/*" },
+        }),
+        localEnv,
+        ctx
+      );
+      expect(htmlHit.status).toBe(200);
+      expect(htmlHit.headers.get("x-edge-cache")).toBe("HIT");
+      expect(htmlHit.headers.get("content-type")).toContain("text/html");
+      expect(await htmlHit.text()).toContain("Daily HTML");
+      expect(assetFetches).toBe(fetchesBeforeHit);
+
+      // 4. Accept: text/markdown uses ?__repr=md cache key cleanly
+      const mdMiss = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          headers: { Accept: "text/markdown, text/html;q=0.5" },
+        }),
+        localEnv,
+        ctx
+      );
+      await Promise.all(pending.splice(0));
+      expect(mdMiss.status).toBe(200);
+      expect(mdMiss.headers.get("x-edge-cache")).toBe("MISS");
+      expect(mdMiss.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+      expect(await mdMiss.text()).toContain("Markdown mirror body.");
+      expect(
+        cacheStore.has("https://digest.example.com/daily/2026-11-26?__repr=md")
+      ).toBe(true);
+
+      const fetchesBeforeMdHit = assetFetches;
+      const mdHit = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          headers: { Accept: "text/markdown" },
+        }),
+        localEnv,
+        ctx
+      );
+      expect(mdHit.headers.get("x-edge-cache")).toBe("HIT");
+      expect(await mdHit.text()).toContain("Markdown mirror body.");
+      expect(assetFetches).toBe(fetchesBeforeMdHit);
+
+      // 5. Warm HEAD returns HIT with empty body
+      const warmHead = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/2026-11-26", {
+          method: "HEAD",
+          headers: { Accept: "text/markdown" },
+        }),
+        localEnv,
+        ctx
+      );
+      expect(warmHead.status).toBe(200);
+      expect(warmHead.headers.get("x-edge-cache")).toBe("HIT");
+      expect(warmHead.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+      expect(await warmHead.text()).toBe("");
+      expect(assetFetches).toBe(fetchesBeforeMdHit);
+
+      // 6. XML feed gets s-maxage=600 and caches
+      const feedRes = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/feed.xml"),
+        localEnv,
+        ctx
+      );
+      await Promise.all(pending.splice(0));
+      expect(feedRes.status).toBe(200);
+      expect(feedRes.headers.get("x-edge-cache")).toBe("MISS");
+      expect(feedRes.headers.get("cache-control")).toBe(
+        "public, max-age=60, s-maxage=600, stale-while-revalidate=86400"
+      );
+      expect(cacheStore.has("https://digest.example.com/feed.xml")).toBe(true);
+
+      // 7. no-store routes and /.well-known/search bypass caches.default
+      const latestRes = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/daily/latest"),
+        localEnv,
+        ctx
+      );
+      await Promise.all(pending.splice(0));
+      expect(latestRes.headers.get("cache-control")).toBe("no-store");
+      expect(latestRes.headers.get("x-edge-cache")).toBeNull();
+      expect(cacheStore.has("https://digest.example.com/daily/latest")).toBe(false);
+
+      const searchRes = await edgeWorker.default.fetch(
+        new Request("https://digest.example.com/.well-known/search?q=transformer"),
+        localEnv,
+        ctx
+      );
+      await Promise.all(pending.splice(0));
+      expect(searchRes.status).toBe(200);
+      expect(searchRes.headers.get("x-edge-cache")).toBeNull();
+      expect(
+        cacheStore.has("https://digest.example.com/.well-known/search?q=transformer")
+      ).toBe(false);
+    } finally {
+      (globalThis as { caches?: unknown }).caches = prevCaches;
+    }
   });
 });

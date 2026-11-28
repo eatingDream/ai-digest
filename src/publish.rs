@@ -1105,16 +1105,21 @@ fn set_redirects(plans: &Plans, file: &Path, removed: &[String]) -> Result<()> {
 }
 
 fn cache_headers(plans: &Plans) -> Result<String> {
-    let mut out = String::from("/favicon.svg\n  Cache-Control: public, max-age=86400\n");
+    let mut out = String::from(
+        "/favicon.svg\n  ! Vary\n  Cache-Control: public, max-age=86400\n/assets/*\n  ! Vary\n  Cache-Control: public, max-age=31536000, immutable\n",
+    );
     let full: BTreeSet<_> = plans.prefixes.iter().collect();
     for prefix in plans.prefixes.iter().chain(&plans.public_root_aliases) {
         if full.contains(prefix) {
             writeln!(
                 out,
-                "{prefix}/\n  Cache-Control: public, max-age=60, stale-while-revalidate=604800"
+                "{prefix}/\n  Cache-Control: public, max-age=60, s-maxage=600, stale-while-revalidate=86400"
             )?;
             for kind in ["daily", "weekly"] {
-                writeln!(out, "{prefix}/{kind}/*\n  Cache-Control: public, max-age=300, stale-while-revalidate=604800")?;
+                writeln!(
+                    out,
+                    "{prefix}/{kind}/*\n  Cache-Control: public, max-age=300, s-maxage=600, stale-while-revalidate=86400"
+                )?;
             }
         }
         for alias in ["latest", "daily/latest", "weekly/latest"] {

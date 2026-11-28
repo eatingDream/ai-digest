@@ -1897,7 +1897,6 @@ pub fn render_geo_headers_with_indexnow(
             "application/feed+json; charset=utf-8",
             1800,
         ),
-        ("/og-card.png", "image/png", 86400),
         ("/llms.txt", "text/plain; charset=utf-8", 1800),
         ("/llms-full.txt", "text/plain; charset=utf-8", 1800),
         (
@@ -1927,6 +1926,11 @@ pub fn render_geo_headers_with_indexnow(
         )
         .unwrap();
     }
+    writeln!(
+        out,
+        "/og-card.png\n  ! Vary\n  Content-Type: image/png\n  Cache-Control: public, max-age=86400"
+    )
+    .unwrap();
     if let Some(key) = indexnow_key.filter(|k| !k.is_empty()) {
         writeln!(
             out,
@@ -1944,6 +1948,7 @@ pub fn render_pages_routes() -> String {
 pub fn render_pages_routes_with_indexnow(indexnow_key: Option<&str>) -> String {
     let mut exclude = vec![
         "/favicon.svg".to_owned(),
+        "/assets/*".into(),
         "/og-card.png".into(),
         "/robots.txt".into(),
         "/sitemap.xml".into(),
